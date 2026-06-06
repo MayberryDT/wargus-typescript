@@ -5,3 +5,6 @@ public/wargus/
 .codex/
 .git-local/
 *.log
+
+# Local Netlify folder
+.netlify
