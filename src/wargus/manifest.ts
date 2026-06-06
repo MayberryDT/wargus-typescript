@@ -5,12 +5,26 @@ import { FIXED_BROWSER_DEMO_MAP_PATH } from "./demoScenario";
 export async function loadWargusManifest(): Promise<WargusManifest> {
   const response = await fetch("/wargus/manifest.json", { cache: "no-store" });
   if (!response.ok) {
-    throw new Error("Missing Wargus manifest. Run `npm run index:wargus` first.");
+    throw new Error(missingWargusManifestMessage(response.status));
   }
-  const manifest = await response.json() as WargusManifest;
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+  if (contentType.includes("text/html") || text.trimStart().startsWith("<")) {
+    throw new Error(missingWargusManifestMessage(response.status));
+  }
+  let manifest: WargusManifest;
+  try {
+    manifest = JSON.parse(text) as WargusManifest;
+  } catch {
+    throw new Error("The Wargus manifest was found, but it is not valid JSON. Rebuild the asset index with `npm run index:wargus`.");
+  }
   normalizeSiegeUnits(manifest.units);
   normalizeCustomMapUnits(manifest.units);
   return manifest;
+}
+
+function missingWargusManifestMessage(status: number): string {
+  return `Missing Wargus asset pack (${status}). This public build includes the TypeScript engine, but not the local Warcraft II/Wargus assets. Run the demo locally with public/wargus generated, or deploy a legally redistributable asset pack.`;
 }
 
 export function chooseInitialMap(manifest: Pick<WargusManifest, "maps">): WargusMap {
