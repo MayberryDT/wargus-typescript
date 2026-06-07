@@ -3,6 +3,8 @@ import type { WargusManifest } from "../wargus/types";
 import { sourceTitleMusicFile } from "../view/sourceUiHelpers";
 import type { AudioEngine } from "./audioEngine";
 
+export const CUSTOM_BACKGROUND_MUSIC_FILE = "warcraft-2-ost-human-1-128-ytshorts.savetube.me.mp3";
+
 export interface AudioCueState {
   lastBriefingAudioKey: string | null;
   lastMatchMusicStatus: WorldState["matchState"]["status"] | null;
@@ -37,12 +39,11 @@ export async function ensureSourceMusicStarted(
     await audioEngine.playMusicFile(sourceTitleMusicFile(manifest));
     return;
   }
-  const player = world.players.find((candidate) => candidate.id === world.visibilityPlayer);
   if (state.briefingOpen) {
     audioEngine.stopMusic();
     return;
   }
-  await audioEngine.ensureBattleMusic(player?.race);
+  await audioEngine.playMusicFile(CUSTOM_BACKGROUND_MUSIC_FILE);
 }
 
 export function startBriefingAudioCue(cueState: AudioCueState, audioEngine: AudioEngine | null, world: WorldState, briefingOpen: boolean): void {

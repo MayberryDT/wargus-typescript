@@ -3,7 +3,7 @@ import { canAttackGround, canEnterPendingWorldCommand, canIssueAutoHarvestOrder,
 import { getPlayerSupply, isInvisibleUtilityUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, isWorldTileSourceKnown, type WorldState } from "../simulation/world";
 import type { SavedGameSummary } from "../wargus/saveGame";
 import type { WargusBriefingLayout, WargusButton, WargusManifest, WargusMap, WargusMenuButtonLayout } from "../wargus/types";
-import { sourceButtonLabel } from "../wargus/buttons";
+import { sourceButtonLabel, sourceFullButtonLabel } from "../wargus/buttons";
 import type { Camera } from "./camera";
 import { getIconTexture, type IconTextureAtlas } from "./iconTextureAtlas";
 import { sourcePanelTexturesForRace, type SourcePanelAtlas, type SourcePanelTextures } from "./sourcePanelAtlas";
@@ -13,7 +13,7 @@ import { getSourceButtonStyleTexture, type SourceButtonStyleAtlas } from "./sour
 import { cargoManifestLine, colorNumberFromCss, commandHint, controlGroupSummary, economyRoleLine, fogByteToAlpha, idleWorkerSummary, objectiveLines, ownerLine, queuedMoveLine, rgbToHex, selectedOrderLine, selectedRallyLine, selectedResourceLine, sourceAutoCastBorderColor, sourceCampaignLabelForMap, sourceCampaignMissionComplete, sourceCommandBorderColor, sourceCommandStatusLineText, sourceCompletedBarColor, sourceCompletedBarShadow, sourceFilteredPickerMaps, sourceFreeWorkerCount, sourceHudActionLabel, sourceInfoPanelLayout, sourceInfoPanelSlot, sourceMapViewportSize, sourceMenuButtonFontSize, sourceMenuButtonGroup, sourceMenuButtonHeight, sourceMenuButtonPalette, sourceMenuButtonWidth, sourceMenuOverlayButtons, sourceMenuOverlayLines, sourceMenuOverlayTitle, sourceMenuTextAnchor, sourceMenuTextX, sourceMenuTextY, sourceMessageLineHeight, sourceMessageScrollOffset, sourceMinimapLayout, sourcePanelBarItems, sourcePanelContentLines, sourcePlayerColor, sourcePlayerDisplayName, sourcePopupColor, sourcePopupLabel, sourcePopupLines, sourcePopupStatTicks, sourcePreferredHarvestActionLabel, sourceResultRankForPlayer, sourceResultScoreForPlayer, sourceResultScoreHeader, sourceResultScreen, sourceSaveTitle, sourceShortTime, sourceSpecialLine, sourceSpellButtonLabel, sourceStatusLineLayout, sourceTextColorCss, sourceTextColorNumber, sourceTextPaletteId, sourceTitleScreen, sourceTitleTip, sourceTrainButtonLabel, sourceUiTextColor, sourceUnitButtonLabel, sourceViewportModeRects, sourceViewportWorldRects, sourceSelectedCommandBorderColor, unitTypeName, upgradeName, type SourceDiplomacyDraft, type SourceMenuButtonSlot } from "./sourceUiHelpers";
 import { createWargusBitmapText, type WargusBitmapFontAtlas } from "./wargusBitmapFontAtlas";
 import { isFixedBrowserDemoMap } from "../wargus/demoScenario";
-import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "../wargus/demoMission";
+import { getFrameTexture, type UnitTextureAtlas } from "./unitTextureAtlas";
 
 export type HudCommandId =
   | `source-train:${string}`
@@ -130,6 +130,40 @@ export interface HudMessage {
   expiresAt: number;
 }
 
+export type HudRect = { x: number; y: number; width: number; height: number };
+
+export interface ModernHudLayoutDebug {
+  screen: { width: number; height: number };
+  topBar: HudRect;
+  resourceBar: HudRect;
+  minimapPanel: HudRect;
+  minimap: HudRect;
+  selectionPanel: HudRect;
+  commandPanel: HudRect;
+  toastLane: HudRect;
+  portrait: (HudRect & { filled: boolean; source: "icon" | "unit-sprite" | "initial" | "empty" }) | null;
+  resourceChips: Array<HudRect & { key: string; value: string; textFits: boolean }>;
+  commandButtons: Array<HudRect & { id: string; label: string; longLabel: string; statusText: string; textFits: boolean }>;
+  messages: Array<HudRect & { text: string; severity: "info" | "warning" | "attack" }>;
+  overlaps: string[];
+}
+
+interface ModernHudLayout {
+  screen: { width: number; height: number };
+  topBar: HudRect;
+  resourceBar: HudRect;
+  minimapPanel: HudRect;
+  minimap: HudRect;
+  mapButtons: HudRect;
+  selectionPanel: HudRect;
+  commandPanel: HudRect;
+  toastLane: HudRect;
+}
+
+type FixedDemoTextFit = { text: Text; fits: boolean };
+
+export let latestModernHudLayoutDebug: ModernHudLayoutDebug | null = null;
+
 interface RenderHudArgs {
   app: Application;
   hudLayer: Container;
@@ -152,6 +186,7 @@ interface RenderHudArgs {
   briefingOpen: boolean;
   nextCampaignMap: WargusMap | null;
   iconAtlas: IconTextureAtlas | null;
+  unitAtlases: Map<string, UnitTextureAtlas>;
   statusDecorationAtlas: StatusDecorationAtlas | null;
   sourcePanelAtlas: SourcePanelAtlas | null;
   sourceButtonStyleAtlas: SourceButtonStyleAtlas | null;
@@ -179,10 +214,10 @@ interface RenderHudArgs {
 }
 
 export function renderHud(args: RenderHudArgs): void {
-  const { app, hudLayer, frame, manifest, activeMap, world, camera, sourceViewportCameras, selectedUnitIds, hoveredUnitId, hudMessages, alertPings, controlGroups, activeSaveSlot, activeSaveSummary, autosaveSummary, paused, gameSpeed, briefingOpen, nextCampaignMap, iconAtlas, statusDecorationAtlas, sourcePanelAtlas, sourceButtonStyleAtlas, resourceUiAtlas, wargusBitmapFontAtlas: loadedBitmapFontAtlas, commandPage, onDismissBriefing, onReplayBriefing, onNextCampaignMission, onCommand, onMapCommand, onSelectedUnitPick, onFreeWorkerPick, onProductionQueuePick, onCargoUnitPick, mapPicker, completedCampaignMissions, onMapPick, onMinimapPoint, titleScreenOpen, onDismissTitleScreen, menuOverlay, diplomacyDraft, activeSourceViewportIndex } = args;
+  const { app, hudLayer, frame, manifest, activeMap, world, camera, sourceViewportCameras, selectedUnitIds, hoveredUnitId, hudMessages, alertPings, controlGroups, activeSaveSlot, activeSaveSummary, autosaveSummary, paused, gameSpeed, briefingOpen, nextCampaignMap, iconAtlas, unitAtlases, statusDecorationAtlas, sourcePanelAtlas, sourceButtonStyleAtlas, resourceUiAtlas, commandPage, onDismissBriefing, onReplayBriefing, onNextCampaignMission, onCommand, onMapCommand, onSelectedUnitPick, onFreeWorkerPick, onProductionQueuePick, onCargoUnitPick, mapPicker, completedCampaignMissions, onMapPick, onMinimapPoint, titleScreenOpen, onDismissTitleScreen, menuOverlay, diplomacyDraft, activeSourceViewportIndex } = args;
   const fixedDemo = isFixedBrowserDemoMap(activeMap);
-  const wargusBitmapFontAtlas = fixedDemo ? null : loadedBitmapFontAtlas;
-  hudLayer.removeChildren();
+  const wargusBitmapFontAtlas = null;
+  destroyHudLayerChildren(hudLayer, frame);
   hudLayer.addChild(frame);
   frame.clear();
 
@@ -196,6 +231,9 @@ export function renderHud(args: RenderHudArgs): void {
   const selectedOwner = selected ? world.players.find((player) => player.id === selected.player) : null;
   const supply = visiblePlayer ? getPlayerSupply(world, visiblePlayer.id) : null;
   const selectedIsOwned = selected?.player === world.visibilityPlayer;
+  if (!fixedDemo) {
+    latestModernHudLayoutDebug = null;
+  }
 
   if (fixedDemo) {
     drawFixedBrowserDemoHud({
@@ -220,6 +258,7 @@ export function renderHud(args: RenderHudArgs): void {
       briefingOpen,
       nextCampaignMap,
       iconAtlas,
+      unitAtlases,
       statusDecorationAtlas,
       commandPage,
       onCommand,
@@ -337,6 +376,120 @@ export function renderHud(args: RenderHudArgs): void {
   drawSourceTitleScreen(app, hudLayer, manifest, world, titleScreenOpen, wargusBitmapFontAtlas, onDismissTitleScreen, () => onMapCommand("choose-map"));
 }
 
+function destroyHudLayerChildren(layer: Container, frame: Graphics): void {
+  const children = layer.removeChildren();
+  for (const child of children) {
+    if (child !== frame) {
+      child.destroy({ children: true });
+    }
+  }
+}
+
+function modernFixedDemoHudLayout(screenWidth: number, screenHeight: number): ModernHudLayout {
+  const margin = screenWidth < 960 ? 12 : 16;
+  const minimapSize = Math.round(Math.min(172, Math.max(132, Math.min(screenWidth, screenHeight) * 0.22)));
+  const minimapPanel = {
+    x: screenWidth - minimapSize - margin - 8,
+    y: 12,
+    width: minimapSize + 16,
+    height: minimapSize + 84
+  };
+  const topBar = {
+    x: margin,
+    y: 12,
+    width: Math.max(440, Math.min(760, minimapPanel.x - margin * 2)),
+    height: 58
+  };
+  const commandWidth = Math.round(Math.min(392, Math.max(330, screenWidth * 0.34)));
+  const commandHeight = 220;
+  const commandPanel = {
+    x: screenWidth - commandWidth - margin,
+    y: screenHeight - commandHeight - margin,
+    width: commandWidth,
+    height: commandHeight
+  };
+  const selectionWidth = Math.round(Math.min(410, Math.max(320, commandPanel.x - margin * 2)));
+  const selectionHeight = 196;
+  const selectionPanel = {
+    x: margin,
+    y: screenHeight - selectionHeight - margin,
+    width: selectionWidth,
+    height: selectionHeight
+  };
+  const titleColumnWidth = Math.max(168, topBar.width * 0.25);
+  return {
+    screen: { width: screenWidth, height: screenHeight },
+    topBar,
+    resourceBar: {
+      x: Math.round(topBar.x + titleColumnWidth),
+      y: topBar.y + 8,
+      width: Math.round(topBar.width - titleColumnWidth - 12),
+      height: 42
+    },
+    minimapPanel,
+    minimap: {
+      x: minimapPanel.x + 8,
+      y: minimapPanel.y + 8,
+      width: minimapSize,
+      height: minimapSize
+    },
+    mapButtons: {
+      x: minimapPanel.x + 8,
+      y: minimapPanel.y + minimapSize + 18,
+      width: minimapSize,
+      height: 56
+    },
+    selectionPanel,
+    commandPanel,
+    toastLane: {
+      x: margin,
+      y: topBar.y + topBar.height + 10,
+      width: Math.round(Math.min(390, Math.max(300, topBar.width * 0.55))),
+      height: 152
+    }
+  };
+}
+
+function beginModernHudLayoutDebug(layout: ModernHudLayout): ModernHudLayoutDebug {
+  latestModernHudLayoutDebug = {
+    screen: layout.screen,
+    topBar: layout.topBar,
+    resourceBar: layout.resourceBar,
+    minimapPanel: layout.minimapPanel,
+    minimap: layout.minimap,
+    selectionPanel: layout.selectionPanel,
+    commandPanel: layout.commandPanel,
+    toastLane: layout.toastLane,
+    portrait: null,
+    resourceChips: [],
+    commandButtons: [],
+    messages: [],
+    overlaps: []
+  };
+  return latestModernHudLayoutDebug;
+}
+
+function finalizeModernHudLayoutDebug(debug: ModernHudLayoutDebug): void {
+  const checks: Array<[string, HudRect, HudRect]> = [
+    ["toast-resource", debug.toastLane, debug.resourceBar],
+    ["toast-minimap", debug.toastLane, debug.minimapPanel],
+    ["toast-selection", debug.toastLane, debug.selectionPanel],
+    ["toast-command", debug.toastLane, debug.commandPanel],
+    ["selection-command", debug.selectionPanel, debug.commandPanel],
+    ["top-minimap", debug.topBar, debug.minimapPanel]
+  ];
+  debug.overlaps = checks
+    .filter(([, left, right]) => rectIntersects(left, right))
+    .map(([name]) => name);
+}
+
+function rectIntersects(left: HudRect, right: HudRect): boolean {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y;
+}
+
 function drawFixedBrowserDemoHud(args: {
   app: Application;
   layer: Container;
@@ -359,6 +512,7 @@ function drawFixedBrowserDemoHud(args: {
   briefingOpen: boolean;
   nextCampaignMap: WargusMap | null;
   iconAtlas: IconTextureAtlas | null;
+  unitAtlases: Map<string, UnitTextureAtlas>;
   statusDecorationAtlas: StatusDecorationAtlas | null;
   commandPage: number;
   onCommand: (command: HudCommandId, input?: { ctrlKey?: boolean; shiftKey?: boolean }) => void;
@@ -369,31 +523,23 @@ function drawFixedBrowserDemoHud(args: {
   onMinimapPoint: (tileX: number, tileY: number, input: { button: number; shiftKey: boolean }) => void;
   onNextCampaignMission: () => void;
 }): void {
-  const { app, layer, graphics, manifest, activeMap, world, camera, sourceViewportCameras, selectedUnits, selected, selectedFromHover, selectedIsOwned, visiblePlayer, supply, alertPings, hudMessages, paused, gameSpeed, briefingOpen, nextCampaignMap, iconAtlas, statusDecorationAtlas, commandPage, onCommand, onMapCommand, onSelectedUnitPick, onFreeWorkerPick, onProductionQueuePick, onMinimapPoint, onNextCampaignMission } = args;
+  const { app, layer, graphics, manifest, activeMap, world, camera, sourceViewportCameras, selectedUnits, selected, selectedFromHover, selectedIsOwned, visiblePlayer, supply, alertPings, hudMessages, paused, gameSpeed, nextCampaignMap, iconAtlas, unitAtlases, statusDecorationAtlas, commandPage, onCommand, onMapCommand, onSelectedUnitPick, onFreeWorkerPick, onProductionQueuePick, onMinimapPoint, onNextCampaignMission } = args;
   const screenWidth = app.screen.width;
   const screenHeight = app.screen.height;
-  const margin = 16;
-  const topWidth = Math.min(760, Math.max(420, screenWidth - 240));
-  drawFixedDemoTopBar(layer, graphics, margin, 12, topWidth, activeMap, world, visiblePlayer, supply, iconAtlas, briefingOpen, onFreeWorkerPick);
+  const layout = modernFixedDemoHudLayout(screenWidth, screenHeight);
+  const debug = beginModernHudLayoutDebug(layout);
+  drawFixedDemoTopBar(layer, graphics, layout, activeMap, world, visiblePlayer, supply, iconAtlas, onFreeWorkerPick, debug);
 
-  const minimapSize = Math.min(172, Math.max(126, Math.min(screenWidth, screenHeight) * 0.22));
-  const minimapX = screenWidth - minimapSize - margin;
-  const minimapY = 16;
-  drawFixedDemoPanel(graphics, minimapX - 8, minimapY - 8, minimapSize + 16, minimapSize + 82, 0.7);
-  drawMinimap(layer, graphics, minimapX, minimapY, minimapSize, minimapSize, world, camera, sourceViewportCameras, alertPings, screenWidth, screenHeight, screenWidth, screenHeight, onMinimapPoint);
-  drawFixedDemoMapButtons(layer, graphics, minimapX, minimapY + minimapSize + 10, minimapSize, paused, gameSpeed, onMapCommand);
+  drawFixedDemoPanel(graphics, layout.minimapPanel.x, layout.minimapPanel.y, layout.minimapPanel.width, layout.minimapPanel.height, 0.7);
+  drawMinimap(layer, graphics, layout.minimap.x, layout.minimap.y, layout.minimap.width, layout.minimap.height, world, camera, sourceViewportCameras, alertPings, screenWidth, screenHeight, screenWidth, screenHeight, onMinimapPoint);
+  drawFixedDemoMapButtons(layer, graphics, layout.mapButtons.x, layout.mapButtons.y, layout.mapButtons.width, paused, gameSpeed, onMapCommand);
 
-  const commandWidth = Math.min(382, Math.max(292, screenWidth * 0.3));
-  const commandHeight = 178;
-  const commandX = screenWidth - commandWidth - margin;
-  const commandY = screenHeight - commandHeight - margin;
-  const selectedWidth = Math.min(370, Math.max(282, commandX - margin * 2));
-  const selectedHeight = 178;
-  drawFixedDemoSelectedPanel(layer, graphics, margin, screenHeight - selectedHeight - margin, selectedWidth, selectedHeight, manifest, world, selectedUnits, selected, selectedFromHover, selectedIsOwned, iconAtlas, statusDecorationAtlas, onSelectedUnitPick, onProductionQueuePick);
-  drawFixedDemoCommandPanel(layer, graphics, commandX, commandY, commandWidth, commandHeight, manifest, world, selectedUnits, iconAtlas, commandPage, onCommand);
+  drawFixedDemoSelectedPanel(layer, graphics, layout.selectionPanel, manifest, world, selectedUnits, selected, selectedFromHover, selectedIsOwned, iconAtlas, unitAtlases, statusDecorationAtlas, onSelectedUnitPick, onProductionQueuePick, debug);
+  drawFixedDemoCommandPanel(layer, graphics, layout.commandPanel, manifest, world, selectedUnits, iconAtlas, commandPage, onCommand, debug);
+  drawFixedDemoToasts(layer, graphics, layout.toastLane, world, hudMessages, debug);
 
-  drawHudMessages(layer, app, 0, manifest, world, hudMessages, null);
   drawMatchOverlay(app, layer, manifest, world, nextCampaignMap, null, onNextCampaignMission, () => onMapCommand("restart-map"), () => onMapCommand("choose-map"));
+  finalizeModernHudLayoutDebug(debug);
 }
 
 function drawFixedDemoPanel(graphics: Graphics, x: number, y: number, width: number, height: number, alpha = 0.74): void {
@@ -403,81 +549,90 @@ function drawFixedDemoPanel(graphics: Graphics, x: number, y: number, width: num
   graphics.stroke({ width: 1, color: 0xd8c77a, alpha: 0.62 });
 }
 
-function drawFixedDemoTopBar(layer: Container, graphics: Graphics, x: number, y: number, width: number, activeMap: WargusMap, world: WorldState, player: WorldState["players"][number] | undefined, supply: ReturnType<typeof getPlayerSupply> | null, iconAtlas: IconTextureAtlas | null, briefingOpen: boolean, onFreeWorkerPick: () => void): void {
-  drawFixedDemoPanel(graphics, x, y, width, 102, 0.72);
-  addFixedDemoText(layer, "Wargus TS Demo", x + 14, y + 9, 18, "#f0df9a", 800);
-  addFixedDemoText(layer, activeMap.title, x + 14, y + 33, 12, "#d8d3bd", 650, width * 0.36);
-  const mission = fixedDemoMissionSummary(world, briefingOpen);
-  drawFixedDemoStageStrip(layer, graphics, x + 14, y + 57, Math.min(360, width * 0.5), mission);
-  addFixedDemoText(layer, mission ? `Objective: ${mission.objective}` : "Objective: Build, train, attack.", x + 14, y + 80, 12, "#fff0a8", 750, width - 28);
+function drawFixedDemoTopBar(layer: Container, graphics: Graphics, layout: ModernHudLayout, activeMap: WargusMap, world: WorldState, player: WorldState["players"][number] | undefined, supply: ReturnType<typeof getPlayerSupply> | null, iconAtlas: IconTextureAtlas | null, onFreeWorkerPick: () => void, debug: ModernHudLayoutDebug): void {
+  const { x, y, width, height } = layout.topBar;
+  drawFixedDemoPanel(graphics, x, y, width, height, 0.72);
+  addFixedDemoFitText(layer, {
+    text: activeMap.title,
+    x: x + 14,
+    y: y + 12,
+    width: Math.max(128, layout.resourceBar.x - x - 24),
+    height: height - 22,
+    fontSize: 16,
+    minFontSize: 11,
+    fill: "#f0df9a",
+    fontWeight: 800
+  });
+  const human = player?.race !== "orc";
+  const oilRelevant = (player?.resources.oil ?? 0) > 0
+    || world.units.some((unit) => unit.player === world.visibilityPlayer && (unit.gatherResources.includes("oil") || unit.carriedResource === "oil" || unit.storesResources.includes("oil")));
   const resources: Array<{ key: string; label: string; value: string; icon: string | null; action?: () => void }> = [
     { key: "gold", label: "Gold", value: String(player?.resources.gold ?? 0), icon: "icon-gold-mine" },
-    { key: "wood", label: "Lumber", value: String(player?.resources.wood ?? 0), icon: "icon-elven-lumber-mill" },
-    { key: "food", label: "Food", value: supply ? `${supply.used + supply.queued}/${supply.cap}` : "0/0", icon: "icon-farm" },
+    { key: "wood", label: "Lumber", value: String(player?.resources.wood ?? 0), icon: human ? "icon-elven-lumber-mill" : "icon-troll-lumber-mill" },
+    { key: "food", label: "Food", value: supply ? `${supply.used + supply.queued}/${supply.cap}` : "0/0", icon: human ? "icon-farm" : "icon-pig-farm" },
     { key: "workers", label: "Idle", value: String(sourceFreeWorkerCount(world, player?.id ?? world.visibilityPlayer)), icon: "icon-peasant", action: onFreeWorkerPick }
   ];
-  const startX = x + Math.max(210, width * 0.38);
-  const cellWidth = Math.max(82, (width - (startX - x) - 12) / resources.length);
+  if (oilRelevant) {
+    resources.splice(3, 0, { key: "oil", label: "Oil", value: String(player?.resources.oil ?? 0), icon: "icon-oil-patch" });
+  }
+  const startX = layout.resourceBar.x;
+  const cellWidth = Math.max(70, layout.resourceBar.width / resources.length);
   resources.forEach((resource, index) => {
     const cellX = startX + index * cellWidth;
-    const texture = iconAtlas ? getIconTexture(iconAtlas, resource.icon) : null;
-    if (texture) {
-      const icon = new Sprite(texture);
-      icon.x = cellX;
-      icon.y = y + 13;
-      icon.width = 26;
-      icon.height = 22;
-      layer.addChild(icon);
-    }
-    addFixedDemoText(layer, resource.value, cellX + 31, y + 13, 15, "#fff0a8", 800);
-    addFixedDemoText(layer, resource.label, cellX + 31, y + 33, 10, "#d2c9a8", 600);
+    const chipRect = {
+      x: cellX,
+      y: layout.resourceBar.y,
+      width: Math.max(54, cellWidth - 6),
+      height: layout.resourceBar.height
+    };
+    const fits = drawFixedDemoResourceChip(layer, graphics, chipRect, resource, iconAtlas);
+    debug.resourceChips.push({ ...chipRect, key: resource.key, value: resource.value, textFits: fits });
     if (resource.action) {
-      const hit = new Graphics();
-      hit.rect(cellX - 4, y + 8, cellWidth - 4, 42);
-      hit.fill({ color: 0xffffff, alpha: 0.001 });
-      hit.eventMode = "static";
-      hit.cursor = "pointer";
-      hit.on("pointertap", resource.action);
-      layer.addChild(hit);
+      addFixedDemoHitTarget(layer, chipRect, false, resource.action);
     }
   });
 }
 
-function drawFixedDemoStageStrip(layer: Container, graphics: Graphics, x: number, y: number, width: number, mission: FixedDemoMissionSummary | null): void {
-  const stages: Array<{ key: FixedDemoMissionSummary["stage"]; label: string }> = [
-    { key: "economy", label: "Gather" },
-    { key: "training", label: "Train" },
-    { key: "raid", label: "Defend" },
-    { key: "assault", label: "Assault" }
-  ];
-  const activeIndex = mission ? fixedDemoStageProgressIndex(mission.stage) : 0;
-  const gap = 5;
-  const stepWidth = Math.max(58, Math.floor((width - gap * (stages.length - 1)) / stages.length));
-  stages.forEach((stage, index) => {
-    const stepX = x + index * (stepWidth + gap);
-    const complete = activeIndex > index || mission?.stage === "victory";
-    const active = activeIndex === index && mission?.stage !== "victory" && mission?.stage !== "defeat";
-    const fill = complete ? 0x244e31 : active ? 0x5f4b21 : 0x171916;
-    const stroke = complete ? 0x8bd17b : active ? 0xf0df9a : 0x635b47;
-    graphics.roundRect(stepX, y, stepWidth, 17, 4);
-    graphics.fill({ color: fill, alpha: active ? 0.94 : 0.78 });
-    graphics.roundRect(stepX, y, stepWidth, 17, 4);
-    graphics.stroke({ width: 1, color: stroke, alpha: active ? 0.95 : 0.7 });
-    addFixedDemoText(layer, `${complete ? "OK " : ""}${stage.label}`, stepX + stepWidth / 2, y + 3, 10, complete ? "#d8f0c8" : active ? "#fff0a8" : "#b6ad8f", 800, stepWidth - 8, 0.5);
+function drawFixedDemoResourceChip(layer: Container, graphics: Graphics, rect: HudRect, resource: { label: string; value: string; icon: string | null }, iconAtlas: IconTextureAtlas | null): boolean {
+  graphics.roundRect(rect.x, rect.y, rect.width, rect.height, 5);
+  graphics.fill({ color: 0x151c12, alpha: 0.62 });
+  graphics.roundRect(rect.x, rect.y, rect.width, rect.height, 5);
+  graphics.stroke({ width: 1, color: 0x44553b, alpha: 0.56 });
+  const texture = iconAtlas ? getIconTexture(iconAtlas, resource.icon) : null;
+  const iconSize = Math.min(23, Math.max(18, rect.height - 18));
+  let textX = rect.x + 8;
+  if (texture) {
+    const icon = new Sprite(texture);
+    icon.x = rect.x + 7;
+    icon.y = rect.y + Math.round((rect.height - iconSize) / 2);
+    icon.width = iconSize;
+    icon.height = iconSize;
+    layer.addChild(icon);
+    textX += iconSize + 7;
+  }
+  const valueFit = addFixedDemoFitText(layer, {
+    text: resource.value,
+    x: textX,
+    y: rect.y + 6,
+    width: Math.max(20, rect.x + rect.width - textX - 6),
+    height: 18,
+    fontSize: 15,
+    minFontSize: 9,
+    fill: "#fff0a8",
+    fontWeight: 800
   });
-}
-
-function fixedDemoStageProgressIndex(stage: FixedDemoMissionSummary["stage"]): number {
-  if (stage === "briefing" || stage === "economy") {
-    return 0;
-  }
-  if (stage === "training") {
-    return 1;
-  }
-  if (stage === "raid") {
-    return 2;
-  }
-  return 3;
+  const labelFit = addFixedDemoFitText(layer, {
+    text: resource.label,
+    x: textX,
+    y: rect.y + 26,
+    width: Math.max(20, rect.x + rect.width - textX - 6),
+    height: 12,
+    fontSize: 10,
+    minFontSize: 8,
+    fill: "#d2c9a8",
+    fontWeight: 600
+  });
+  return valueFit.fits && labelFit.fits;
 }
 
 function drawFixedDemoMapButtons(layer: Container, graphics: Graphics, x: number, y: number, width: number, paused: boolean, gameSpeed: number, onMapCommand: (command: HudMapCommandId) => void): void {
@@ -491,59 +646,173 @@ function drawFixedDemoMapButtons(layer: Container, graphics: Graphics, x: number
   drawFixedDemoButton(layer, graphics, x + width - 32, y + 30, 32, buttonHeight, "-", false, () => onMapCommand("slower-game"));
 }
 
-function drawFixedDemoSelectedPanel(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, manifest: WargusManifest, world: WorldState, selectedUnits: WorldState["units"], selected: WorldState["units"][number] | null, selectedFromHover: boolean, selectedIsOwned: boolean, iconAtlas: IconTextureAtlas | null, statusDecorationAtlas: StatusDecorationAtlas | null, onSelectedUnitPick: (unitId: string, additive: boolean) => void, onProductionQueuePick: (buildingId: string, item: { kind: "production"; index: number } | { kind: "research" }) => void): void {
+function drawFixedDemoSelectedPanel(layer: Container, graphics: Graphics, rect: HudRect, manifest: WargusManifest, world: WorldState, selectedUnits: WorldState["units"], selected: WorldState["units"][number] | null, selectedFromHover: boolean, selectedIsOwned: boolean, iconAtlas: IconTextureAtlas | null, unitAtlases: Map<string, UnitTextureAtlas>, statusDecorationAtlas: StatusDecorationAtlas | null, onSelectedUnitPick: (unitId: string, additive: boolean) => void, onProductionQueuePick: (buildingId: string, item: { kind: "production"; index: number } | { kind: "research" }) => void, debug: ModernHudLayoutDebug): void {
+  const { x, y, width, height } = rect;
   drawFixedDemoPanel(graphics, x, y, width, height, 0.72);
   const title = selectedUnits.length > 1 ? `${selectedUnits.length} units selected` : selectedFromHover && selected ? selected.name : selected ? selected.name : "No unit selected";
-  addFixedDemoText(layer, title, x + 14, y + 10, 16, "#f0df9a", 800, width - 28);
+  addFixedDemoFitText(layer, {
+    text: title,
+    x: x + 14,
+    y: y + 10,
+    width: width - 28,
+    height: 20,
+    fontSize: 16,
+    minFontSize: 10,
+    fill: "#f0df9a",
+    fontWeight: 800
+  });
   if (!selected) {
-    addFixedDemoText(layer, "Drag-select units or click a building.", x + 14, y + 40, 13, "#d8d3bd", 600, width - 28);
+    const portraitWidth = 76;
+    const portraitHeight = 68;
+    const portraitRect = { x: x + 14, y: y + 38, width: portraitWidth, height: portraitHeight };
+    drawFixedDemoPortraitFrame(layer, graphics, portraitRect.x, portraitRect.y, portraitRect.width, portraitRect.height, null, false, "?", "empty");
+    debug.portrait = { ...portraitRect, filled: true, source: "initial" };
+    addFixedDemoFitText(layer, {
+      text: "Drag-select units or click a building.",
+      x: x + portraitWidth + 30,
+      y: y + 48,
+      width: Math.max(140, width - portraitWidth - 46),
+      height: 46,
+      fontSize: 13,
+      minFontSize: 9,
+      fill: "#d8d3bd",
+      fontWeight: 600,
+      maxLines: 2
+    });
     return;
   }
 
-  const definition = manifest.units.find((unit) => unit.id === selected.typeId);
-  const texture = iconAtlas ? getIconTexture(iconAtlas, definition?.icon) : null;
   const portraitX = x + 14;
   const portraitY = y + 38;
   const portraitWidth = 76;
   const portraitHeight = 68;
-  drawFixedDemoPortraitFrame(layer, graphics, portraitX, portraitY, portraitWidth, portraitHeight, texture, selected.hitPoints <= 0);
+  const portrait = fixedDemoPortraitTexture(manifest, selected, iconAtlas, unitAtlases);
+  const initial = unitTypeName(manifest, selected.typeId).trim().charAt(0).toUpperCase() || "?";
+  drawFixedDemoPortraitFrame(layer, graphics, portraitX, portraitY, portraitWidth, portraitHeight, portrait.texture, selected.hitPoints <= 0, initial, portrait.source);
+  debug.portrait = { x: portraitX, y: portraitY, width: portraitWidth, height: portraitHeight, filled: true, source: portrait.source };
   const detailsX = portraitX + portraitWidth + 14;
   const detailsWidth = Math.max(130, width - (detailsX - x) - 14);
   const type = unitTypeName(manifest, selected.typeId);
   const owner = selected.player === world.visibilityPlayer ? "Your unit" : selected.player === 15 ? "Neutral" : "Enemy";
-  addFixedDemoText(layer, `${type}`, detailsX, y + 38, 14, selectedIsOwned ? "#fff0a8" : "#ffb8a8", 800, detailsWidth);
-  addFixedDemoText(layer, owner, detailsX, y + 56, 11, "#d8d3bd", 650, detailsWidth);
-  drawFixedDemoBar(graphics, detailsX, y + 75, detailsWidth, 11, selected.maxHitPoints > 0 ? selected.hitPoints / selected.maxHitPoints : 0, healthColor(selected.hitPoints, selected.maxHitPoints));
-  addFixedDemoText(layer, `HP ${Math.ceil(selected.hitPoints)}/${selected.maxHitPoints}`, detailsX, y + 90, 11, "#e8e2c4", 700, detailsWidth * 0.5);
+  addFixedDemoFitText(layer, {
+    text: type,
+    x: detailsX,
+    y: y + 38,
+    width: detailsWidth,
+    height: 17,
+    fontSize: 14,
+    minFontSize: 9,
+    fill: selectedIsOwned ? "#fff0a8" : "#ffb8a8",
+    fontWeight: 800
+  });
+  addFixedDemoFitText(layer, {
+    text: owner,
+    x: detailsX,
+    y: y + 56,
+    width: detailsWidth,
+    height: 14,
+    fontSize: 11,
+    minFontSize: 8,
+    fill: "#d8d3bd",
+    fontWeight: 650
+  });
+  drawFixedDemoBar(graphics, detailsX, y + 74, detailsWidth, 11, selected.maxHitPoints > 0 ? selected.hitPoints / selected.maxHitPoints : 0, healthColor(selected.hitPoints, selected.maxHitPoints));
+  addFixedDemoFitText(layer, {
+    text: `HP ${Math.ceil(selected.hitPoints)}/${selected.maxHitPoints}`,
+    x: detailsX,
+    y: y + 88,
+    width: detailsWidth,
+    height: 14,
+    fontSize: 11,
+    minFontSize: 8,
+    fill: "#e8e2c4",
+    fontWeight: 700
+  });
   if (selected.maxMana > 0) {
-    drawFixedDemoBar(graphics, detailsX, y + 108, detailsWidth, 8, selected.mana / selected.maxMana, 0x4f8edb);
-    addFixedDemoText(layer, `Mana ${Math.floor(selected.mana)}/${selected.maxMana}`, detailsX, y + 119, 10, "#b8d8ff", 650, detailsWidth);
+    drawFixedDemoBar(graphics, detailsX, y + 105, detailsWidth, 8, selected.mana / selected.maxMana, 0x4f8edb);
+    addFixedDemoFitText(layer, {
+      text: `Mana ${Math.floor(selected.mana)}/${selected.maxMana}`,
+      x: detailsX,
+      y: y + 116,
+      width: detailsWidth,
+      height: 12,
+      fontSize: 10,
+      minFontSize: 8,
+      fill: "#b8d8ff",
+      fontWeight: 650
+    });
   }
-  const statY = selected.maxMana > 0 ? y + 135 : y + 108;
+  const statY = selected.maxMana > 0 ? y + 132 : y + 106;
   drawFixedDemoSelectedStats(layer, selected, detailsX, statY, detailsWidth);
 
   const resourceLine = selectedResourceLine(selected, world);
   if (resourceLine) {
-    addFixedDemoText(layer, resourceLine, portraitX, y + 113, 11, "#f0df9a", 700, portraitWidth + 8);
+    addFixedDemoFitText(layer, {
+      text: resourceLine,
+      x: portraitX,
+      y: y + 113,
+      width: portraitWidth + 8,
+      height: 14,
+      fontSize: 11,
+      minFontSize: 8,
+      fill: "#f0df9a",
+      fontWeight: 700
+    });
   }
   const orderLine = selectedOrderLine(selected, world, manifest);
   if (orderLine) {
-    addFixedDemoText(layer, orderLine, x + 14, y + height - 23, 12, "#d8d3bd", 650, width - 28);
+    addFixedDemoFitText(layer, {
+      text: orderLine,
+      x: x + 14,
+      y: y + height - 24,
+      width: width - 28,
+      height: 16,
+      fontSize: 12,
+      minFontSize: 8,
+      fill: "#d8d3bd",
+      fontWeight: 650
+    });
   }
 
   const activeProduction = selectedIsOwned ? selected.productionQueue[0] : null;
   if (activeProduction) {
     const label = unitTypeName(manifest, activeProduction.unitTypeId);
-    const queueY = y + height - 42;
-    addFixedDemoText(layer, `Training ${label}`, x + 14, queueY - 2, 12, "#fff0a8", 700, Math.max(92, width - 150));
-    drawFixedDemoBar(graphics, x + Math.max(132, width * 0.42), queueY + 3, Math.max(80, width - Math.max(150, width * 0.42)), 8, 1 - activeProduction.remainingSeconds / activeProduction.totalSeconds, sourceCompletedBarColor(world));
-    const hit = new Graphics();
-    hit.rect(x + 10, queueY - 8, width - 20, 24);
-    hit.fill({ color: 0xffffff, alpha: 0.001 });
-    hit.eventMode = "static";
-    hit.cursor = "pointer";
-    hit.on("pointertap", () => onProductionQueuePick(selected.id, { kind: "production", index: 0 }));
-    layer.addChild(hit);
+    const queueY = y + height - 46;
+    const labelWidth = Math.max(92, width * 0.42 - 24);
+    addFixedDemoFitText(layer, {
+      text: `Training ${label}`,
+      x: x + 14,
+      y: queueY - 2,
+      width: labelWidth,
+      height: 16,
+      fontSize: 12,
+      minFontSize: 8,
+      fill: "#fff0a8",
+      fontWeight: 700
+    });
+    const barX = x + Math.max(132, width * 0.42);
+    drawFixedDemoBar(graphics, barX, queueY + 3, Math.max(80, x + width - 14 - barX), 8, 1 - activeProduction.remainingSeconds / activeProduction.totalSeconds, sourceCompletedBarColor(world));
+    addFixedDemoHitTarget(layer, { x: x + 10, y: queueY - 8, width: width - 20, height: 24 }, true, () => onProductionQueuePick(selected.id, { kind: "production", index: 0 }));
+  }
+
+  const activeResearch = selectedIsOwned ? world.activeResearch.find((research) => research.buildingId === selected.id) : null;
+  if (activeResearch) {
+    const label = upgradeName(manifest, activeResearch.upgradeId);
+    const researchY = y + height - (activeProduction ? 66 : 46);
+    addFixedDemoFitText(layer, {
+      text: `Researching ${label}`,
+      x: x + 14,
+      y: researchY - 2,
+      width: Math.max(112, width * 0.42),
+      height: 16,
+      fontSize: 12,
+      minFontSize: 8,
+      fill: "#fff0a8",
+      fontWeight: 700
+    });
+    const barX = x + Math.max(150, width * 0.48);
+    drawFixedDemoBar(graphics, barX, researchY + 3, Math.max(70, x + width - 14 - barX), 8, 1 - activeResearch.remainingSeconds / activeResearch.totalSeconds, sourceCompletedBarColor(world));
+    addFixedDemoHitTarget(layer, { x: x + 10, y: researchY - 8, width: width - 20, height: 24 }, true, () => onProductionQueuePick(selected.id, { kind: "research" }));
   }
 
   if (selectedUnits.length > 1) {
@@ -552,7 +821,20 @@ function drawFixedDemoSelectedPanel(layer: Container, graphics: Graphics, x: num
   void statusDecorationAtlas;
 }
 
-function drawFixedDemoPortraitFrame(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, texture: ReturnType<typeof getIconTexture>, dimmed: boolean): void {
+function fixedDemoPortraitTexture(manifest: WargusManifest, selected: WorldState["units"][number], iconAtlas: IconTextureAtlas | null, unitAtlases: Map<string, UnitTextureAtlas>): { texture: ReturnType<typeof getIconTexture>; source: "icon" | "unit-sprite" | "initial" | "empty" } {
+  const definition = manifest.units.find((unit) => unit.id === selected.typeId);
+  const iconTexture = iconAtlas ? getIconTexture(iconAtlas, definition?.icon) : null;
+  if (iconTexture) {
+    return { texture: iconTexture, source: "icon" };
+  }
+  const unitAtlas = unitAtlases.get(selected.typeId);
+  if (unitAtlas) {
+    return { texture: getFrameTexture(unitAtlas, 0), source: "unit-sprite" };
+  }
+  return { texture: null, source: "initial" };
+}
+
+function drawFixedDemoPortraitFrame(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, texture: ReturnType<typeof getIconTexture>, dimmed: boolean, fallbackInitial = "?", source: "icon" | "unit-sprite" | "initial" | "empty" = texture ? "icon" : "initial"): void {
   graphics.rect(x - 4, y - 4, width + 8, height + 8);
   graphics.fill({ color: 0x070503, alpha: 0.96 });
   graphics.rect(x - 4, y - 4, width + 8, height + 8);
@@ -567,6 +849,20 @@ function drawFixedDemoPortraitFrame(layer: Container, graphics: Graphics, x: num
     icon.height = height - 14;
     icon.alpha = dimmed ? 0.45 : 1;
     layer.addChild(icon);
+  } else {
+    addFixedDemoFitText(layer, {
+      text: fallbackInitial,
+      x,
+      y: y + 8,
+      width,
+      height: height - 16,
+      fontSize: 34,
+      minFontSize: 16,
+      fill: source === "empty" ? "#7d765f" : "#f0df9a",
+      fontWeight: 900,
+      anchorX: 0.5,
+      align: "center"
+    });
   }
 }
 
@@ -620,22 +916,71 @@ function drawFixedDemoMultiSelectStrip(layer: Container, graphics: Graphics, x: 
   }
 }
 
-function drawFixedDemoCommandPanel(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, manifest: WargusManifest, world: WorldState, selectedUnits: WorldState["units"], iconAtlas: IconTextureAtlas | null, commandPage: number, onCommand: (command: HudCommandId, input?: { ctrlKey?: boolean; shiftKey?: boolean }) => void): void {
+function drawFixedDemoCommandPanel(layer: Container, graphics: Graphics, rect: HudRect, manifest: WargusManifest, world: WorldState, selectedUnits: WorldState["units"], iconAtlas: IconTextureAtlas | null, commandPage: number, onCommand: (command: HudCommandId, input?: { ctrlKey?: boolean; shiftKey?: boolean }) => void, debug: ModernHudLayoutDebug): void {
+  const { x, y, width, height } = rect;
   drawFixedDemoPanel(graphics, x, y, width, height, 0.74);
-  addFixedDemoText(layer, "Commands", x + 14, y + 10, 16, "#f0df9a", 800);
+  addFixedDemoFitText(layer, {
+    text: "Commands",
+    x: x + 14,
+    y: y + 10,
+    width: width - 28,
+    height: 20,
+    fontSize: 16,
+    minFontSize: 10,
+    fill: "#f0df9a",
+    fontWeight: 800
+  });
   const commands = dedupeFixedDemoCommands(availableCommands(manifest, world, selectedUnits, commandPage)).slice(0, 9);
   if (commands.length === 0) {
-    addFixedDemoText(layer, "Select a worker, soldier, or building.", x + 14, y + 42, 13, "#d8d3bd", 600, width - 28);
+    addFixedDemoFitText(layer, {
+      text: "Select a worker, soldier, or building.",
+      x: x + 14,
+      y: y + 42,
+      width: width - 28,
+      height: 44,
+      fontSize: 13,
+      minFontSize: 9,
+      fill: "#d8d3bd",
+      fontWeight: 600,
+      maxLines: 2
+    });
     return;
   }
   const columns = 3;
   const gap = 8;
   const buttonWidth = Math.floor((width - 28 - gap * (columns - 1)) / columns);
-  const buttonHeight = 38;
+  const footerHeight = 28;
+  const buttonHeight = Math.floor((height - 48 - footerHeight - gap * 2) / 3);
+  const hoveredCommand = hoveredHudCommandId ? commands.find((command) => command.id === hoveredHudCommandId) : null;
+  const footerText = commandStatusText(manifest, world, hoveredCommand ?? commands[0]);
   commands.forEach((command, index) => {
     const bx = x + 14 + (index % columns) * (buttonWidth + gap);
     const by = y + 40 + Math.floor(index / columns) * (buttonHeight + gap);
-    drawFixedDemoCommandButton(layer, graphics, bx, by, buttonWidth, buttonHeight, command, iconAtlas, onCommand);
+    const textFits = drawFixedDemoCommandButton(layer, graphics, bx, by, buttonWidth, buttonHeight, command, iconAtlas, manifest, world, onCommand);
+    debug.commandButtons.push({
+      x: bx,
+      y: by,
+      width: buttonWidth,
+      height: buttonHeight,
+      id: command.id,
+      label: command.label,
+      longLabel: commandLongLabel(manifest, world, command),
+      statusText: commandStatusText(manifest, world, command),
+      textFits
+    });
+  });
+  graphics.roundRect(x + 14, y + height - 34, width - 28, 22, 5);
+  graphics.fill({ color: 0x050604, alpha: 0.54 });
+  addFixedDemoFitText(layer, {
+    text: footerText,
+    x: x + 22,
+    y: y + height - 30,
+    width: width - 44,
+    height: 16,
+    fontSize: 11,
+    minFontSize: 8,
+    fill: "#d8d3bd",
+    fontWeight: 650
   });
 }
 
@@ -651,7 +996,40 @@ function dedupeFixedDemoCommands(commands: HudCommand[]): HudCommand[] {
   });
 }
 
-function drawFixedDemoCommandButton(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, command: HudCommand, iconAtlas: IconTextureAtlas | null, onCommand: (command: HudCommandId, input?: { ctrlKey?: boolean; shiftKey?: boolean }) => void): void {
+function commandLongLabel(manifest: WargusManifest, world: WorldState, command: HudCommand): string {
+  if (command.longLabel) {
+    return command.longLabel;
+  }
+  if (command.id.startsWith("source-upgrade:")) {
+    return `Upgrade to ${unitTypeName(manifest, command.id.slice("source-upgrade:".length))}`;
+  }
+  if (command.id.startsWith("source-build:")) {
+    return `Build ${unitTypeName(manifest, command.id.slice("source-build:".length))}`;
+  }
+  if (command.id.startsWith("source-train:")) {
+    return `Train ${unitTypeName(manifest, command.id.slice("source-train:".length))}`;
+  }
+  if (command.id.startsWith("source-research:")) {
+    return `Research ${upgradeName(manifest, command.id.slice("source-research:".length))}`;
+  }
+  if (command.id.startsWith("source-spell:")) {
+    const spellId = command.id.slice("source-spell:".length);
+    const spell = world.spellDefinitions.find((candidate) => candidate.id === spellId);
+    return spell?.showName ? `Cast ${spell.showName}` : command.label;
+  }
+  return sourceFullButtonLabel(command.sourceButton) ?? command.label;
+}
+
+function commandStatusText(manifest: WargusManifest, world: WorldState, command: HudCommand): string {
+  if (command.statusText) {
+    return command.statusText;
+  }
+  const sourceStatus = command.sourceButton ? sourceCommandStatusLineText(manifest, command) : "";
+  const longLabel = commandLongLabel(manifest, world, command);
+  return sourceStatus || longLabel;
+}
+
+function drawFixedDemoCommandButton(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, command: HudCommand, iconAtlas: IconTextureAtlas | null, manifest: WargusManifest, world: WorldState, onCommand: (command: HudCommandId, input?: { ctrlKey?: boolean; shiftKey?: boolean }) => void): boolean {
   const disabled = command.disabled === true;
   drawFixedDemoButton(layer, graphics, x, y, width, height, "", disabled, (event) => {
     const nativeEvent = event.nativeEvent;
@@ -661,17 +1039,121 @@ function drawFixedDemoCommandButton(layer: Container, graphics: Graphics, x: num
     });
   });
   const texture = iconAtlas ? getIconTexture(iconAtlas, command.icon) : null;
+  const iconSize = Math.min(32, Math.max(24, height - 24));
   if (texture) {
     const icon = new Sprite(texture);
-    icon.x = x + 6;
-    icon.y = y + 6;
-    icon.width = 28;
-    icon.height = 24;
+    icon.x = x + Math.round((width - iconSize) / 2);
+    icon.y = y + 8;
+    icon.width = iconSize;
+    icon.height = iconSize;
     icon.alpha = disabled ? 0.45 : 1;
     layer.addChild(icon);
   }
-  const key = command.key ? `${command.key} ` : "";
-  addFixedDemoText(layer, `${key}${command.label}`, x + (texture ? 39 : 8), y + 9, 12, disabled ? "#8f876d" : "#f6e8a8", 800, width - (texture ? 44 : 16));
+  if (command.key) {
+    graphics.roundRect(x + 5, y + 5, Math.min(22, Math.max(16, command.key.length * 8)), 14, 3);
+    graphics.fill({ color: 0x050604, alpha: 0.72 });
+    addFixedDemoFitText(layer, {
+      text: command.key,
+      x: x + 7,
+      y: y + 6,
+      width: Math.min(18, Math.max(12, command.key.length * 7)),
+      height: 11,
+      fontSize: 9,
+      minFontSize: 7,
+      fill: disabled ? "#8f876d" : "#fff3ba",
+      fontWeight: 800,
+      align: "center"
+    });
+  }
+  const labelFit = addFixedDemoFitText(layer, {
+    text: command.label,
+    x: x + width / 2,
+    y: y + height - 19,
+    width: width - 12,
+    height: 16,
+    fontSize: 10,
+    minFontSize: 7,
+    fill: disabled ? "#8f876d" : "#f6e8a8",
+    fontWeight: 800,
+    anchorX: 0.5,
+    align: "center",
+    maxLines: 2
+  });
+  addFixedDemoHitTarget(layer, { x, y, width, height }, disabled, (event) => {
+    const nativeEvent = event.nativeEvent;
+    onCommand(command.id, {
+      ctrlKey: nativeEvent instanceof PointerEvent && nativeEvent.ctrlKey,
+      shiftKey: nativeEvent instanceof PointerEvent && nativeEvent.shiftKey
+    });
+  }, () => {
+    hoveredHudCommandId = command.id;
+  }, () => {
+    if (hoveredHudCommandId === command.id) {
+      hoveredHudCommandId = null;
+    }
+  });
+  void manifest;
+  void world;
+  return labelFit.fits;
+}
+
+function drawFixedDemoToasts(layer: Container, graphics: Graphics, rect: HudRect, world: WorldState, messages: HudMessage[], debug: ModernHudLayoutDebug): void {
+  if (!world.engineSettings.showMessagesDefault || messages.length === 0 || world.matchState.status !== "playing") {
+    return;
+  }
+  const now = performance.now();
+  const visible = messages
+    .filter((message) => message.expiresAt > now)
+    .slice(-4);
+  if (visible.length === 0) {
+    return;
+  }
+  graphics.roundRect(rect.x, rect.y, rect.width, rect.height, 6);
+  graphics.fill({ color: 0x050604, alpha: 0.28 });
+  const gap = 6;
+  const rowHeight = Math.floor((rect.height - gap * (visible.length - 1)) / Math.max(4, visible.length));
+  visible.forEach((message, index) => {
+    const life = Math.max(1, message.expiresAt - message.createdAt);
+    const fade = Math.max(0.25, Math.min(1, (message.expiresAt - now) / Math.min(life, 1000)));
+    const severity = fixedDemoToastSeverity(message.text);
+    const row = {
+      x: rect.x,
+      y: rect.y + index * (rowHeight + gap),
+      width: rect.width,
+      height: rowHeight
+    };
+    const accent = severity === "attack" ? 0xff6a47 : severity === "warning" ? 0xffcf5c : 0x8be38d;
+    graphics.roundRect(row.x, row.y, row.width, row.height, 5);
+    graphics.fill({ color: 0x071007, alpha: 0.6 * fade });
+    graphics.roundRect(row.x, row.y, row.width, row.height, 5);
+    graphics.stroke({ width: 1, color: accent, alpha: 0.58 * fade });
+    graphics.rect(row.x, row.y, 4, row.height);
+    graphics.fill({ color: accent, alpha: 0.72 * fade });
+    const fit = addFixedDemoFitText(layer, {
+      text: message.text,
+      x: row.x + 12,
+      y: row.y + 6,
+      width: row.width - 20,
+      height: row.height - 12,
+      fontSize: 12,
+      minFontSize: 8,
+      fill: severity === "attack" ? "#ffd1c7" : severity === "warning" ? "#ffe6a7" : "#ddf5d4",
+      fontWeight: 700,
+      maxLines: 2
+    });
+    fit.text.alpha = fade;
+    debug.messages.push({ ...row, text: message.text, severity });
+  });
+}
+
+function fixedDemoToastSeverity(text: string): "info" | "warning" | "attack" {
+  if (/attack|enemy|under attack|danger|raid/i.test(text)) {
+    return "attack";
+  }
+  if (/not enough|cannot|blocked|complete|built|trained|research/i.test(text)) {
+    return "warning";
+  }
+  return "info";
 }
 
 function drawFixedDemoButton(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, label: string, disabled: boolean, onTap: (event: FederatedPointerEvent) => void): void {
@@ -700,6 +1182,87 @@ function drawFixedDemoBar(graphics: Graphics, x: number, y: number, width: numbe
   graphics.stroke({ width: 1, color: 0x151b13, alpha: 1 });
   graphics.rect(x + 1, y + 1, Math.max(0, Math.min(1, ratio)) * Math.max(0, width - 2), Math.max(0, height - 2));
   graphics.fill(color);
+}
+
+function addFixedDemoHitTarget(layer: Container, rect: HudRect, disabled: boolean, onTap: (event: FederatedPointerEvent) => void, onPointerOver?: () => void, onPointerOut?: () => void): void {
+  const hit = new Graphics();
+  hit.rect(rect.x, rect.y, rect.width, rect.height);
+  hit.fill({ color: 0xffffff, alpha: 0.001 });
+  hit.eventMode = "static";
+  hit.cursor = disabled ? "default" : "pointer";
+  if (!disabled) {
+    hit.on("pointertap", onTap);
+  }
+  if (onPointerOver) {
+    hit.on("pointerover", onPointerOver);
+  }
+  if (onPointerOut) {
+    hit.on("pointerout", onPointerOut);
+  }
+  layer.addChild(hit);
+}
+
+function addFixedDemoFitText(layer: Container, options: {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  minFontSize?: number;
+  fill: string;
+  fontWeight: number;
+  anchorX?: number;
+  align?: "left" | "center" | "right";
+  maxLines?: number;
+}): FixedDemoTextFit {
+  const minFontSize = options.minFontSize ?? 8;
+  const display = new Text({
+    text: options.text,
+    style: {
+      fill: options.fill,
+      fontFamily: "system-ui, sans-serif",
+      fontSize: options.fontSize,
+      fontWeight: options.fontWeight >= 700 ? "bold" : "normal",
+      lineHeight: Math.round(options.fontSize * 1.15),
+      align: options.align ?? "left",
+      wordWrap: true,
+      wordWrapWidth: Math.max(1, options.width),
+      breakWords: true
+    }
+  });
+  display.anchor.set(options.anchorX ?? 0, 0);
+  display.x = options.x;
+  display.y = options.y;
+  display.resolution = 1.4;
+  let currentSize = options.fontSize;
+  let fits = fixedDemoTextFits(display, options.width, options.height, options.maxLines);
+  while (!fits && currentSize > minFontSize) {
+    currentSize -= 1;
+    display.style.fontSize = currentSize;
+    display.style.lineHeight = Math.round(currentSize * 1.15);
+    fits = fixedDemoTextFits(display, options.width, options.height, options.maxLines);
+  }
+  if (!fits && display.text.length > 4) {
+    const original = display.text;
+    for (let length = Math.max(1, original.length - 4); length > 0; length -= 1) {
+      display.text = `${original.slice(0, length).trimEnd()}...`;
+      fits = fixedDemoTextFits(display, options.width, options.height, options.maxLines);
+      if (fits) {
+        break;
+      }
+    }
+  }
+  layer.addChild(display);
+  return { text: display, fits };
+}
+
+function fixedDemoTextFits(display: Text, width: number, height: number, maxLines?: number): boolean {
+  const lineHeight = Number(display.style.lineHeight) || Number(display.style.fontSize) || 1;
+  const lineCount = Math.max(1, Math.round(display.height / Math.max(1, lineHeight)));
+  return display.width <= width + 1
+    && display.height <= height + 1
+    && (!maxLines || lineCount <= maxLines);
 }
 
 function addFixedDemoText(layer: Container, text: string, x: number, y: number, fontSize: number, fill: string, fontWeight: number, maxWidth?: number, anchorX = 0): Text {
@@ -1813,6 +2376,8 @@ export interface HudCommand {
   id: HudCommandId;
   key: string;
   label: string;
+  longLabel?: string;
+  statusText?: string;
   icon?: string | null;
   sourceButton?: WargusButton | null;
   disabled?: boolean;
@@ -2776,13 +3341,18 @@ function enrichCommandFromSource(
   typeIds: Set<string>
 ): HudCommand {
   const sourceButton = command.sourceButton ?? sourceButtonForCommand(manifest, world, command.id, playerId, selectedUnits, readyUnits, typeIds);
-  return {
+  const enriched = {
     ...command,
     key: sourceButton?.key ? sourceButton.key.toUpperCase() : command.key,
     label: sourceButtonLabel(sourceButton) ?? command.label,
     icon: sourceButton?.icon ?? iconForCommand(command.id, world, playerId, typeIds, selectedUnits),
     sourceButton,
     disabled: command.disabled ?? sourceCommandDisabled(world, sourceButton, selectedUnits)
+  };
+  return {
+    ...enriched,
+    longLabel: command.longLabel ?? commandLongLabel(manifest, world, enriched),
+    statusText: command.statusText ?? commandStatusText(manifest, world, enriched)
   };
 }
 

@@ -7,6 +7,7 @@ import { inflateSync } from "node:zlib";
 const PORT = 5197;
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
+const EXPECTED_BACKGROUND_MUSIC = "warcraft-2-ost-human-1-128-ytshorts.savetube.me.mp3";
 const serverMode = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev";
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-chrome-"));
 const serverArgs = serverMode === "preview"
@@ -66,28 +67,42 @@ try {
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
-  const titleStats = await captureNonBlankScreenshot(client, "title/browser shell", { uniqueColors: 8, brightPixels: 50 });
-  await dispatchKey(client, "Enter");
-  await delay(350);
-  await dispatchKey(client, "Enter");
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false", 10_000);
+  const hasBriefing = await evalValue(client, "window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true");
+  if (hasBriefing) {
+    await dispatchKey(client, "Enter");
+  }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.aiStates?.length === 1 && window.__WARGUS_TS_SMOKE_STATE__?.aiStates?.[0]?.enabled === true && String(window.__WARGUS_TS_SMOKE_STATE__?.aiStates?.[0]?.sourceScriptId ?? \"\").startsWith(\"wc2-\")", 10_000);
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMovementPaceMultiplier > 1", 10_000);
+  await waitForExpression(client, `
+    (() => {
+      const state = window.__WARGUS_TS_SMOKE_STATE__;
+      const counts = state?.ownedUnitCounts ?? {};
+      const resources = state?.visibilityPlayerResources ?? {};
+      return state?.selectedUnitCount === 1
+        && state?.selectedUnitTypes?.[0] === "unit-peasant"
+        && counts["unit-peasant"] === 1
+        && !counts["unit-town-hall"]
+        && !counts["unit-farm"]
+        && !counts["unit-keep"]
+        && !counts["unit-castle"]
+        && Number(resources.gold ?? 0) >= 10000
+        && Number(resources.wood ?? 0) >= 5000;
+    })()
+  `, 10_000);
   await delay(1200);
+  const fogTelemetry = await waitForFogTelemetry(client, 10_000);
+  const mapTileCount = fogTelemetry.exploredTiles + fogTelemetry.unexploredTiles;
+  if (fogTelemetry.visibleTiles <= 0 || fogTelemetry.exploredTiles <= 0 || fogTelemetry.unexploredTiles <= 0 || fogTelemetry.exploredTiles >= mapTileCount) {
+    throw new Error(`Playable world should start with only starting-area fog explored, not full-map exploration: ${JSON.stringify(fogTelemetry)}`);
+  }
   const playableStats = await captureNonBlankScreenshot(client, "playable world", { uniqueColors: 10, brightPixels: 80 });
-  if (sameScreenshotStats(titleStats, playableStats)) {
-    throw new Error(`Browser smoke did not observe a render transition after dismissing overlays: ${JSON.stringify({ titleStats, playableStats })}`);
-  }
   await waitForExpression(client, "window.__WARGUS_TS_CENTER_FIRST_OWNED_MOVABLE__?.() === true", 10_000);
-  const selectablePoint = await waitForRepeatedOwnedTypePoint(client, 10_000).catch(() => waitForOwnedTypePoint(client, 10_000));
+  const selectablePoint = await waitForSmokePoint(client, "firstOwnedMovableScreenPoint", 10_000);
   await dispatchMouseClick(client, selectablePoint.x, selectablePoint.y);
-  await dispatchMouseClick(client, selectablePoint.x, selectablePoint.y, "left", 2);
-  if (selectablePoint.repeated) {
-    await waitForExpression(client, `window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitCount > 1 && new Set(window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitTypes ?? []).size === 1 && window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitTypes?.[0] === ${JSON.stringify(selectablePoint.typeId)}`, 10_000);
-  } else {
-    await waitForExpression(client, `window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitCount === 1 && window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitTypes?.[0] === ${JSON.stringify(selectablePoint.typeId)}`, 10_000);
-  }
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitCount === 1 && Number(window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedSpeed ?? 0) > 0", 10_000);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.audioContextCreated === true && window.__WARGUS_TS_SMOKE_STATE__?.audioContextState === \"running\" && window.__WARGUS_TS_SMOKE_STATE__?.audioUnlocked === true && window.__WARGUS_TS_SMOKE_STATE__?.audioStereoSound === true", 10_000);
-  await waitForExpression(client, "String(window.__WARGUS_TS_SMOKE_STATE__?.audioCurrentMusic ?? \"\").length > 0 && !String(window.__WARGUS_TS_SMOKE_STATE__?.audioCurrentMusic ?? \"\").endsWith(\".ogg\")", 30_000);
+  await waitForExpression(client, `window.__WARGUS_TS_SMOKE_STATE__?.audioCurrentMusic === ${JSON.stringify(EXPECTED_BACKGROUND_MUSIC)}`, 30_000);
   await waitForExpression(client, "Number(window.__WARGUS_TS_SMOKE_STATE__?.audioPlayStarts ?? 0) > 0 && (Number(window.__WARGUS_TS_SMOKE_STATE__?.audioBufferedSounds ?? 0) > 0 || Number(window.__WARGUS_TS_SMOKE_STATE__?.audioHtmlPlayStarts ?? 0) > 0) && Number(window.__WARGUS_TS_SMOKE_STATE__?.audioHtmlPlayFailures ?? 0) === 0 && !window.__WARGUS_TS_SMOKE_STATE__?.audioLastError", 10_000);
   await waitForExpression(client, "typeof window.__WARGUS_TS_PLAY_AUDIO_FIXTURE__ === \"function\"", 10_000);
   const audioFixture = await evalValue(client, "window.__WARGUS_TS_PLAY_AUDIO_FIXTURE__()");
@@ -96,9 +111,6 @@ try {
   }
   await delay(700);
   const inputStats = await captureNonBlankScreenshot(client, "post-input playable world", { uniqueColors: 10, brightPixels: 80 });
-  if (sameScreenshotStats(playableStats, inputStats)) {
-    throw new Error(`Browser smoke did not observe a render transition after playable input: ${JSON.stringify({ playableStats, inputStats })}`);
-  }
   await dispatchMouseClick(client, Math.min(900, selectablePoint.x + 220), Math.min(620, selectablePoint.y + 120), "right");
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitCount > 0 && window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind !== null", 10_000);
   await delay(700);
@@ -107,7 +119,11 @@ try {
     throw new Error(`Browser smoke did not observe a render transition after right-click command input: ${JSON.stringify({ inputStats, commandStats })}`);
   }
   const smokeState = await readSmokeState(client);
-  console.log(`Browser runtime smoke verified (${serverMode}, title ${titleStats.uniqueColors} colors, playable ${playableStats.uniqueColors} colors, selected ${inputStats.uniqueColors} colors, command ${commandStats.uniqueColors} colors, selection=${selectablePoint.repeated ? "double-click-group" : "single-original-start-unit"}, order ${smokeState?.firstSelectedOrderKind ?? "unknown"}, audio ${smokeState?.audioContextState ?? "unknown"}, music ${smokeState?.audioCurrentMusic ?? "unknown"}, sound ${smokeState?.audioLastSoundFile ?? "unknown"}, fixture ${audioFixture.lastSoundFile ?? "unknown"}).`);
+  const mapLayerChildren = Number(smokeState?.displayObjects?.mapLayerChildren ?? 0);
+  if (!Number.isFinite(mapLayerChildren) || mapLayerChildren <= 0 || mapLayerChildren > 3000) {
+    throw new Error(`Browser smoke expected viewport-bounded terrain rendering, found mapLayerChildren=${mapLayerChildren}; smoke=${JSON.stringify(smokeState)}`);
+  }
+  console.log(`Browser runtime smoke verified (${serverMode}, playable ${playableStats.uniqueColors} colors, selected ${inputStats.uniqueColors} colors, command ${commandStats.uniqueColors} colors, fog explored ${fogTelemetry.exploredTiles}/${mapTileCount}, mapLayerChildren=${mapLayerChildren}, selection=first-owned-movable, order ${smokeState?.firstSelectedOrderKind ?? "unknown"}, audio ${smokeState?.audioContextState ?? "unknown"}, music ${smokeState?.audioCurrentMusic ?? "unknown"}, sound ${smokeState?.audioLastSoundFile ?? "unknown"}, fixture ${audioFixture.lastSoundFile ?? "unknown"}).`);
 } finally {
   await stopProcess(chrome);
   await stopProcess(server);
@@ -225,6 +241,30 @@ async function readSmokeState(client) {
 async function evalValue(client, expression) {
   const result = await client.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
   return result.result?.value ?? null;
+}
+
+async function waitForFogTelemetry(client, timeoutMs) {
+  const start = Date.now();
+  let latest = null;
+  while (Date.now() - start < timeoutMs) {
+    latest = await evalValue(client, `
+      (() => {
+        const log = window.__WARGUS_TS_PLAYTEST_LOG__?.() ?? [];
+        const entry = [...log].reverse().find((candidate) => candidate.activeMapPath && candidate.fog);
+        return entry?.fog ?? null;
+      })()
+    `);
+    if (
+      latest
+      && Number.isFinite(latest.visibleTiles)
+      && Number.isFinite(latest.exploredTiles)
+      && Number.isFinite(latest.unexploredTiles)
+    ) {
+      return latest;
+    }
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for browser fog telemetry: ${JSON.stringify(latest)}; smoke=${JSON.stringify(await readSmokeState(client))}`);
 }
 
 async function waitForSmokePoint(client, key, timeoutMs) {

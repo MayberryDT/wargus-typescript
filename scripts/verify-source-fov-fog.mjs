@@ -84,11 +84,22 @@ expectIncludes("browser world FOV/fog", worldSource, [
 expectIncludes("browser fog render/minimap/save", renderWorldSource, [
   "world.engineSettings.fogOfWarEnabled",
   "sourceFogTextureFramesForTile(world, x, y)",
+  "function fogTransitionTouchesVisibleTile",
+  "const sourceVisible = world.visibleTiles[index] === 1;",
+  "sourceVisible && sourceKnown && fogAtlas && sourceFogTiles.fogTile",
+  "const suppressUnknownTransition = fogTransitionTouchesVisibleTile(world, x, y);",
+  "if (!suppressUnknownTransition) {\n        fogTileIndex |= mask;",
+  "function shouldDrawSourceBlackFogTile",
+  "return sourceVisible || !fogTransitionTouchesVisibleTile(world, x, y);",
+  "sourceFogTiles.blackFogTile && shouldDrawSourceBlackFogTile(world, x, y, sourceVisible)",
   "exploredTileTouchesVisibleTile",
+  "function isFogTileExplored",
   "sourceFogOpacityAlphas",
   "function drawLastSeenBuildings",
-  "let drewFallbackGraphics = false",
-  "if (drewFallbackGraphics)"
+  "let drewKnownFallbackGraphics = false",
+  "let drewUnknownFogGraphics = false",
+  "if (drewKnownFallbackGraphics)",
+  "if (drewUnknownFogGraphics)"
 ]);
 expectIncludes("browser minimap fog", hudSource, [
   "world.engineSettings.minimapFogOfWarOpacityLevels",
@@ -108,9 +119,15 @@ expectIncludes("package verify script", packageSource, [
   "npm run verify:source-fov-fog"
 ]);
 
-const fogRenderBody = renderWorldSource.match(/function drawFog[\s\S]*?\n}\n\nfunction applySourceFogBlur/)?.[0] ?? "";
-if (!fogRenderBody.includes("let drewFallbackGraphics = false") || !fogRenderBody.includes("if (drewFallbackGraphics)")) {
-  errors.push("Fog renderer should only attach fallback Graphics when solid fog rectangles were drawn.");
+const fogRenderBody = renderWorldSource.match(/function drawFog[\s\S]*?\n}\n\nfunction fogRenderKey/)?.[0] ?? "";
+if (!fogRenderBody.includes("sourceFogTiles.blackFogTile && shouldDrawSourceBlackFogTile(world, x, y, sourceVisible)")) {
+  errors.push("Fog renderer should route black source transition masks through the visible-edge guard.");
+}
+if (!fogRenderBody.includes("sourceVisible && sourceKnown && fogAtlas && sourceFogTiles.fogTile")) {
+  errors.push("Fog renderer should only draw explored source transition masks from currently visible tiles.");
+}
+if (renderWorldSource.includes("getSoftFogTexture(fogAtlas")) {
+  errors.push("Fog renderer should not use the failed soft-source-mask path.");
 }
 
 if (errors.length > 0) {

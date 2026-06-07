@@ -52,13 +52,13 @@ export async function loadUnitTextureAtlases(loadedWorld: WorldState, preloadedU
     uniqueUnits.set(construction.id, descriptor);
   }
 
-  for (const unit of uniqueUnits.values()) {
-    if (!unit.image) {
-      continue;
-    }
-    const atlas = await loadUnitTextureAtlasFromDescriptor(unit);
+  const loadedAtlases = await Promise.all(Array.from(uniqueUnits.values()).map(async (unit) => ({
+    typeId: unit.typeId,
+    atlas: unit.image ? await loadUnitTextureAtlasFromDescriptor(unit) : null
+  })));
+  for (const { typeId, atlas } of loadedAtlases) {
     if (atlas) {
-      atlases.set(unit.typeId, atlas);
+      atlases.set(typeId, atlas);
     }
   }
 

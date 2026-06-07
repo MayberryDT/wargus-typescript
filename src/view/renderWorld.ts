@@ -1,7 +1,7 @@
 import { Application, BlurFilter, Container, Graphics, Sprite, Text } from "pixi.js";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
-import { isCircleVisibleToPlayer, isInvisibleUtilityUnit, isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, isWorldTileSourceKnown, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
+import { isCircleVisibleToPlayer, isInvisibleUtilityUnit, isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
 import { sourceButtonAppliesTo } from "../wargus/buttons";
 import { isFixedBrowserDemoMap } from "../wargus/demoScenario";
 import type { WargusAnimation, WargusDecoration, WargusManifest } from "../wargus/types";
@@ -22,9 +22,12 @@ const selectionHitAreaKeys = new WeakMap<Container, string>();
 const worldLayerMasks = new WeakMap<Container, Graphics>();
 const sourceViewportPaneRenderers = new WeakMap<Container, SourceViewportPaneRenderer[]>();
 const tileAtlasIds = new WeakMap<TileTextureAtlas, number>();
+const fogAtlasIds = new WeakMap<FogTextureAtlas, number>();
 const sourceFogBlurFilters = new WeakMap<Container, BlurFilter>();
 let nextTileAtlasId = 1;
+let nextFogAtlasId = 1;
 const sourceTiledFogTable = [0, 11, 10, 2, 13, 6, 14, 3, 12, 15, 4, 1, 8, 9, 7, 0] as const;
+const sourceBlackFogVisibleSuppressionRadius = 1;
 
 interface WorldViewport {
   left: number;
@@ -68,7 +71,7 @@ export function renderWorld(args: RenderWorldArgs): void {
   const viewport = worldViewportForRect(camera, activeSourceViewportRect);
 
   drawMap(mapLayer, world, tileAtlas, viewport);
-  unitLayer.removeChildren();
+  destroyLayerChildren(unitLayer);
   drawCorpses(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
   drawLastSeenBuildings(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
   drawProjectiles(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
@@ -191,7 +194,7 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     renderer.root.mask = renderer.mask;
     const viewport = worldViewportForRect(viewCamera, rect);
     drawMap(renderer.mapLayer, world, tileAtlas, viewport);
-    renderer.unitLayer.removeChildren();
+    destroyLayerChildren(renderer.unitLayer);
     drawCorpses(renderer.unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
     drawLastSeenBuildings(renderer.unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
     drawProjectiles(renderer.unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
@@ -287,9 +290,9 @@ function drawMap(layer: Container, world: WorldState, tileAtlas: TileTextureAtla
   }
 
   const drewOverlayGraphics = [
-    drawSourceColorCycleOverlay(overlayGraphics, world),
-    drawSourcePassabilityOverlay(overlayGraphics, world),
-    drawSourceMapGrid(overlayGraphics, world)
+    drawSourceColorCycleOverlay(overlayGraphics, world, bounds),
+    drawSourcePassabilityOverlay(overlayGraphics, world, bounds),
+    drawSourceMapGrid(overlayGraphics, world, bounds)
   ].some(Boolean);
   if (drewOverlayGraphics) {
     layer.addChild(overlayGraphics);
@@ -308,7 +311,7 @@ interface MapTileRenderBounds {
 
 function mapRenderKey(world: WorldState, tileAtlas: TileTextureAtlas | null, bounds: MapTileRenderBounds): string {
   const atlasId = tileAtlas ? idForTileAtlas(tileAtlas) : 0;
-  return `${world.map.path}:${world.map.width}x${world.map.height}:${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}:${world.terrainVersion}:${world.tilesetTerrain?.name ?? "none"}:${atlasId}:${world.engineSettings.mapGridDefault ? 1 : 0}:${world.engineSettings.highlightPassabilityDefault ? 1 : 0}:${sourceColorCyclePhase(world)}`;
+  return `${world.map.path}:${world.map.width}x${world.map.height}:${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}:${world.terrainVersion}:${world.tilesetTerrain?.name ?? "none"}:${atlasId}:${world.engineSettings.mapGridDefault ? 1 : 0}:${world.engineSettings.highlightPassabilityDefault ? 1 : 0}`;
 }
 
 function mapTileRenderBounds(world: WorldState, viewport: WorldViewport): MapTileRenderBounds {
@@ -346,7 +349,7 @@ function sourceColorCyclePhase(world: WorldState): number {
   return Math.floor(world.tick / 8) % Math.max(1, longestRange);
 }
 
-function drawSourceColorCycleOverlay(graphics: Graphics, world: WorldState): boolean {
+function drawSourceColorCycleOverlay(graphics: Graphics, world: WorldState, bounds: MapTileRenderBounds): boolean {
   if (isFixedBrowserDemoMap(world.map)) {
     return false;
   }
@@ -356,8 +359,8 @@ function drawSourceColorCycleOverlay(graphics: Graphics, world: WorldState): boo
   }
   let drewOverlay = false;
   const phase = sourceColorCyclePhase(world);
-  for (let y = 0; y < world.map.height; y += 1) {
-    for (let x = 0; x < world.map.width; x += 1) {
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
       const tile = world.tiles[y * world.map.width + x] ?? 1;
       const flags = sourceTilesetFlagsForTile(world, tile);
       if (!flags.includes("water") && !flags.includes("coast")) {
@@ -379,12 +382,12 @@ function sourceColorCycleRangeForFlags<T>(ranges: T[], flags: string[]): T {
   return flags.includes("coast") && !flags.includes("water") ? ranges[1] ?? ranges[0] : ranges[0];
 }
 
-function drawSourcePassabilityOverlay(graphics: Graphics, world: WorldState): boolean {
+function drawSourcePassabilityOverlay(graphics: Graphics, world: WorldState, bounds: MapTileRenderBounds): boolean {
   if (!world.engineSettings.highlightPassabilityDefault) {
     return false;
   }
-  for (let y = 0; y < world.map.height; y += 1) {
-    for (let x = 0; x < world.map.width; x += 1) {
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
       const land = isTilePassable(world, x, y, "land", undefined, true);
       const naval = isTilePassable(world, x, y, "naval", undefined, true);
       const color = land ? 0x2ea44f : naval ? 0x3f7fdb : 0xd64f45;
@@ -392,25 +395,27 @@ function drawSourcePassabilityOverlay(graphics: Graphics, world: WorldState): bo
       graphics.fill({ color, alpha: land || naval ? 0.16 : 0.2 });
     }
   }
-  return world.map.width > 0 && world.map.height > 0;
+  return bounds.maxX >= bounds.minX && bounds.maxY >= bounds.minY;
 }
 
-function drawSourceMapGrid(graphics: Graphics, world: WorldState): boolean {
+function drawSourceMapGrid(graphics: Graphics, world: WorldState, bounds: MapTileRenderBounds): boolean {
   if (!world.engineSettings.mapGridDefault) {
     return false;
   }
-  const width = world.map.width * world.tileSize;
-  const height = world.map.height * world.tileSize;
-  for (let x = 0; x <= width; x += world.tileSize) {
-    graphics.moveTo(x, 0);
-    graphics.lineTo(x, height);
+  const left = bounds.minX * world.tileSize;
+  const top = bounds.minY * world.tileSize;
+  const right = (bounds.maxX + 1) * world.tileSize;
+  const bottom = (bounds.maxY + 1) * world.tileSize;
+  for (let x = left; x <= right; x += world.tileSize) {
+    graphics.moveTo(x, top);
+    graphics.lineTo(x, bottom);
   }
-  for (let y = 0; y <= height; y += world.tileSize) {
-    graphics.moveTo(0, y);
-    graphics.lineTo(width, y);
+  for (let y = top; y <= bottom; y += world.tileSize) {
+    graphics.moveTo(left, y);
+    graphics.lineTo(right, y);
   }
   graphics.stroke({ width: 1, color: 0x000000, alpha: 0.22 });
-  return width > 0 || height > 0;
+  return right > left || bottom > top;
 }
 
 function idForTileAtlas(tileAtlas: TileTextureAtlas): number {
@@ -429,7 +434,7 @@ function shouldCacheMapLayer(): boolean {
 }
 
 function shouldRenderViewportBoundedMap(world: WorldState): boolean {
-  return isFixedBrowserDemoMap(world.map);
+  return world.map.width > 0 && world.map.height > 0;
 }
 
 function destroyLayerChildren(layer: Container): void {
@@ -1982,7 +1987,7 @@ function spriteDirectionForFacing(facing: number, numDirections = 0): { offset: 
 function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, fogAtlas: FogTextureAtlas | null): void {
   if (!world.engineSettings.fogOfWarEnabled) {
     if (fogRenderKeys.get(layer) !== "disabled") {
-      layer.removeChildren();
+      destroyLayerChildren(layer);
       layer.filters = [];
       fogRenderKeys.set(layer, "disabled");
     }
@@ -1990,25 +1995,33 @@ function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, f
     return;
   }
   layer.visible = true;
-  fogRenderKeys.set(layer, "enabled");
-  layer.removeChildren();
-  const knownFogGraphics = new Graphics();
-  const unknownFogGraphics = new Graphics();
-  let drewKnownFallbackGraphics = false;
-  let drewUnknownFogGraphics = false;
   const fogAlphas = sourceFogOpacityAlphas(world);
   const minX = Math.max(0, Math.floor(viewport.left / world.tileSize));
   const minY = Math.max(0, Math.floor(viewport.top / world.tileSize));
   const maxX = Math.min(world.map.width - 1, Math.ceil(viewport.right / world.tileSize));
   const maxY = Math.min(world.map.height - 1, Math.ceil(viewport.bottom / world.tileSize));
   const fastFog = world.engineSettings.fogOfWarType === null || world.engineSettings.fogOfWarType === "fast";
+  const bounds = { minX, minY, maxX, maxY };
+  const key = fogRenderKey(world, fogAtlas, bounds, fogAlphas, fastFog);
+  if (fogRenderKeys.get(layer) === key) {
+    return;
+  }
+  fogRenderKeys.set(layer, key);
+  destroyLayerChildren(layer);
   applySourceFogBlur(layer, world, fastFog);
+  const sourceEdgeLayer = new Container();
+  const knownFogGraphics = new Graphics();
+  const unknownFogGraphics = new Graphics();
+  let drewKnownFallbackGraphics = false;
+  let drewUnknownFogGraphics = false;
+  let drewSourceEdges = false;
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       const index = y * world.map.width + x;
+      const sourceVisible = world.visibleTiles[index] === 1;
       const sourceFogTiles = sourceFogTextureFramesForTile(world, x, y);
-      const sourceKnown = isWorldTileSourceKnown(world, x, y);
-      if (world.visibleTiles[index] !== 1) {
+      const sourceKnown = isFogTileExplored(world, x, y);
+      if (!sourceVisible) {
         if (sourceKnown) {
           drewKnownFallbackGraphics = true;
           drawSolidFogTile(knownFogGraphics, x, y, world.tileSize, sourceFogTileAlpha(world, x, y, fogAlphas, fastFog));
@@ -2017,20 +2030,78 @@ function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, f
           drawOpaqueUnknownFogTile(unknownFogGraphics, x, y, world.tileSize);
         }
       }
-      if (sourceKnown && fogAtlas && sourceFogTiles.fogTile && sourceFogTiles.fogTile !== sourceFogTiles.blackFogTile) {
-        drawSourceFogTile(layer, knownFogGraphics, fogAtlas, sourceFogTiles.fogTile, x, y, world.tileSize, fogAlphas[0]);
+      if (sourceVisible && sourceKnown && fogAtlas && sourceFogTiles.fogTile && sourceFogTiles.fogTile !== sourceFogTiles.blackFogTile) {
+        drawSourceFogTile(sourceEdgeLayer, knownFogGraphics, fogAtlas, sourceFogTiles.fogTile, x, y, world.tileSize, fogAlphas[0]);
+        drewSourceEdges = true;
       }
-      if (sourceKnown && fogAtlas && sourceFogTiles.blackFogTile) {
-        drawSourceFogTile(layer, knownFogGraphics, fogAtlas, sourceFogTiles.blackFogTile, x, y, world.tileSize, fogAlphas[2]);
+      if (sourceKnown && fogAtlas && sourceFogTiles.blackFogTile && shouldDrawSourceBlackFogTile(world, x, y, sourceVisible)) {
+        drawSourceFogTile(sourceEdgeLayer, knownFogGraphics, fogAtlas, sourceFogTiles.blackFogTile, x, y, world.tileSize, fogAlphas[2]);
+        drewSourceEdges = true;
       }
     }
   }
   if (drewKnownFallbackGraphics) {
     layer.addChild(knownFogGraphics);
   }
+  if (drewSourceEdges) {
+    layer.addChild(sourceEdgeLayer);
+  } else {
+    sourceEdgeLayer.destroy({ children: true });
+  }
   if (drewUnknownFogGraphics) {
     layer.addChild(unknownFogGraphics);
   }
+}
+
+function fogRenderKey(
+  world: WorldState,
+  fogAtlas: FogTextureAtlas | null,
+  bounds: MapTileRenderBounds,
+  fogAlphas: [number, number, number],
+  fastFog: boolean
+): string {
+  return [
+    "enabled",
+    world.map.path,
+    `${world.map.width}x${world.map.height}`,
+    `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}`,
+    fogAtlas ? idForFogAtlas(fogAtlas) : 0,
+    fastFog ? 1 : 0,
+    world.engineSettings.fogOfWarBilinear ? 1 : 0,
+    sourceFogBlurRadius(world, fastFog),
+    sourceFogBlurIterations(world),
+    fogAlphas.join(","),
+    fogVisibilityHash(world, bounds)
+  ].join(":");
+}
+
+function fogVisibilityHash(world: WorldState, bounds: MapTileRenderBounds): number {
+  let hash = 2166136261;
+  const padding = sourceBlackFogVisibleSuppressionRadius + 1;
+  const minX = Math.max(0, bounds.minX - padding);
+  const minY = Math.max(0, bounds.minY - padding);
+  const maxX = Math.min(world.map.width - 1, bounds.maxX + padding);
+  const maxY = Math.min(world.map.height - 1, bounds.maxY + padding);
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const index = y * world.map.width + x;
+      const state = (world.visibleTiles[index] === 1 ? 1 : 0) | (isFogTileExplored(world, x, y) ? 2 : 0);
+      hash ^= state + 31 * x + 131 * y;
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+  return hash >>> 0;
+}
+
+function idForFogAtlas(fogAtlas: FogTextureAtlas): number {
+  const existing = fogAtlasIds.get(fogAtlas);
+  if (existing) {
+    return existing;
+  }
+  const id = nextFogAtlasId;
+  nextFogAtlasId += 1;
+  fogAtlasIds.set(fogAtlas, id);
+  return id;
 }
 
 function applySourceFogBlur(layer: Container, world: WorldState, fastFog: boolean): void {
@@ -2102,14 +2173,17 @@ function drawSourceFogTile(
 function sourceFogTextureFramesForTile(world: WorldState, x: number, y: number): { fogTile: number; blackFogTile: number } {
   let fogTileIndex = 0;
   let blackFogTileIndex = 0;
+  const suppressUnknownTransition = fogTransitionTouchesVisibleTile(world, x, y);
   const visit = (tx: number, ty: number, mask: number): void => {
     if (tx < 0 || ty < 0 || tx >= world.map.width || ty >= world.map.height) {
       return;
     }
     const index = ty * world.map.width + tx;
-    if (!isWorldTileSourceKnown(world, tx, ty)) {
+    if (!isFogTileExplored(world, tx, ty)) {
       blackFogTileIndex |= mask;
-      fogTileIndex |= mask;
+      if (!suppressUnknownTransition) {
+        fogTileIndex |= mask;
+      }
       return;
     }
     if (world.visibleTiles[index] !== 1) {
@@ -2132,6 +2206,26 @@ function sourceFogTextureFramesForTile(world: WorldState, x: number, y: number):
   };
 }
 
+function fogTransitionTouchesVisibleTile(world: WorldState, x: number, y: number): boolean {
+  for (let oy = -sourceBlackFogVisibleSuppressionRadius; oy <= sourceBlackFogVisibleSuppressionRadius; oy += 1) {
+    for (let ox = -sourceBlackFogVisibleSuppressionRadius; ox <= sourceBlackFogVisibleSuppressionRadius; ox += 1) {
+      const tx = x + ox;
+      const ty = y + oy;
+      if (tx < 0 || ty < 0 || tx >= world.map.width || ty >= world.map.height) {
+        continue;
+      }
+      if (world.visibleTiles[ty * world.map.width + tx] === 1) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function shouldDrawSourceBlackFogTile(world: WorldState, x: number, y: number, sourceVisible: boolean): boolean {
+  return sourceVisible || !fogTransitionTouchesVisibleTile(world, x, y);
+}
+
 function sourceFogOpacityAlphas(world: WorldState): [number, number, number] {
   return [
     fogByteToAlpha(world.engineSettings.fogOfWarOpacityLevels[0] ?? 0x7f),
@@ -2142,13 +2236,33 @@ function sourceFogOpacityAlphas(world: WorldState): [number, number, number] {
 
 function sourceFogTileAlpha(world: WorldState, x: number, y: number, fogAlphas: [number, number, number], fastFog: boolean): number {
   const knownFogAlpha = sourceFogKnownAlpha(world, fogAlphas);
-  if (!isWorldTileSourceKnown(world, x, y)) {
+  if (!isFogTileExplored(world, x, y)) {
     return fogAlphas[2];
   }
   if (!fastFog && world.engineSettings.fogOfWarBilinear && exploredTileTouchesVisibleTile(world, x, y)) {
     return knownFogAlpha;
   }
   return fastFog && exploredTileTouchesVisibleTile(world, x, y) ? knownFogAlpha : fogAlphas[0];
+}
+
+function isFogTileExplored(world: WorldState, tileX: number, tileY: number): boolean {
+  if (tileX < 0 || tileY < 0 || tileX >= world.map.width || tileY >= world.map.height) {
+    return false;
+  }
+  if (!world.engineSettings.fogOfWarEnabled) {
+    return true;
+  }
+  return world.exploredTiles[tileY * world.map.width + tileX] === 1;
+}
+
+function isFogTileVisible(world: WorldState, tileX: number, tileY: number): boolean {
+  if (tileX < 0 || tileY < 0 || tileX >= world.map.width || tileY >= world.map.height) {
+    return false;
+  }
+  if (!world.engineSettings.fogOfWarEnabled) {
+    return true;
+  }
+  return world.visibleTiles[tileY * world.map.width + tileX] === 1;
 }
 
 function sourceFogKnownAlpha(world: WorldState, fogAlphas: [number, number, number]): number {
@@ -2167,12 +2281,7 @@ function exploredTileTouchesVisibleTile(world: WorldState, x: number, y: number)
       if (ox === 0 && oy === 0) {
         continue;
       }
-      const tx = x + ox;
-      const ty = y + oy;
-      if (tx < 0 || ty < 0 || tx >= world.map.width || ty >= world.map.height) {
-        continue;
-      }
-      if (world.visibleTiles[ty * world.map.width + tx] === 1) {
+      if (isFogTileVisible(world, x + ox, y + oy)) {
         return true;
       }
     }
@@ -2193,7 +2302,7 @@ function drawSelectionHitArea(layer: Container, world: WorldState): void {
     return;
   }
   selectionHitAreaKeys.set(layer, key);
-  layer.removeChildren();
+  destroyLayerChildren(layer);
   const graphics = new Graphics();
   graphics.rect(0, 0, world.map.width * world.tileSize, world.map.height * world.tileSize);
   graphics.fill({ color: 0x000000, alpha: 0.001 });

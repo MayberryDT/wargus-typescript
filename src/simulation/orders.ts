@@ -5502,6 +5502,7 @@ function stepWorld(world: WorldState, tickSeconds: number): void {
     if (isUnitHiddenInConstruction(unit)) {
       continue;
     }
+    resolveStackedMovableUnit(world, unit);
     if (unit.lifetimeSeconds !== undefined) {
       unit.lifetimeSeconds -= tickSeconds;
       if (unit.lifetimeSeconds <= 0) {
@@ -6806,6 +6807,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   const units = world.units.filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !isUnitHiddenInConstruction(unit));
   const workers = units.filter(isWorker);
   const completedUnits = units.filter((unit) => !unit.construction);
+  const townCenters = units.filter(isTownCenter);
   const halls = completedUnits.filter(isTownCenter);
   const barracks = completedUnits.filter((unit) => isBarracks(world, unit));
   const blacksmiths = completedUnits.filter((unit) => isBlacksmith(world, unit));
@@ -6828,7 +6830,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   const attackForceId = currentAiAttackForceId(state);
   const attackUnitTargets = sourceAiDifficultyUnitTargets(world, currentAiAttackUnitTargets(state, attackForceId));
 
-  if (halls.length === 0 && workers.length > 0) {
+  if (townCenters.length === 0 && workers.length > 0) {
     const builder = workers.find((worker) => !worker.order) ?? workers[0];
     issueAiBuildBySourceRole(world, builder, playerId, "town-center", race);
   }
@@ -9854,6 +9856,64 @@ function stopUnusablePathOrder(world: WorldState, unit: WorldUnit): void {
   }
 }
 
+function resolveStackedMovableUnit(world: WorldState, unit: WorldUnit): void {
+  if (unit.hitPoints <= 0 || unit.construction || unit.kind === "fly" || unit.nonSolid || isUnitInsideResourceSource(unit)) {
+    return;
+  }
+  const unitTile = worldToTile(world, unit.x, unit.y);
+  const blocker = world.units.find((candidate) => {
+    if (
+      candidate.id === unit.id
+      || candidate.hitPoints <= 0
+      || candidate.construction
+      || candidate.kind === "fly"
+      || candidate.nonSolid
+      || isUnitHiddenInConstruction(candidate)
+      || isUnitInsideResourceSource(candidate)
+    ) {
+      return false;
+    }
+    const candidateTile = worldToTile(world, candidate.x, candidate.y);
+    return candidateTile.x === unitTile.x && candidateTile.y === unitTile.y;
+  });
+  if (!blocker) {
+    return;
+  }
+  const escape = nearestPassableAdjacentTile(world, unit, unitTile.x, unitTile.y);
+  if (!escape) {
+    return;
+  }
+  unit.x = escape.x * world.tileSize + world.tileSize / 2;
+  unit.y = escape.y * world.tileSize + world.tileSize / 2;
+  if (unit.order && "path" in unit.order) {
+    unit.order.path = [];
+    unit.order.pathIndex = 0;
+  }
+}
+
+function nearestPassableAdjacentTile(world: WorldState, unit: WorldUnit, tileX: number, tileY: number): { x: number; y: number } | null {
+  const movement = movementKindForUnit(unit);
+  for (let radius = 1; radius <= 3; radius += 1) {
+    const candidates: Array<{ x: number; y: number; score: number }> = [];
+    for (let y = tileY - radius; y <= tileY + radius; y += 1) {
+      for (let x = tileX - radius; x <= tileX + radius; x += 1) {
+        if (Math.max(Math.abs(x - tileX), Math.abs(y - tileY)) !== radius) {
+          continue;
+        }
+        if (!isTilePassable(world, x, y, movement, unit.id)) {
+          continue;
+        }
+        candidates.push({ x, y, score: Math.hypot(x - tileX, y - tileY) });
+      }
+    }
+    if (candidates.length > 0) {
+      candidates.sort((left, right) => left.score - right.score || left.y - right.y || left.x - right.x);
+      return candidates[0];
+    }
+  }
+  return null;
+}
+
 function stepRandomMovement(world: WorldState, unit: WorldUnit): void {
   if (unit.randomMovementProbability <= 0 || unit.speed <= 0 || unit.construction || unit.cargo.length > 0 || unit.player !== 15) {
     return;
@@ -10728,9 +10788,19 @@ function isInResourceRange(world: WorldState, unit: WorldUnit): boolean {
   }
   if (unit.order.targetId) {
     const target = findUnit(world, unit.order.targetId);
-    return target ? isInTouchRange(unit, target) : false;
+    return target ? isInResourceSourceRange(world, unit, target) : false;
   }
   return Math.hypot(unit.order.targetX - unit.x, unit.order.targetY - unit.y) <= world.tileSize + unit.radius;
+}
+
+function isInResourceSourceRange(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
+  if (isInTouchRange(unit, target)) {
+    return true;
+  }
+  const { halfWidth, halfHeight } = unitFootprintHalfSize(target, world.tileSize);
+  const clampedX = Math.max(target.x - halfWidth, Math.min(unit.x, target.x + halfWidth));
+  const clampedY = Math.max(target.y - halfHeight, Math.min(unit.y, target.y + halfHeight));
+  return Math.hypot(unit.x - clampedX, unit.y - clampedY) <= unit.radius + world.tileSize * 0.55;
 }
 
 function isInResourceRangePoint(unit: WorldUnit, x: number, y: number, radius: number): boolean {
@@ -17375,18 +17445,23 @@ export function canPlaceBuilding(world: WorldState, buildingDefinition: WargusUn
     return canPlaceShoreBuilding(world, tileX, tileY, width, height, ignoredUnitId);
   }
   const replaceOnBuildIgnoredUnitIds = new Set(sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY).map((unit) => unit.id));
+  const ignoredUnitIds = new Set(replaceOnBuildIgnoredUnitIds);
+  if (ignoredUnitId) {
+    ignoredUnitIds.add(ignoredUnitId);
+  }
   const probe = createWorldUnit({ unit: buildingDefinition, id: "build-probe", player: 0, tileX, tileY });
   const movement = movementKindForUnit(probe);
   const passabilityIgnoredUnitId = ignoredUnitId ?? (replaceOnBuildIgnoredUnitIds.size === 1 ? [...replaceOnBuildIgnoredUnitIds][0] : probe.id);
+  const ignorePassabilityBlockers = ignoredUnitIds.size > 1;
   for (let y = tileY; y < tileY + height; y += 1) {
     for (let x = tileX; x < tileX + width; x += 1) {
-      if (!isTilePassable(world, x, y, movement, passabilityIgnoredUnitId)) {
+      if (!isTilePassable(world, x, y, movement, passabilityIgnoredUnitId, ignorePassabilityBlockers)) {
         return false;
       }
       if (!isSourceBuildableTerrainTile(world, world.tiles[y * world.map.width + x] ?? 0)) {
         return false;
       }
-      if (isOccupiedByAnyLiveUnit(world, x, y, ignoredUnitId, replaceOnBuildIgnoredUnitIds)) {
+      if (isOccupiedByAnyLiveUnit(world, x, y, undefined, ignoredUnitIds)) {
         return false;
       }
     }
@@ -17395,7 +17470,7 @@ export function canPlaceBuilding(world: WorldState, buildingDefinition: WargusUn
 }
 
 export function canPlaceReachableBuilding(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): boolean {
-  if (!canPlaceBuilding(world, buildingDefinition, tileX, tileY)) {
+  if (!canPlaceBuilding(world, buildingDefinition, tileX, tileY, builder.id)) {
     return false;
   }
   const replacedUnits = sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY);
@@ -17430,7 +17505,7 @@ function canPlaceShoreBuilding(world: WorldState, tileX: number, tileY: number, 
       const tile = world.tiles[y * world.map.width + x] ?? 0;
       if (isSourceWaterTile(world, tile)) {
         hasWater = true;
-      } else if (isTilePassable(world, x, y, "land")) {
+      } else if (isTilePassable(world, x, y, "land", ignoredUnitId)) {
         hasLand = true;
       } else {
         return false;

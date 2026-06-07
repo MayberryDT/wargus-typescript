@@ -913,6 +913,7 @@ export function getPlayerSupply(world: WorldState, playerId: number): PlayerSupp
 
 function engineSettingsWithSetupState(engineSettings: WargusEngineSettings, state: WargusMapSetup["state"] | undefined): WargusEngineSettings {
   const next = structuredClone(engineSettings);
+  normalizePlayableRevealMapMode(next);
   if (typeof state?.fogOfWar === "boolean") {
     next.fogOfWarEnabled = state.fogOfWar;
   }
@@ -920,6 +921,12 @@ function engineSettingsWithSetupState(engineSettings: WargusEngineSettings, stat
     next.sourceGameSpeedDefault = state.gameSpeed;
   }
   return next;
+}
+
+function normalizePlayableRevealMapMode(engineSettings: WargusEngineSettings): void {
+  if (engineSettings.revealMapMode !== "hidden") {
+    engineSettings.revealMapMode = "hidden";
+  }
 }
 
 function uniqueNumbers(values: number[]): number[] {
@@ -1068,7 +1075,9 @@ export function createInitialWorld(map: WargusMap, sourceUnits: WargusUnit[], se
     });
   });
   applySourceTeleportDestinations(units, setup?.teleportDestinations ?? []);
-  addStartingHalls(units, unitsById, setup, sourceButtons, sourceUnitDatabase, setup?.tileset ?? map.setup?.tileset ?? null);
+  if (setup?.state?.disableStartingHalls !== true) {
+    addStartingHalls(units, unitsById, setup, sourceButtons, sourceUnitDatabase, setup?.tileset ?? map.setup?.tileset ?? null);
+  }
 
   const players = playersFromSetup(setup, worldEngineSettings, sourceAiDefinitions);
   const playablePlayerId = playablePlayerIdForPlayers(players, setup, sourceAiDefinitions);

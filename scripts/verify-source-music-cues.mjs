@@ -4,8 +4,10 @@ import path from "node:path";
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
 const indexSource = readFileSync("scripts/index-wargus-data.mjs", "utf8");
 const audioSource = readFileSync("src/audio/audioEngine.ts", "utf8");
+const audioCueSource = readFileSync("src/audio/audioCues.ts", "utf8");
 const typeSource = readFileSync("src/wargus/types.ts", "utf8");
 const errors = [];
+const customBackgroundMusic = "warcraft-2-ost-human-1-128-ytshorts.savetube.me.mp3";
 
 function expect(condition, message) {
   if (!condition) {
@@ -42,6 +44,10 @@ for (const cue of manifest.musicCues ?? []) {
   }
 }
 
+expect(existsSync(path.join("public/wargus/music", customBackgroundMusic)), `Missing custom background music MP3: ${customBackgroundMusic}`);
+expect(audioCueSource.includes(`CUSTOM_BACKGROUND_MUSIC_FILE = "${customBackgroundMusic}"`), "Custom background music constant should point at the requested MP3.");
+expect(audioCueSource.includes("audioEngine.playMusicFile(CUSTOM_BACKGROUND_MUSIC_FILE)"), "Gameplay music should start the custom MP3 directly.");
+
 for (const fragment of [
   "musicCues?: WargusMusicCue[]",
   "export interface WargusMusicCue"
@@ -65,6 +71,8 @@ for (const fragment of [
   "sourceMusicCue(\"briefing\", race)",
   "this.manifest.musicCues",
   "musicAudioSourceForFile",
+  "isNativeBrowserMusicFile(file)",
+  "function isNativeBrowserMusicFile",
   "playDecodedMusicLoop",
   "musicBufferSource",
   "extractedMusicFile",

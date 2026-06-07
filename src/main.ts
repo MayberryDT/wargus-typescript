@@ -4,13 +4,13 @@ import type { WargusEngineSettings, WargusManifest, WargusMap, WargusMapSetup } 
 import { chooseInitialMap, filteredMapPickerMatches as findMapPickerMatches, loadWargusManifest, nextCampaignMapFor } from "./wargus/manifest";
 import { loadMapSetup } from "./wargus/mapSetup";
 import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID, fixedBrowserDemoInitialSelection, isFixedBrowserDemoMap } from "./wargus/demoScenario";
-import { createFixedDemoMissionRuntimeState, fixedDemoMissionSummary, resetFixedDemoMissionRuntimeState, updateFixedDemoMission, type FixedDemoMissionSummary } from "./wargus/demoMission";
+import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
 import { canAttackTarget, canIssueTargetedSpellAt, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupTargetedSpellOrder, issueHarvestWoodOrder, issuePendingWorldCommandAt, issueResearchOrder, issueSourceRightButtonOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
-import { availableCommands, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId } from "./view/renderHud";
+import { availableCommands, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type ModernHudLayoutDebug } from "./view/renderHud";
 import type { SourceDiplomacyDraft } from "./view/sourceUiHelpers";
 import type { UnitTextureAtlas } from "./view/unitTextureAtlas";
 import type { TileTextureAtlas } from "./view/tileTextureAtlas";
@@ -50,6 +50,7 @@ const root = document.querySelector<HTMLDivElement>("#app");
 if (!root) {
   throw new Error("Missing #app root");
 }
+const gameRoot = root;
 
 const app = new Application();
 await app.init({
@@ -115,7 +116,6 @@ let lastSelectionPointerDown: { x: number; y: number; at: number } | null = null
 const controlGroupRecallState = createControlGroupRecallState();
 const audioCueState = createAudioCueState();
 const hudMessageState = createHudMessageState();
-const fixedDemoMissionState = createFixedDemoMissionRuntimeState();
 const saveCommandState = createSaveCommandState();
 const sourceMapNamePopupState: SourceMapNamePopupState = { showNameDelayTick: 0, showNameTimeTick: 0 };
 let paused = false;
@@ -140,9 +140,10 @@ const FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1.3;
 const BROWSER_SMOKE_REFRESH_MS = 250;
 const BROWSER_SMOKE_PAIR_REFRESH_MS = 2000;
 const PLAYTEST_TELEMETRY_STORAGE_KEY = "wargus-ts-playtest-telemetry-v1";
-const PLAYTEST_TELEMETRY_MAX_ENTRIES = 600;
+const PLAYTEST_TELEMETRY_MAX_ENTRIES = 240;
 const PLAYTEST_TELEMETRY_SAMPLE_MS = 1000;
-const PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS = 5000;
+const PLAYTEST_TELEMETRY_JANK_SAMPLE_MS = 2000;
+const PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS = 30000;
 const PLAYTEST_TELEMETRY_JANK_THRESHOLDS_MS = {
   frame: 50,
   update: 20,
@@ -216,6 +217,12 @@ let playtestTelemetryLoaded = false;
 let lastPlaytestTelemetrySampleMs = 0;
 let lastPlaytestTelemetryFlushMs = 0;
 let lastPlaytestTelemetryJankMs = 0;
+let lastPlaytestTelemetryJankSignature = "";
+let playtestTelemetryPersistPending = false;
+let playtestTelemetryFogCountCacheWorld: WorldState | null = null;
+let playtestTelemetryFogCountCacheTick = -1;
+let playtestTelemetryFogCountCache: PlaytestTelemetryEntry["fog"] | null = null;
+let completedCampaignMissionsCache: string[] | null = null;
 
 type CameraButton = "up" | "down" | "left" | "right" | "zoomIn" | "zoomOut";
 type BrowserSmokeOrderTarget = { x: number; y: number };
@@ -223,6 +230,8 @@ type BrowserSmokeCommand = {
   id: string;
   key: string;
   label: string;
+  longLabel: string;
+  statusText: string;
   disabled: boolean;
   icon: string | null;
   sourceAction: string | null;
@@ -265,9 +274,11 @@ type BrowserSmokeState = {
   sourceGameSpeedDefault: number | null;
   commandPage: number;
   commandCard: BrowserSmokeCommand[];
+  modernHud: ModernHudLayoutDebug | null;
   selectedUnitCount: number;
   selectedUnitIds: string[];
   selectedUnitTypes: string[];
+  ownedUnitCounts: Record<string, number>;
   ownedUnitScreenPoints: Array<{ id: string; typeId: string; x: number; y: number; screenX: number; screenY: number }>;
   ownedUnitVisualScreenPoints: Array<{ id: string; typeId: string; x: number; y: number; screenX: number; screenY: number }>;
   firstOwnedMovableScreenPoint: BrowserSmokeOrderTarget | null;
@@ -406,6 +417,8 @@ declare global {
     __WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__?: (kind: "train" | "research" | "construction") => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__?: (casterTypeId: string, spellId: string) => ({ ok: boolean; error?: string; command?: string | null; instantCommand?: string | null; target?: BrowserSmokeOrderTarget | null } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_RESEARCH_FIXTURE__?: (typeId: string, upgradeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
+    __WARGUS_TS_CLEAR_SELECTION__?: () => ReturnType<typeof browserSmokeCommandResult>;
+    __WARGUS_TS_ADD_HUD_MESSAGE__?: (text: string, lifetimeMs?: number) => boolean;
     __WARGUS_TS_EXPECTED_SOURCE_COMMANDS__?: (page?: number) => BrowserSmokeSourceCommand[];
     __WARGUS_TS_EXECUTE_HUD_COMMAND__?: (command: string, input?: { ctrlKey?: boolean; shiftKey?: boolean }) => BrowserSmokeCommandResult;
     __WARGUS_TS_EXECUTE_SELECTION_HOTKEY__?: (code: string, input?: { shiftKey?: boolean }) => BrowserSmokeCommandResult;
@@ -682,6 +695,23 @@ if (browserSmokeStateEnabled) {
   };
   window.__WARGUS_TS_PUBLISH_SMOKE__ = () => {
     publishBrowserSmokeState(true);
+  };
+  window.__WARGUS_TS_CLEAR_SELECTION__ = () => {
+    selectedUnitIds = [];
+    pendingWorldCommand = null;
+    commandPage = 0;
+    fixedDemoHudRenderKey = "";
+    publishBrowserSmokeState(true);
+    return browserSmokeCommandResult(null);
+  };
+  window.__WARGUS_TS_ADD_HUD_MESSAGE__ = (text, lifetimeMs = 5200) => {
+    if (!world || !text) {
+      return false;
+    }
+    addHudMessage(String(text), lifetimeMs);
+    fixedDemoHudRenderKey = "";
+    publishBrowserSmokeState(true);
+    return true;
   };
   window.__WARGUS_TS_SELECT_FIRST_UNIT_TYPE__ = (typeId) => {
     if (!world) {
@@ -1852,6 +1882,117 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
 }
 
+function browserMouseEventTargetsGame(event: Event): boolean {
+  const path = event.composedPath();
+  if (path.includes(app.canvas) || path.includes(gameRoot)) {
+    return true;
+  }
+  const target = event.target;
+  return target instanceof Node && gameRoot.contains(target);
+}
+
+const gameBrowserGuardButtonMask = 2 | 4 | 8 | 16;
+const gameBrowserContainButtonMask = 2 | 8 | 16;
+let gameBrowserMouseGuardActive = false;
+
+function mouseEventButtonMask(event: MouseEvent | PointerEvent): number {
+  const buttons = event.buttons ?? 0;
+  return buttons | mouseEventButtonToMask(event.button);
+}
+
+function mouseEventButtonToMask(button: number): number {
+  switch (button) {
+    case 0: return 1;
+    case 1: return 4;
+    case 2: return 2;
+    case 3: return 8;
+    case 4: return 16;
+    default: return 0;
+  }
+}
+
+function gameBrowserMouseEventIsPress(event: MouseEvent | PointerEvent): boolean {
+  return event.type === "mousedown" || event.type === "pointerdown";
+}
+
+function gameBrowserMouseEventIsRelease(event: MouseEvent | PointerEvent): boolean {
+  return event.type === "mouseup" || event.type === "pointerup" || event.type === "pointercancel";
+}
+
+function gameBrowserMouseEventIsMove(event: MouseEvent | PointerEvent): boolean {
+  return event.type === "mousemove" || event.type === "pointermove" || event.type === "pointerrawupdate";
+}
+
+function gameBrowserMouseEventShouldSuppress(event: MouseEvent | PointerEvent): boolean {
+  if (isEditableKeyboardTarget(event.target)) {
+    return false;
+  }
+  const targetsGame = browserMouseEventTargetsGame(event);
+  const activeOrTargeted = targetsGame || gameBrowserMouseGuardActive;
+  if (!activeOrTargeted) {
+    return false;
+  }
+  if (event.type === "contextmenu" || event.type === "auxclick") {
+    return true;
+  }
+  const mask = mouseEventButtonMask(event);
+  if ((mask & gameBrowserGuardButtonMask) !== 0) {
+    return true;
+  }
+  return gameBrowserMouseGuardActive && gameBrowserMouseEventIsMove(event);
+}
+
+function gameBrowserMouseEventShouldContain(event: MouseEvent | PointerEvent): boolean {
+  if (!gameBrowserMouseEventShouldSuppress(event)) {
+    return false;
+  }
+  if (event.type === "contextmenu" || event.type === "auxclick") {
+    return true;
+  }
+  const mask = mouseEventButtonMask(event);
+  return (mask & gameBrowserContainButtonMask) !== 0 || (gameBrowserMouseGuardActive && gameBrowserMouseEventIsMove(event));
+}
+
+function updateGameBrowserMouseGuard(event: MouseEvent | PointerEvent): void {
+  if (browserMouseEventTargetsGame(event) && gameBrowserMouseEventIsPress(event) && (mouseEventButtonMask(event) & gameBrowserGuardButtonMask) !== 0) {
+    gameBrowserMouseGuardActive = true;
+  }
+  if (gameBrowserMouseEventIsRelease(event) && (event.buttons & gameBrowserGuardButtonMask) === 0) {
+    gameBrowserMouseGuardActive = false;
+  }
+}
+
+function suppressGameBrowserMouseDefault(event: MouseEvent | PointerEvent): void {
+  updateGameBrowserMouseGuard(event);
+  if (!gameBrowserMouseEventShouldSuppress(event)) {
+    return;
+  }
+  event.preventDefault();
+}
+
+function containGameBrowserMouseEvent(event: MouseEvent | PointerEvent): void {
+  if (!gameBrowserMouseEventShouldContain(event)) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function suppressGameBrowserWheelDefault(event: WheelEvent): void {
+  if ((!gameBrowserMouseGuardActive && !browserMouseEventTargetsGame(event)) || isEditableKeyboardTarget(event.target)) {
+    return;
+  }
+  event.preventDefault();
+}
+
+const browserMouseGuardOptions = { capture: true, passive: false } satisfies AddEventListenerOptions;
+const browserMouseGuardEventTypes = ["contextmenu", "auxclick", "mousedown", "mouseup", "mousemove", "pointerdown", "pointerup", "pointermove", "pointercancel", "pointerrawupdate"] as const;
+for (const type of browserMouseGuardEventTypes) {
+  window.addEventListener(type, suppressGameBrowserMouseDefault as EventListener, browserMouseGuardOptions);
+  document.addEventListener(type, containGameBrowserMouseEvent as EventListener);
+}
+window.addEventListener("wheel", suppressGameBrowserWheelDefault, browserMouseGuardOptions);
+
 window.addEventListener("keydown", (event) => {
   if (isEditableKeyboardTarget(event.target)) {
     return;
@@ -1979,9 +2120,7 @@ app.canvas.addEventListener("wheel", (event) => {
   persistActiveSourceViewportCamera();
 }, { passive: false });
 
-app.canvas.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-});
+app.canvas.addEventListener("contextmenu", suppressGameBrowserMouseDefault);
 
 app.canvas.addEventListener("dblclick", (event) => {
   if (!world || titleScreenOpen || pendingWorldCommand) {
@@ -2185,7 +2324,7 @@ try {
   audioEngine.setTileset(setup?.tileset);
   syncAudioSettingsFromWorld();
   resetWorldTransientState();
-  titleScreenOpen = !isFixedBrowserDemoMap(activeMap);
+  titleScreenOpen = false;
   briefingOpen = Boolean(world.briefingText);
   resetBriefingAudioCue(audioCueState);
   startBriefingAudio(world);
@@ -2219,7 +2358,6 @@ app.ticker.add((ticker) => {
       }
     }
     applyFixedDemoMovementPace(world);
-    updateFixedDemoMission(world, fixedDemoMissionState, { briefingOpen, titleScreenOpen, addHudMessage });
     const autosaveIntervalSeconds = sourceAutosaveIntervalSeconds(world);
     if (autosaveIntervalSeconds > 0 && autosaveClock >= autosaveIntervalSeconds) {
       autosaveClock = 0;
@@ -2228,6 +2366,9 @@ app.ticker.add((ticker) => {
     drainWorldEvents(world);
     maybeStartMatchMusicCue(audioCueState, audioEngine, world);
     recordCampaignProgress(campaignProgressState, activeMap, world);
+    if (world.matchState.status === "victory") {
+      completedCampaignMissionsCache = null;
+    }
     ensureMissingUnitAtlases(unitAtlasLazyLoadState, world, unitAtlases, manifest?.units ?? null);
     pruneHudMessageState(hudMessageState);
     selectedUnitIds = selectedUnitIds.filter((id) => isSelectionStillValid(loadedWorld, id));
@@ -2251,7 +2392,7 @@ app.ticker.add((ticker) => {
     if (shouldRenderHud) {
       renderMainHud(loadedWorld, hoveredUnit);
     }
-    overlayLayer.removeChildren();
+    destroyLayerChildren(overlayLayer);
     renderSelectionDragOverlay({ layer: overlayLayer, camera, world, screenWidth: app.screen.width, screenHeight: app.screen.height, activeSourceViewportIndex }, selectionDrag);
     renderBuildPlacementOverlay({ layer: overlayLayer, camera, world, screenWidth: app.screen.width, screenHeight: app.screen.height, activeSourceViewportIndex, manifest, pointerWorldPosition, selectedUnitIds, pendingWorldCommand });
     renderPendingCommandOverlay({ layer: overlayLayer, camera, world, screenWidth: app.screen.width, screenHeight: app.screen.height, activeSourceViewportIndex, pointerWorldPosition, selectedUnitIds, pendingWorldCommand });
@@ -2297,6 +2438,7 @@ function renderMainHud(loadedWorld: WorldState, hoveredUnit: WorldUnit | null): 
     titleScreenOpen,
     nextCampaignMap: nextCampaignMapFor(activeMap, manifest),
     iconAtlas,
+    unitAtlases,
     statusDecorationAtlas,
     sourcePanelAtlas,
     sourceButtonStyleAtlas,
@@ -2353,7 +2495,7 @@ function renderMainHud(loadedWorld: WorldState, hoveredUnit: WorldUnit | null): 
       }
     },
     mapPicker: mapPickerState,
-    completedCampaignMissions: loadCampaignProgress(),
+    completedCampaignMissions: cachedCampaignProgress(),
     onMapPick: (map) => {
       void selectMapFromPicker(map);
     },
@@ -2484,9 +2626,16 @@ function installPlaytestTelemetryHooks(): void {
     ensurePlaytestTelemetryLoaded();
     const cleared = playtestTelemetryLog.length;
     playtestTelemetryLog = [];
+    lastPlaytestTelemetryJankSignature = "";
     persistPlaytestTelemetry(true);
     return cleared;
   };
+  window.addEventListener("pagehide", () => persistPlaytestTelemetry(true));
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      persistPlaytestTelemetry(true);
+    }
+  });
 }
 
 function ensurePlaytestTelemetryLoaded(): void {
@@ -2506,8 +2655,11 @@ function ensurePlaytestTelemetryLoaded(): void {
 function recordPlaytestTelemetry(now: number): void {
   ensurePlaytestTelemetryLoaded();
   const jankReasons = playtestTelemetryJankReasons();
+  const jankSignature = jankReasons.join("|");
   const shouldSample = lastPlaytestTelemetrySampleMs <= 0 || now - lastPlaytestTelemetrySampleMs >= PLAYTEST_TELEMETRY_SAMPLE_MS;
-  const shouldRecordJank = jankReasons.length > 0 && now - lastPlaytestTelemetryJankMs >= 500;
+  const shouldRecordJank = jankReasons.length > 0
+    && jankSignature !== lastPlaytestTelemetryJankSignature
+    && now - lastPlaytestTelemetryJankMs >= PLAYTEST_TELEMETRY_JANK_SAMPLE_MS;
   if (!shouldSample && !shouldRecordJank) {
     return;
   }
@@ -2516,12 +2668,13 @@ function recordPlaytestTelemetry(now: number): void {
   }
   if (shouldRecordJank) {
     lastPlaytestTelemetryJankMs = now;
+    lastPlaytestTelemetryJankSignature = jankSignature;
   }
   playtestTelemetryLog.push(createPlaytestTelemetryEntry(now, shouldRecordJank ? "jank" : "sample", jankReasons));
   if (playtestTelemetryLog.length > PLAYTEST_TELEMETRY_MAX_ENTRIES) {
     playtestTelemetryLog = playtestTelemetryLog.slice(-PLAYTEST_TELEMETRY_MAX_ENTRIES);
   }
-  persistPlaytestTelemetry(shouldRecordJank || now - lastPlaytestTelemetryFlushMs >= PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS);
+  persistPlaytestTelemetry(now - lastPlaytestTelemetryFlushMs >= PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS);
 }
 
 function playtestTelemetryJankReasons(): string[] {
@@ -2581,6 +2734,9 @@ function playtestTelemetryFogCounts(): PlaytestTelemetryEntry["fog"] {
   if (!world) {
     return { visibleTiles: 0, exploredTiles: 0, unexploredTiles: 0 };
   }
+  if (playtestTelemetryFogCountCacheWorld === world && playtestTelemetryFogCountCacheTick === world.tick && playtestTelemetryFogCountCache) {
+    return playtestTelemetryFogCountCache;
+  }
   let visibleTiles = 0;
   let exploredTiles = 0;
   let unexploredTiles = 0;
@@ -2594,19 +2750,34 @@ function playtestTelemetryFogCounts(): PlaytestTelemetryEntry["fog"] {
       unexploredTiles += 1;
     }
   }
-  return { visibleTiles, exploredTiles, unexploredTiles };
+  playtestTelemetryFogCountCacheWorld = world;
+  playtestTelemetryFogCountCacheTick = world.tick;
+  playtestTelemetryFogCountCache = { visibleTiles, exploredTiles, unexploredTiles };
+  return playtestTelemetryFogCountCache;
 }
 
 function persistPlaytestTelemetry(force = false): void {
-  if (!force) {
+  if (!force && performance.now() - lastPlaytestTelemetryFlushMs < PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS) {
     return;
   }
-  lastPlaytestTelemetryFlushMs = performance.now();
-  try {
-    window.localStorage.setItem(PLAYTEST_TELEMETRY_STORAGE_KEY, JSON.stringify(playtestTelemetryLog));
-  } catch {
-    // Telemetry should never interrupt the demo.
+  if (playtestTelemetryPersistPending && !force) {
+    return;
   }
+  const write = (): void => {
+    playtestTelemetryPersistPending = false;
+    lastPlaytestTelemetryFlushMs = performance.now();
+    try {
+      window.localStorage.setItem(PLAYTEST_TELEMETRY_STORAGE_KEY, JSON.stringify(playtestTelemetryLog));
+    } catch {
+      // Telemetry should never interrupt play.
+    }
+  };
+  if (force) {
+    write();
+    return;
+  }
+  playtestTelemetryPersistPending = true;
+  window.setTimeout(write, 0);
 }
 
 function fixedDemoCameraScrolling(): boolean {
@@ -2636,6 +2807,7 @@ async function loadPlayableMap(map: WargusMap): Promise<void> {
     audioEngine?.stopMusic();
     syncAudioSettingsFromWorld();
     resetWorldTransientState();
+    titleScreenOpen = false;
     briefingOpen = Boolean(world.briefingText);
     resetBriefingAudioCue(audioCueState);
     resetCampaignProgressSession(campaignProgressState);
@@ -2720,11 +2892,13 @@ function publishBrowserSmokeState(force = false): void {
     })) ?? [],
     commandPage,
     commandCard: lightweightSmoke ? [] : browserSmokeCommandCard(),
+    modernHud: latestModernHudLayoutDebug,
     selectedUnitCount: selectedUnitIds.length,
     selectedUnitIds: [...selectedUnitIds],
     selectedUnitTypes: selectedUnitIds
       .map((id) => world?.units.find((unit) => unit.id === id)?.typeId)
       .filter((typeId): typeId is string => Boolean(typeId)),
+    ownedUnitCounts: browserSmokeOwnedUnitCounts(),
     ownedUnitScreenPoints: lightweightSmoke ? [] : browserSmokeOwnedUnitScreenPoints(),
     ownedUnitVisualScreenPoints: lightweightSmoke ? [] : browserSmokeOwnedUnitScreenPoints(true),
     firstOwnedMovableScreenPoint: lightweightSmoke ? null : browserSmokeFirstOwnedMovableScreenPoint(),
@@ -2842,6 +3016,8 @@ function browserSmokeCommand(command: HudCommand): BrowserSmokeCommand {
     id: command.id,
     key: command.key,
     label: command.label,
+    longLabel: command.longLabel ?? command.label,
+    statusText: command.statusText ?? command.longLabel ?? command.label,
     disabled: command.disabled === true,
     icon: command.icon ?? null,
     sourceAction: command.sourceButton?.action ?? null,
@@ -3155,6 +3331,20 @@ function browserSmokeOwnedUnitScreenPoints(visual = false): Array<{ id: string; 
     })
     .filter((point) => point.screenX >= rect.x && point.screenX <= rect.x + rect.width && point.screenY >= rect.y && point.screenY <= rect.y + rect.height)
     .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function browserSmokeOwnedUnitCounts(): Record<string, number> {
+  if (!world) {
+    return {};
+  }
+  const counts: Record<string, number> = {};
+  for (const unit of world.units) {
+    if (unit.player !== world.visibilityPlayer || unit.hitPoints <= 0 || unit.construction) {
+      continue;
+    }
+    counts[unit.typeId] = (counts[unit.typeId] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function browserSmokeFirstOwnedMovableUnit(): WorldUnit | null {
@@ -3687,7 +3877,6 @@ function resetWorldTransientState(): void {
   pointerWorldPosition = null;
   fixedDemoHudRefreshClock = 0;
   fixedDemoHudRenderKey = "";
-  resetFixedDemoMissionRuntimeState(fixedDemoMissionState);
   renderPerformance.averageFrameMs = null;
   renderPerformance.averageUpdateMs = null;
   renderPerformance.averageRenderMs = null;
@@ -3697,6 +3886,9 @@ function resetWorldTransientState(): void {
   renderPerformance.lastRenderMs = null;
   renderPerformance.lastSmokeMs = null;
   renderPerformance.hudRenderedLastFrame = false;
+  playtestTelemetryFogCountCacheWorld = null;
+  playtestTelemetryFogCountCacheTick = -1;
+  playtestTelemetryFogCountCache = null;
   lastBrowserSmokePublishMs = 0;
   browserSmokePairCache = null;
   clearSelectionClickState(selectionClickState);
@@ -3704,6 +3896,11 @@ function resetWorldTransientState(): void {
   resetSourceCheatInputState(sourceCheatInputState);
   clearHudMessageState(hudMessageState);
   resetTransientInput();
+}
+
+function cachedCampaignProgress(): string[] {
+  completedCampaignMissionsCache ??= loadCampaignProgress();
+  return completedCampaignMissionsCache;
 }
 
 function sourceSetupPaused(setup: WargusMapSetup | null): boolean {
@@ -3960,15 +4157,14 @@ function maybeGrabSourceMouse(): void {
 }
 
 function renderSourceSoftwareCursor(): void {
-  cursorLayer.removeChildren();
   if (isFixedBrowserDemoMap(activeMap)) {
-    cursorSprite = null;
-    cursorSpriteKey = null;
+    destroyLayerChildren(cursorLayer);
+    destroyCurrentCursorSprite();
     return;
   }
   if (world?.engineSettings.hardwareCursorDefault !== false || !pointerScreenPosition) {
-    cursorSprite = null;
-    cursorSpriteKey = null;
+    destroyLayerChildren(cursorLayer);
+    destroyCurrentCursorSprite();
     return;
   }
   const renderState = sourceCursorRenderStateForWorldState({
@@ -3984,18 +4180,46 @@ function renderSourceSoftwareCursor(): void {
     selectionDragActive: selectionDrag !== null
   });
   if (!renderState) {
-    cursorSprite = null;
-    cursorSpriteKey = null;
+    destroyLayerChildren(cursorLayer);
+    destroyCurrentCursorSprite();
     return;
   }
   const file = sourceCursorFileForState(renderState.cursor);
   const key = `${file}:${renderState.cursor.hotSpot.join(",")}`;
-  if (!cursorSprite || cursorSpriteKey !== key) {
+  const reusableCursor = cursorSprite && cursorSpriteKey === key ? cursorSprite : null;
+  destroyLayerChildrenExcept(cursorLayer, reusableCursor);
+  if (!reusableCursor) {
+    destroyCurrentCursorSprite();
     cursorSprite = Sprite.from(`/wargus/graphics/${file}`);
     cursorSpriteKey = key;
   }
-  cursorSprite.position.set(pointerScreenPosition.x - renderState.cursor.hotSpot[0], pointerScreenPosition.y - renderState.cursor.hotSpot[1]);
-  cursorLayer.addChild(cursorSprite);
+  const sprite = cursorSprite!;
+  sprite.position.set(pointerScreenPosition.x - renderState.cursor.hotSpot[0], pointerScreenPosition.y - renderState.cursor.hotSpot[1]);
+  cursorLayer.addChild(sprite);
+}
+
+function destroyLayerChildren(layer: Container): void {
+  const children = layer.removeChildren();
+  for (const child of children) {
+    child.destroy({ children: true });
+  }
+}
+
+function destroyLayerChildrenExcept(layer: Container, preserved: Container | Sprite | null): void {
+  const children = layer.removeChildren();
+  for (const child of children) {
+    if (child !== preserved) {
+      child.destroy({ children: true });
+    }
+  }
+}
+
+function destroyCurrentCursorSprite(): void {
+  if (cursorSprite && !cursorSprite.destroyed) {
+    cursorSprite.destroy({ children: true });
+  }
+  cursorSprite = null;
+  cursorSpriteKey = null;
 }
 
 function sourceEdgeScrollCursorActive(): boolean {
@@ -4006,17 +4230,23 @@ function sourceUnitUnderCursor(loadedWorld: WorldState | null, point: { x: numbe
   if (!loadedWorld || !point) {
     return null;
   }
-  const visibleUnits = [...loadedWorld.units]
-    .filter((unit) => (
-      unit.hitPoints > 0
-      && !isUnitHiddenInConstruction(unit)
-      && !isInvisibleUtilityUnit(unit)
-      && !isUnitInsideResourceSource(unit)
-      && isUnitVisibleToPlayer(loadedWorld, unit, loadedWorld.visibilityPlayer)
-      && sourceUnitContainsWorldPoint(loadedWorld, unit, point.x, point.y)
-    ))
-    .sort((left, right) => (right.drawLevel ?? 0) - (left.drawLevel ?? 0) || right.y - left.y);
-  return visibleUnits[0] ?? null;
+  let hovered: WorldUnit | null = null;
+  for (const unit of loadedWorld.units) {
+    if (
+      unit.hitPoints <= 0
+      || isUnitHiddenInConstruction(unit)
+      || isInvisibleUtilityUnit(unit)
+      || isUnitInsideResourceSource(unit)
+      || !isUnitVisibleToPlayer(loadedWorld, unit, loadedWorld.visibilityPlayer)
+      || !sourceUnitContainsWorldPoint(loadedWorld, unit, point.x, point.y)
+    ) {
+      continue;
+    }
+    if (!hovered || (unit.drawLevel ?? 0) > (hovered.drawLevel ?? 0) || ((unit.drawLevel ?? 0) === (hovered.drawLevel ?? 0) && unit.y > hovered.y)) {
+      hovered = unit;
+    }
+  }
+  return hovered;
 }
 
 function sourceUnitContainsWorldPoint(loadedWorld: WorldState, unit: WorldUnit, x: number, y: number): boolean {

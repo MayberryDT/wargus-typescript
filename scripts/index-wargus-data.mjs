@@ -4908,7 +4908,7 @@ for (const [scriptFile, source] of scriptSources) {
     if (race) engineSettings.menuButtons[race] = parsedEngineSettings.menuButtons;
   }
   engineSettings.revealAttacker ||= parsedEngineSettings.revealAttacker;
-  if (/RevealMap\(\s*"/.test(source)) engineSettings.revealMapMode = parsedEngineSettings.revealMapMode;
+  if (scriptFile === "scripts/stratagus.lua" && /RevealMap\(\s*"/.test(source)) engineSettings.revealMapMode = parsedEngineSettings.revealMapMode;
   engineSettings.revelationType ??= parsedEngineSettings.revelationType;
   if (/RightButton(?:Moves|Attacks)\(\s*\)/.test(source)) engineSettings.rightButtonAction = parsedEngineSettings.rightButtonAction;
   if (parsedEngineSettings.resourceUiLabels.length > 0) engineSettings.resourceUiLabels = parsedEngineSettings.resourceUiLabels;

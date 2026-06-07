@@ -6,12 +6,6 @@
   NODE_VERSION = "24"
 
 [[redirects]]
-  from = "/wargus/*"
-  to = "/wargus-missing.json"
-  status = 404
-  force = true
-
-[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

@@ -16,6 +16,7 @@
     "verify:browser-demo-session": "npm run verify:browser-fixed-demo-input && WARGUS_BROWSER_HARVEST_MAP=\"maps/ladder/Garden of war BNE.pud.smp.gz\" npm run verify:browser-harvest-session && WARGUS_BROWSER_TRAIN_MAP=\"maps/ladder/Garden of war BNE.pud.smp.gz\" npm run verify:browser-train-session && npm run verify:browser-demo-victory",
     "verify:browser-fixed-demo-input": "node scripts/verify-browser-fixed-demo-input.mjs",
     "verify:browser-demo-victory": "node scripts/verify-browser-demo-victory.mjs",
+    "verify:modern-hud-layout": "node scripts/verify-modern-hud-layout.mjs",
     "verify:fixed-demo-random-ai": "node scripts/verify-fixed-demo-random-ai.mjs",
     "verify:resource-return-black-fog": "node scripts/verify-resource-return-and-black-fog.mjs",
     "verify:playtest-telemetry": "node scripts/verify-playtest-telemetry.mjs",

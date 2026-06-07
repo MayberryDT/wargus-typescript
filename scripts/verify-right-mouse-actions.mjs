@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
+const mainSource = readFileSync("src/main.ts", "utf8");
+const stylesSource = readFileSync("src/styles.css", "utf8");
 const worldSource = readFileSync("src/simulation/world.ts", "utf8");
 const ordersSource = readFileSync("src/simulation/orders.ts", "utf8");
 const saveSource = readFileSync("src/wargus/saveGame.ts", "utf8");
@@ -29,6 +31,37 @@ if (!saveSource.includes("unit.rightMouseAction = definition.rightMouseAction ??
 }
 if (!ordersSource.includes("issueSourceRightMouseAction(world, unit, sourceAction, x, y)")) {
   errors.push("issueSmartOrder does not route through source RightMouseAction handling.");
+}
+for (const fragment of [
+  "const gameBrowserGuardButtonMask = 2 | 4 | 8 | 16;",
+  "const gameBrowserContainButtonMask = 2 | 8 | 16;",
+  "let gameBrowserMouseGuardActive = false;",
+  "function mouseEventButtonToMask(button: number): number",
+  "case 2: return 2;",
+  "function suppressGameBrowserMouseDefault(event: MouseEvent | PointerEvent): void",
+  "function containGameBrowserMouseEvent(event: MouseEvent | PointerEvent): void",
+  "function suppressGameBrowserWheelDefault(event: WheelEvent): void",
+  "const browserMouseGuardOptions = { capture: true, passive: false } satisfies AddEventListenerOptions;",
+  'const browserMouseGuardEventTypes = ["contextmenu", "auxclick", "mousedown", "mouseup", "mousemove", "pointerdown", "pointerup", "pointermove", "pointercancel", "pointerrawupdate"] as const;',
+  "window.addEventListener(type, suppressGameBrowserMouseDefault as EventListener, browserMouseGuardOptions);",
+  "document.addEventListener(type, containGameBrowserMouseEvent as EventListener);",
+  'window.addEventListener("wheel", suppressGameBrowserWheelDefault, browserMouseGuardOptions);',
+  'app.canvas.addEventListener("contextmenu", suppressGameBrowserMouseDefault);'
+]) {
+  if (!mainSource.includes(fragment)) {
+    errors.push(`Browser right-click suppression is missing fragment: ${fragment}`);
+  }
+}
+for (const fragment of [
+  "overscroll-behavior: none;",
+  "touch-action: none;",
+  "user-select: none;",
+  "-webkit-user-select: none;",
+  "-webkit-touch-callout: none;"
+]) {
+  if (!stylesSource.includes(fragment)) {
+    errors.push(`Browser gesture suppression CSS is missing fragment: ${fragment}`);
+  }
 }
 if (!ordersSource.includes("function issueRightMouseAttackOrder")) {
   errors.push("RightMouseAction attack mode is not explicitly implemented.");

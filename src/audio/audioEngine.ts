@@ -16,6 +16,9 @@ export class AudioEngine {
   private nextVariantIndexBySound = new Map<string, number>();
   private nextMusicIndexByPrefix = new Map<string, number>();
   private currentMusic: string | null = null;
+  private pendingMusicFile: string | null = null;
+  private pendingMusicPlayback: Promise<void> | null = null;
+  private musicPlaybackToken = 0;
   private briefingSources: AudioBufferSourceNode[] = [];
   private tileset: string | null = null;
   private effectsEnabled: boolean;
@@ -206,6 +209,13 @@ export class AudioEngine {
   }
 
   stopMusic(): void {
+    this.musicPlaybackToken += 1;
+    this.pendingMusicFile = null;
+    this.pendingMusicPlayback = null;
+    this.stopActiveMusic();
+  }
+
+  private stopActiveMusic(): void {
     this.midiPlayer?.stop();
     if (this.musicBufferSource) {
       try {
@@ -230,9 +240,35 @@ export class AudioEngine {
   }
 
   private async playBrowserMusicLoop(file: string): Promise<void> {
-    this.stopMusic();
+    if (this.currentMusic === file || this.pendingMusicFile === file) {
+      await this.pendingMusicPlayback;
+      return;
+    }
+    const token = this.musicPlaybackToken + 1;
+    this.musicPlaybackToken = token;
+    this.stopActiveMusic();
+    const playback = this.startBrowserMusicLoop(file, token);
+    this.pendingMusicFile = file;
+    this.pendingMusicPlayback = playback;
+    try {
+      await playback;
+    } finally {
+      if (this.pendingMusicPlayback === playback) {
+        this.pendingMusicFile = null;
+        this.pendingMusicPlayback = null;
+      }
+    }
+  }
+
+  private async startBrowserMusicLoop(file: string, token: number): Promise<void> {
     const source = await this.musicAudioSourceForFile(file);
-    if (await this.playDecodedMusicLoop(source)) {
+    if (!this.isActiveMusicRequest(token)) {
+      return;
+    }
+    if (await this.playDecodedMusicLoop(source, token)) {
+      return;
+    }
+    if (!this.isActiveMusicRequest(token)) {
       return;
     }
     const audio = new Audio(source.url);
@@ -241,6 +277,12 @@ export class AudioEngine {
     this.musicElement = audio;
     try {
       await audio.play();
+      if (!this.isActiveMusicRequest(token)) {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        return;
+      }
       this.currentMusic = source.file;
       this.lastError = null;
     } catch (error) {
@@ -248,7 +290,11 @@ export class AudioEngine {
     }
   }
 
-  private async playDecodedMusicLoop(source: { file: string; url: string }): Promise<boolean> {
+  private isActiveMusicRequest(token: number): boolean {
+    return token === this.musicPlaybackToken;
+  }
+
+  private async playDecodedMusicLoop(source: { file: string; url: string }, token: number): Promise<boolean> {
     const context = this.context;
     const gain = this.musicGain;
     if (!context || !gain) {
@@ -260,6 +306,9 @@ export class AudioEngine {
         return false;
       }
       const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      if (!this.isActiveMusicRequest(token)) {
+        return true;
+      }
       const node = context.createBufferSource();
       node.buffer = buffer;
       node.loop = true;
@@ -276,6 +325,10 @@ export class AudioEngine {
   }
 
   private async musicAudioSourceForFile(file: string): Promise<{ file: string; url: string }> {
+    if (isNativeBrowserMusicFile(file)) {
+      const normalized = file.replace(/^music\//, "");
+      return { file: normalized, url: `/wargus/music/${encodeURIComponent(normalized)}` };
+    }
     const extracted = await this.extractedMusicFile(file);
     if (extracted) {
       return { file: extracted, url: `/wargus/music/${encodeURIComponent(extracted)}` };
@@ -568,6 +621,10 @@ export class AudioEngine {
 
 function musicRacePrefix(race: string | null | undefined): "Human" | "Orc" {
   return race === "orc" ? "Orc" : "Human";
+}
+
+function isNativeBrowserMusicFile(file: string): boolean {
+  return /\.(mp3|ogg|wav)$/i.test(file);
 }
 
 function extractedMusicCandidates(file: string): string[] {

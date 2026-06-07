@@ -624,6 +624,7 @@ export interface WargusMapSetupState {
   fogOfWar?: boolean;
   gamePaused?: boolean;
   gameSpeed?: number;
+  disableStartingHalls?: boolean;
 }
 
 export interface WargusMapPlayer {

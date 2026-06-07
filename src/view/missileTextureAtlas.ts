@@ -15,13 +15,12 @@ export interface MissileTextureAtlas {
 
 export async function loadMissileTextureAtlases(missiles: WargusMissile[]): Promise<Map<string, MissileTextureAtlas>> {
   const atlases = new Map<string, MissileTextureAtlas>();
-  for (const missile of missiles) {
-    if (!missile.file || !missile.size) {
-      continue;
-    }
-    const atlas = await loadMissileTextureAtlas(missile);
+  const loadedAtlases = await Promise.all(missiles
+    .filter((missile) => Boolean(missile.file && missile.size))
+    .map(async (missile) => ({ id: missile.id, atlas: await loadMissileTextureAtlas(missile) })));
+  for (const { id, atlas } of loadedAtlases) {
     if (atlas) {
-      atlases.set(missile.id, atlas);
+      atlases.set(id, atlas);
     }
   }
   return atlases;

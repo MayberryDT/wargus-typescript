@@ -89,7 +89,7 @@ for (const fragment of [
   "numDirections: Math.max(0, unit.numDirections",
   "getAnimatedFrameNumber(unit, manifest, world, atlas.numDirections)",
   "spriteDirectionForFacing(unit.facing ?? 4, atlas.numDirections)",
-  "if (numDirections === 1)"
+  "if (numDirections <= 1)"
 ]) {
   const source = fragment.startsWith("numDirections:") ? atlasSource : renderSource;
   if (!source.includes(fragment)) {

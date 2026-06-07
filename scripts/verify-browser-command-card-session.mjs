@@ -98,9 +98,11 @@ try {
   if (loaded !== true) {
     throw new Error(`Unable to load fixed demo map ${MAP_PATH}: ${JSON.stringify(loaded)}`);
   }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true", 10_000);
-  await dispatchKey(client, "Enter", "Enter", 13);
-  await delay(500);
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false", 10_000);
+  if (await evalValue(client, "window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true")) {
+    await dispatchKey(client, "Enter", "Enter", 13);
+    await delay(500);
+  }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
 
   const peasant = await selectUnitType("unit-peasant");
@@ -136,7 +138,7 @@ try {
   expectCommand(basicPage.commandCard, "source-build:unit-farm", { disabled: false, sourceAction: "build", sourceValue: "unit-farm" }, "farm build button");
   await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('build-page-cancel')");
 
-  const barracks = await selectUnitType("unit-human-barracks");
+  const barracks = await selectFixtureUnitType("unit-human-barracks");
   expectCommands(barracks.commandCard, [
     "source-train:unit-footman",
     "source-train:unit-archer",
@@ -157,7 +159,7 @@ try {
   }
   await verifySourceCancelCommands();
 
-  const rallyStart = await selectUnitType("unit-human-barracks");
+  const rallyStart = await selectFixtureUnitType("unit-human-barracks");
   const movePending = await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('move')");
   if (movePending.pendingWorldCommandKind !== "move") {
     throw new Error(`Barracks SET MOVE should enter a pending rally command, got ${JSON.stringify(movePending)}`);
@@ -175,7 +177,7 @@ try {
     throw new Error(`Barracks rally point was not recorded: expected=${JSON.stringify(rallyPoint)}, smoke=${JSON.stringify(rallyState)}`);
   }
 
-  const footman = await selectUnitType("unit-footman");
+  const footman = await selectFixtureUnitType("unit-footman");
   expectCommands(footman.commandCard, ["move", "stop", "attack-move", "patrol", "hold-position"], "footman command card");
   expectCommand(footman.commandCard, "hold-position", { sourceAction: "stand-ground", sourcePos: 5 }, "footman stand-ground command");
   const attackPending = await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('attack-move')");
@@ -184,7 +186,7 @@ try {
   }
   await verifyMixedSourceGroupCommandCard();
 
-  const townHall = await selectUnitType("unit-town-hall");
+  const townHall = await selectFixtureUnitType("unit-town-hall");
   expectCommands(townHall.commandCard, ["source-train:unit-peasant", "harvest", "move", "stop", "attack-move"], "town hall command card");
   const townHallTrainDebug = await evalValue(client, "window.__WARGUS_TS_DEBUG_SELECTED_TRAIN__?.() ?? []");
   const townHallPeasantTrain = townHall.commandCard.find((command) => command.id === "source-train:unit-peasant");

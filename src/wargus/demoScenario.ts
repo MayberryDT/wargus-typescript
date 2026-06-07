@@ -9,6 +9,7 @@ export const FIXED_BROWSER_DEMO_NEUTRAL_PLAYER_ID = 15;
 
 const DEMO_START_PLAYERS = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 const DEMO_DEFAULT_SEED = "garden-of-war-browser-demo";
+const DEMO_HIGH_RESOURCES = { gold: 10000, wood: 5000, oil: 5000 } as const;
 
 export function isFixedBrowserDemoMap(map: Pick<WargusMap, "path"> | null | undefined): boolean {
   return map?.path === FIXED_BROWSER_DEMO_MAP_PATH;
@@ -27,31 +28,46 @@ export function applyFixedBrowserDemoSetup(map: WargusMap, setup: WargusMapSetup
   const humanStart = setup.starts.find((start) => start.player === humanSourcePlayer);
   const enemyStart = setup.starts.find((start) => start.player === enemySourcePlayer);
   const enemyAi = enemySource?.ai ?? setup.aiTypeOverrides.find((entry) => entry.player === enemySourcePlayer)?.ai ?? "wc2-land-attack";
-  const remappedUnits = setup.units
-    .filter((unit) => unit.player === FIXED_BROWSER_DEMO_NEUTRAL_PLAYER_ID || unit.player === humanSourcePlayer || unit.player === enemySourcePlayer)
-    .map((unit) => {
-      if (unit.player === humanSourcePlayer) {
-        return { ...unit, typeId: fixedDemoRaceUnitType(unit.typeId, "human"), player: FIXED_BROWSER_DEMO_PLAYER_ID };
-      }
-      if (unit.player === enemySourcePlayer) {
-        return { ...unit, typeId: fixedDemoRaceUnitType(unit.typeId, "orc"), player: FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID };
-      }
-      return { ...unit };
-    });
+  const humanStartPoint = {
+    x: humanStart?.x ?? humanSource?.startView?.x ?? 116,
+    y: humanStart?.y ?? humanSource?.startView?.y ?? 116
+  };
+  const enemyStartPoint = {
+    x: enemyStart?.x ?? enemySource?.startView?.x ?? 85,
+    y: enemyStart?.y ?? enemySource?.startView?.y ?? 118
+  };
+  const demoUnits = [
+    ...setup.units
+      .filter((unit) => unit.player === FIXED_BROWSER_DEMO_NEUTRAL_PLAYER_ID)
+      .map((unit) => ({ ...unit })),
+    {
+      typeId: "unit-peasant",
+      player: FIXED_BROWSER_DEMO_PLAYER_ID,
+      x: humanStartPoint.x,
+      y: humanStartPoint.y,
+      resourcesHeld: null,
+      hitPoints: null
+    },
+    {
+      typeId: "unit-peon",
+      player: FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID,
+      x: enemyStartPoint.x,
+      y: enemyStartPoint.y,
+      resourcesHeld: null,
+      hitPoints: null
+    }
+  ];
 
   return {
     ...setup,
     title: FIXED_BROWSER_DEMO_TITLE,
-    objectives: [
-      "Gather gold and lumber for the war effort.",
-      "Train soldiers at the Barracks and hold the town.",
-      "Destroy the enemy town."
-    ],
-    briefingText: "Your expedition has entered Garden of War. Build your economy, scout the map, repel the first raid, then destroy the enemy town.",
+    objectives: [],
+    briefingText: null,
     briefingVoiceFiles: [],
     state: {
       ...setup.state,
-      fogOfWar: true
+      fogOfWar: true,
+      disableStartingHalls: true
     },
     players: setup.players.map((player) => {
       if (player.player === FIXED_BROWSER_DEMO_PLAYER_ID) {
@@ -60,8 +76,8 @@ export function applyFixedBrowserDemoSetup(map: WargusMap, setup: WargusMapSetup
           race: "human",
           ai: null,
           playerType: "person",
-          startView: humanSource?.startView ?? (humanStart ? { x: humanStart.x, y: humanStart.y } : player.startView),
-          resources: { ...(humanSource?.resources ?? player.resources) }
+          startView: humanStartPoint,
+          resources: { ...DEMO_HIGH_RESOURCES }
         };
       }
       if (player.player === FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID) {
@@ -70,8 +86,8 @@ export function applyFixedBrowserDemoSetup(map: WargusMap, setup: WargusMapSetup
           race: "orc",
           ai: enemyAi,
           playerType: "computer",
-          startView: enemySource?.startView ?? (enemyStart ? { x: enemyStart.x, y: enemyStart.y } : player.startView),
-          resources: { ...(enemySource?.resources ?? player.resources) }
+          startView: enemyStartPoint,
+          resources: { ...DEMO_HIGH_RESOURCES }
         };
       }
       return {
@@ -154,13 +170,13 @@ export function applyFixedBrowserDemoSetup(map: WargusMap, setup: WargusMapSetup
     allowedUpgradeTypes: [],
     tiles: setup.tiles.map((tile) => ({ ...tile })),
     starts: [
-      { player: FIXED_BROWSER_DEMO_PLAYER_ID, x: humanStart?.x ?? humanSource?.startView?.x ?? 116, y: humanStart?.y ?? humanSource?.startView?.y ?? 116 },
-      { player: FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID, x: enemyStart?.x ?? enemySource?.startView?.x ?? 85, y: enemyStart?.y ?? enemySource?.startView?.y ?? 118 },
+      { player: FIXED_BROWSER_DEMO_PLAYER_ID, ...humanStartPoint },
+      { player: FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID, ...enemyStartPoint },
       ...setup.starts
         .filter((start) => start.player !== FIXED_BROWSER_DEMO_PLAYER_ID && start.player !== FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID)
         .map((start) => ({ ...start }))
     ],
-    units: remappedUnits
+    units: demoUnits
   };
 }
 
@@ -190,6 +206,7 @@ export function applyFixedBrowserDemoWorldPresentation(map: WargusMap, world: Wo
   world.engineSettings.pauseOnLeaveDefault = false;
   world.engineSettings.sourceGameSpeedDefault = world.tickRate;
   world.engineSettings.fogOfWarEnabled = true;
+  world.engineSettings.revealMapMode = "hidden";
   world.engineSettings.fogOfWarType = "fast";
   world.engineSettings.fogOfWarBilinear = false;
   world.engineSettings.fogOfWarBlur = { simpleRadius: 0, bilinearRadius: 0, iterations: 1 };
@@ -199,7 +216,7 @@ export function applyFixedBrowserDemoWorldPresentation(map: WargusMap, world: Wo
 export function fixedBrowserDemoInitialSelection(world: WorldState): string[] {
   return world.units
     .filter((unit) => unit.player === world.visibilityPlayer && unit.hitPoints > 0 && unit.typeId === "unit-peasant")
-    .slice(0, 2)
+    .slice(0, 1)
     .map((unit) => unit.id);
 }
 
@@ -239,35 +256,4 @@ function seededIndex(seed: string, length: number): number {
     hash = Math.imul(hash, 16777619);
   }
   return Math.abs(hash >>> 0) % length;
-}
-
-function fixedDemoRaceUnitType(typeId: string, race: "human" | "orc"): string {
-  if (race === "human") {
-    if (typeId === "unit-great-hall" || typeId === "unit-stronghold" || typeId === "unit-fortress") {
-      return "unit-town-hall";
-    }
-    if (typeId === "unit-pig-farm") {
-      return "unit-farm";
-    }
-    if (typeId === "unit-peon") {
-      return "unit-peasant";
-    }
-    if (typeId === "unit-orc-barracks") {
-      return "unit-human-barracks";
-    }
-    return typeId;
-  }
-  if (typeId === "unit-town-hall" || typeId === "unit-keep" || typeId === "unit-castle") {
-    return "unit-great-hall";
-  }
-  if (typeId === "unit-farm") {
-    return "unit-pig-farm";
-  }
-  if (typeId === "unit-peasant") {
-    return "unit-peon";
-  }
-  if (typeId === "unit-human-barracks") {
-    return "unit-orc-barracks";
-  }
-  return typeId;
 }
