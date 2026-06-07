@@ -1,5 +1,10 @@
-import { existsSync } from "node:fs";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+
+if (!existsSync("public/wargus/manifest.json")) {
+  console.error("Missing Wargus asset pack: public/wargus/manifest.json was not found.");
+  console.error("Production builds require the generated public/wargus asset pack so the browser game does not boot to a black screen.");
+  process.exit(1);
+}
 
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
 

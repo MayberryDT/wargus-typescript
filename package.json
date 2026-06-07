@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "prebuild": "npm run verify:wargus-assets",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
