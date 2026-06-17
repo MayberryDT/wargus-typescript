@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const demoScenario = readFileSync("src/wargus/demoScenario.ts", "utf8");
+const indexHtml = readFileSync("index.html", "utf8");
 const orders = readFileSync("src/simulation/orders.ts", "utf8");
 const world = readFileSync("src/simulation/world.ts", "utf8");
 const saveGame = readFileSync("src/wargus/saveGame.ts", "utf8");
@@ -23,6 +24,8 @@ expect(demoScenario, "DEMO_START_PLAYERS", "Fixed demo should keep the original 
 expect(demoScenario, "DEMO_HIGH_RESOURCES = { gold: 10000, wood: 5000, oil: 5000 }", "Fixed demo should copy Wargus high-resource start amounts.");
 expect(demoScenario, "disableStartingHalls: true", "Fixed demo one-peasant mode should disable automatic fallback starting halls.");
 expect(demoScenario, "demoSeed", "Fixed demo should support deterministic seeded start selection.");
+expect(demoScenario, "runtimeFixedDemoSeed", "Fixed demo should use a browser-provided runtime seed for normal player runs.");
+expect(demoScenario, "__WARGUS_TS_RANDOM_DEMO_SEED__", "Fixed demo should read the browser runtime demo seed hook.");
 expect(demoScenario, "playerType: \"computer\"", "Fixed demo should activate exactly one computer player.");
 expect(demoScenario, "playerType: \"nobody\"", "Fixed demo should leave non-selected starts inactive.");
 expect(demoScenario, "enemyAi", "Fixed demo should preserve the selected enemy slot's original AI label.");
@@ -35,6 +38,11 @@ expect(demoScenario, "player-defeated", "Fixed demo victory should defeat the ra
 reject(demoScenario, "world.aiStates = []", "Fixed demo presentation must not clear AI states.");
 reject(demoScenario, "fixedDemoRaceUnitType", "Fixed demo should not remap original full start bases.");
 reject(demoScenario, "demoStartingUnits", "Fixed demo should use the original start points, not a custom staged base list.");
+reject(demoScenario, "return `${DEMO_DEFAULT_SEED}:${Date.now()}:${Math.random()}`", "Normal fixed-demo randomness should not use wall-clock or random APIs inside src/**/*.ts.");
+
+expect(indexHtml, "__WARGUS_TS_RANDOM_DEMO_SEED__", "Browser entrypoint should install a normal-play random demo seed hook.");
+expect(indexHtml, "getRandomValues", "Normal player demo starts should vary using browser entropy when available.");
+expect(indexHtml, "Math.random()", "Normal player demo starts should keep a browser-only fallback outside src/**/*.ts.");
 
 expect(world, "sourceScriptId", "World AI state should persist source script identity.");
 expect(world, "setup?.state?.disableStartingHalls !== true", "World creation should respect fixed demo one-peasant mode by skipping fallback halls.");
@@ -53,6 +61,10 @@ expect(orders, "wait-force", "Source AI runner should support blocking until a f
 expect(orders, "wc2-air-attack", "Source AI runner should recognize wc2-air-attack.");
 expect(orders, "wc2-land-attack", "Source AI runner should recognize wc2-land-attack.");
 
-expect(runtimeSmoke, "single-original-start-unit", "Browser runtime smoke should allow original starts with only one visible unit type.");
+expect(runtimeSmoke, "selectedUnitTypes?.[0] === \"unit-peasant\"", "Browser runtime smoke should assert the selected fixed-demo peasant.");
+expect(runtimeSmoke, "counts[\"unit-peasant\"] === 1", "Browser runtime smoke should assert exactly one owned peasant.");
+expect(runtimeSmoke, "!counts[\"unit-town-hall\"]", "Browser runtime smoke should assert no starting town hall.");
+expect(runtimeSmoke, "Number(resources.gold ?? 0) >= 10000", "Browser runtime smoke should assert high fixed-demo gold.");
+expect(runtimeSmoke, "Number(resources.wood ?? 0) >= 5000", "Browser runtime smoke should assert high fixed-demo wood.");
 
 console.log("Fixed demo random-start source AI contract verified.");

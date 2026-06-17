@@ -513,7 +513,7 @@ for (const fragment of [
 }
 
 for (const fragment of [
-  'const SOURCE_PENDING_ACTIONS = new Set(["move", "attack", "attack-ground", "patrol", "repair", "unload"])',
+  'const SOURCE_PENDING_ACTIONS = new Set(["move", "attack", "attack-ground", "patrol", "repair", "harvest", "unload"])',
   'if (action === "unload") {\n    return "unload-transport";\n  }',
   'if (command === "unload-transport") {\n      return canIssueUnloadTransport(unit);\n    }',
   'if (command === "build-oil-platform") {\n      return canStartOilPlatformPlacement(world, unit);\n    }'

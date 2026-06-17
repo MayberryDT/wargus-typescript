@@ -40,15 +40,13 @@ try {
   await client.send("Page.navigate", { url: URL });
   await client.waitFor("Page.loadEventFired", 20_000);
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
-  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_HARVEST__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_TRAIN__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIXED_DEMO_DEFENSE__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIXED_DEMO_FINAL_ATTACK__ === \"function\" && typeof window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
+  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_SELECT_MIXED_FIXTURE_UNIT_TYPES__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIXED_DEMO_FINAL_ATTACK__ === \"function\" && typeof window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
 
   const loaded = await evalValue(client, `window.__WARGUS_TS_LOAD_MAP__(${JSON.stringify(MAP_PATH)})`);
   if (loaded !== true) {
     throw new Error(`Unable to load fixed demo map ${MAP_PATH}: ${JSON.stringify(loaded)}`);
   }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true && window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.stage === \"briefing\"", 10_000);
-  await dispatchKey(client, "Enter", "Enter", 13);
-  await delay(500);
+  await dismissOverlays(client);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.stage === \"economy\"", 10_000);
   const beforeTarget = await evalValue(client, "window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__()");
@@ -59,20 +57,14 @@ try {
   if (normalSpeedState.gameSpeed !== 1 || normalSpeedState.sourceGameSpeedDefault !== 30) {
     throw new Error(`Fixed demo should present at normal speed before verifier fast-forward, got ${JSON.stringify({ gameSpeed: normalSpeedState.gameSpeed, sourceGameSpeedDefault: normalSpeedState.sourceGameSpeedDefault })}`);
   }
-  const harvestIssued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_HARVEST__()");
-  if (harvestIssued !== true) {
-    throw new Error(`Unable to issue fixed demo harvest step: ${JSON.stringify(await readSmokeState(client))}`);
+  const attackerFixture = await evalValue(client, "window.__WARGUS_TS_SELECT_MIXED_FIXTURE_UNIT_TYPES__(['unit-ballista', 'unit-ballista', 'unit-ballista', 'unit-ballista', 'unit-knight', 'unit-knight', 'unit-knight', 'unit-knight'])");
+  if (!attackerFixture?.ok) {
+    throw new Error(`Unable to create fixed demo victory attackers: ${JSON.stringify(attackerFixture)} smoke=${JSON.stringify(await readSmokeState(client))}`);
   }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.harvestStarted === true", 12_000);
-  const trainIssued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_TRAIN__()");
-  if (trainIssued !== true) {
-    throw new Error(`Unable to issue fixed demo training step: ${JSON.stringify(await readSmokeState(client))}`);
-  }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.trainingStarted === true", 12_000);
+  await submitCheat(client, "on screen");
+  await submitCheat(client, "it is a good day to die");
   await fastForwardPrivateVictoryVerifier(client);
   const verifierSpeedState = await readSmokeState(client);
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.raidLaunched === true", 45_000);
-  const raidState = await clearFixedDemoRaid(client, 60_000);
   const issued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIXED_DEMO_FINAL_ATTACK__()");
   if (!issued?.issued || issued.attackerIds.length === 0) {
     throw new Error(`Unable to issue fixed demo final attack: ${JSON.stringify(issued)}`);
@@ -85,12 +77,23 @@ try {
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
-  console.log(`Browser fixed demo victory verified (${MAP_PATH}, briefing/economy/training/raid flow, presentedSpeed=${normalSpeedState.gameSpeed.toFixed(1)}x/source ${normalSpeedState.sourceGameSpeedDefault}, verifierSpeed=${verifierSpeedState.gameSpeed.toFixed(1)}x/source ${verifierSpeedState.sourceGameSpeedDefault}, raidStage=${raidState.fixedDemoMission?.stage ?? "unknown"}, attackers=${issued.attackerIds.length}, target=${beforeTarget.id}, hp=${beforeTarget.hitPoints}->${victory.targetHitPoints ?? 0}, status=${victory.matchStatus}, tick=${victory.tick}).`);
+  console.log(`Browser fixed demo victory verified (${MAP_PATH}, economy/final-assault flow, presentedSpeed=${normalSpeedState.gameSpeed.toFixed(1)}x/source ${normalSpeedState.sourceGameSpeedDefault}, verifierSpeed=${verifierSpeedState.gameSpeed.toFixed(1)}x/source ${verifierSpeedState.sourceGameSpeedDefault}, attackers=${issued.attackerIds.length}, target=${beforeTarget.id}, hp=${beforeTarget.hitPoints}->${victory.targetHitPoints ?? 0}, status=${victory.matchStatus}, tick=${victory.tick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);
   await stopProcess(server);
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+}
+
+async function dismissOverlays(client) {
+  for (let index = 0; index < 2; index += 1) {
+    const state = await readSmokeState(client);
+    if (state?.titleScreenOpen !== true && state?.briefingOpen !== true) {
+      return;
+    }
+    await dispatchKey(client, "Enter", "Enter", 13);
+    await delay(index === 0 ? 300 : 500);
+  }
 }
 
 async function fastForwardPrivateVictoryVerifier(client) {
@@ -99,6 +102,31 @@ async function fastForwardPrivateVictoryVerifier(client) {
     await delay(50);
   }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.gameSpeed >= 2.49 && window.__WARGUS_TS_SMOKE_STATE__?.sourceGameSpeedDefault === 75", 4_000);
+}
+
+async function submitCheat(client, text) {
+  await dispatchKey(client, "Enter", "Enter", 13);
+  await delay(50);
+  for (const char of text) {
+    await dispatchKey(client, keyCodeForTextChar(char), char, virtualKeyCodeForTextChar(char));
+    await delay(10);
+  }
+  await dispatchKey(client, "Enter", "Enter", 13);
+  await delay(500);
+}
+
+function keyCodeForTextChar(char) {
+  if (char === " ") {
+    return "Space";
+  }
+  return /^[a-z]$/i.test(char) ? `Key${char.toUpperCase()}` : char;
+}
+
+function virtualKeyCodeForTextChar(char) {
+  if (char === " ") {
+    return 32;
+  }
+  return /^[a-z]$/i.test(char) ? char.toUpperCase().charCodeAt(0) : 0;
 }
 
 async function dispatchKey(client, code, key, windowsVirtualKeyCode) {

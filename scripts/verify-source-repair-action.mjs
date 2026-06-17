@@ -63,7 +63,7 @@ for (const [label, text, fragments] of [
     "canRepairTarget(worker, target, world)",
     "unit.order.repairCycle = 0",
     "function stepRepairOrder",
-    "if (!isInRepairRange(unit, target))",
+    "if (!isInRepairRange(unit, target, world))",
     "updateUnitFacing(unit, target.x - unit.x, target.y - unit.y)",
     "unit.order.repairCycle += sourceElapsedCycles(world, tickSeconds)",
     "const repairCycleTicks = sourceRepairCycleTicks(world, unit)",

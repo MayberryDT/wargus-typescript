@@ -33,7 +33,25 @@ const EXPECTED_EMPTY_UNLOAD_TYPES = new Set([
 ]);
 const EXPECTED_GENERIC_DISABLED_TRAIN_TYPES_BY_UNIT = new Map([
   ["unit-archer", new Set(["unit-human-barracks"])],
-  ["unit-axethrower", new Set(["unit-orc-barracks"])]
+  ["unit-axethrower", new Set(["unit-orc-barracks"])],
+  ["unit-ballista", new Set(["unit-human-barracks"])],
+  ["unit-catapult", new Set(["unit-orc-barracks"])],
+  ["unit-death-knight", new Set(["unit-temple-of-the-damned"])],
+  ["unit-knight", new Set(["unit-human-barracks"])],
+  ["unit-mage", new Set(["unit-mage-tower"])],
+  ["unit-ogre", new Set(["unit-orc-barracks"])],
+  ["unit-ogre-mage", new Set(["unit-orc-barracks"])],
+  ["unit-paladin", new Set(["unit-human-barracks"])]
+]);
+const EXPECTED_GENERIC_DISABLED_UPGRADE_TYPES_BY_UNIT = new Map([
+  ["unit-castle", new Set(["unit-keep"])],
+  ["unit-fortress", new Set(["unit-stronghold"])],
+  ["unit-human-cannon-tower", new Set(["unit-human-watch-tower"])],
+  ["unit-human-guard-tower", new Set(["unit-human-watch-tower"])],
+  ["unit-keep", new Set(["unit-town-hall"])],
+  ["unit-orc-cannon-tower", new Set(["unit-orc-watch-tower"])],
+  ["unit-orc-guard-tower", new Set(["unit-orc-watch-tower"])],
+  ["unit-stronghold", new Set(["unit-great-hall"])]
 ]);
 const SOURCE_TRAIN_PREREQUISITE_FIXTURES = [
   { producerTypeId: "unit-human-barracks", unitTypeId: "unit-archer", keyCode: "KeyA" },
@@ -1240,6 +1258,12 @@ function expectedDisabledSourceSkipReason(entry) {
     const producerTypes = EXPECTED_GENERIC_DISABLED_TRAIN_TYPES_BY_UNIT.get(entry.value);
     if (producerTypes && onlyKnownTypes(entry, producerTypes)) {
       return "generic train prerequisite fixtures covered by targeted train fixtures";
+    }
+  }
+  if (entry.action === "upgrade-to" && entry.value && entry.id === `source-upgrade:${entry.value}`) {
+    const producerTypes = EXPECTED_GENERIC_DISABLED_UPGRADE_TYPES_BY_UNIT.get(entry.value);
+    if (producerTypes && onlyKnownTypes(entry, producerTypes)) {
+      return "generic upgrade prerequisite fixtures covered by targeted upgrade fixtures";
     }
   }
   if (entry.action === "research" && entry.value && entry.id === `source-research:${entry.value}`) {

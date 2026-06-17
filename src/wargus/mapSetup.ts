@@ -21,5 +21,14 @@ async function loadSetupPath(path: string): Promise<WargusMapSetup | null> {
   if (!response.ok) {
     return null;
   }
-  return response.json() as Promise<WargusMapSetup>;
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+  if (contentType.includes("text/html") || text.trimStart().startsWith("<")) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as WargusMapSetup;
+  } catch {
+    return null;
+  }
 }

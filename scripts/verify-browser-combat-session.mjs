@@ -47,7 +47,7 @@ try {
   await client.send("Page.navigate", { url: URL });
   await client.waitFor("Page.loadEventFired", 20_000);
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
-  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_ATTACK__ === \"function\" && typeof window.__WARGUS_TS_UNIT_HIT_POINTS__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
+  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_ATTACK__ === \"function\" && typeof window.__WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__ === \"function\" && typeof window.__WARGUS_TS_UNIT_HIT_POINTS__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
 
   const failures = [];
   let verified = false;
@@ -82,7 +82,14 @@ async function verifyCombatMap(client, mapPath) {
   }
   await dismissOverlays(client);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
-  await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedAttackerWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetId)", 10_000);
+  const naturalPair = await waitForExpressionValue(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedAttackerWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetId)", 10_000);
+  if (!naturalPair) {
+    const fixture = await evalValue(client, "window.__WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__('attack')");
+    if (!fixture?.ok) {
+      throw new Error(`unable to create combat fixture after natural combat pair was unavailable: fixture=${JSON.stringify(fixture)} smoke=${JSON.stringify(await readSmokeState(client))}`);
+    }
+    await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedAttackerWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetId)", 10_000);
+  }
   const before = await readSmokeState(client);
   const targetId = before.firstAttackTargetId;
   const beforeHp = before.firstAttackTargetHitPoints;
@@ -124,10 +131,14 @@ async function waitForDamage(client, targetId, beforeHp, timeoutMs) {
 }
 
 async function dismissOverlays(client) {
-  await dispatchKey(client, "Enter");
-  await delay(300);
-  await dispatchKey(client, "Enter");
-  await delay(500);
+  for (let index = 0; index < 2; index += 1) {
+    const state = await readSmokeState(client);
+    if (state?.titleScreenOpen !== true && state?.briefingOpen !== true) {
+      return;
+    }
+    await dispatchKey(client, "Enter");
+    await delay(index === 0 ? 300 : 500);
+  }
 }
 
 async function evalValue(client, expression) {
@@ -139,19 +150,26 @@ async function evalValue(client, expression) {
 }
 
 async function readSmokeState(client) {
-  return await evalValue(client, "window.__WARGUS_TS_SMOKE_STATE__");
+  return await evalValue(client, "window.__WARGUS_TS_PUBLISH_SMOKE__?.(); window.__WARGUS_TS_SMOKE_STATE__");
 }
 
 async function waitForExpression(client, expression, timeoutMs) {
+  if (await waitForExpressionValue(client, expression, timeoutMs)) {
+    return;
+  }
+  throw new Error(`Timed out waiting for browser expression: ${expression}; smoke=${JSON.stringify(await readSmokeState(client))}`);
+}
+
+async function waitForExpressionValue(client, expression, timeoutMs) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const result = await client.send("Runtime.evaluate", { expression, returnByValue: true });
     if (result.result?.value === true) {
-      return;
+      return true;
     }
     await delay(250);
   }
-  throw new Error(`Timed out waiting for browser expression: ${expression}; smoke=${JSON.stringify(await readSmokeState(client))}`);
+  return false;
 }
 
 async function dispatchKey(client, code) {

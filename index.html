@@ -7,6 +7,16 @@
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      window.__WARGUS_TS_RANDOM_DEMO_SEED__ = function () {
+        var bytes = new Uint32Array(2);
+        if (window.crypto && window.crypto.getRandomValues) {
+          window.crypto.getRandomValues(bytes);
+          return bytes[0].toString(36) + "-" + bytes[1].toString(36);
+        }
+        return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      };
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

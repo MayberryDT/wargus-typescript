@@ -5,8 +5,10 @@ import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../w
 import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
+import { isGoldOrWoodWorkerUnit } from "./workerSelection";
 
 export { sourceDefaultGameSpeed } from "./world";
+export { findNextIdleWorker, isGoldOrWoodWorkerUnit, isIdleWorkerForPlayer } from "./workerSelection";
 
 const MISSILE_SPEED_TO_PIXELS_PER_SECOND = 16;
 const FALLBACK_RAISED_SKELETON_LIFETIME_SECONDS = 40;
@@ -442,30 +444,6 @@ export function sourceGameSpeedMultipliers(world: WorldState | null): number[] {
     sourceSpeeds.push(Number((sourceSpeed / tickRate).toFixed(4)));
   }
   return sourceSpeeds;
-}
-
-export function findNextIdleWorker(world: WorldState, selectedUnitIds: string[], playerId = world.visibilityPlayer): WorldUnit | null {
-  const idleWorkers = world.units
-    .filter((unit) => isIdleWorkerForPlayer(world, unit, playerId))
-    .sort((a, b) => a.id.localeCompare(b.id));
-  if (idleWorkers.length === 0) {
-    return null;
-  }
-  const selectedIndex = idleWorkers.findIndex((unit) => selectedUnitIds.includes(unit.id));
-  return idleWorkers[(selectedIndex + 1) % idleWorkers.length] ?? null;
-}
-
-export function isIdleWorkerForPlayer(world: WorldState, unit: WorldUnit, playerId = world.visibilityPlayer): boolean {
-  return unit.player === playerId
-    && unit.hitPoints > 0
-    && !unit.construction
-    && isGoldOrWoodWorkerUnit(unit)
-    && !unit.order
-    && unit.resourcesHeld <= 0;
-}
-
-export function isGoldOrWoodWorkerUnit(unit: Pick<WorldUnit, "gatherResources">): boolean {
-  return unit.gatherResources.includes("gold") || unit.gatherResources.includes("wood");
 }
 
 export function issueBroadcastCommandByKey(world: WorldState, code: string, unitIds: string[], playerId = world.visibilityPlayer, queue = false): boolean | null {
@@ -1411,7 +1389,7 @@ export function canIssueQueueAttackTarget(world: WorldState, unit: WorldUnit, ta
   }
   const origin = queuedPathOrigin(unit);
   const pathingUnit = origin ? { ...unit, x: origin.x, y: origin.y } : unit;
-  return isInAttackRange(pathingUnit, target, world) || findPath(world, pathingUnit, target.x, target.y).length > 0;
+  return isInAttackRange(pathingUnit, target, world) || sourceAttackTargetPath(world, pathingUnit, target).length > 0;
 }
 
 export function canSelectedIssueAttackGroundAt(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
@@ -2068,7 +2046,7 @@ export function issueRepairOrder(world: WorldState, unitId: string, targetId: st
   if (!unit || !target || !canIssueRepairTarget(world, unit, target)) {
     return false;
   }
-  const path = findPath(world, unit, target.x, target.y);
+  const path = sourceUnitInteractionPath(world, unit, target, sourceRepairRange(unit));
   if (target.construction) {
     if (target.construction.builderInside) {
       return false;
@@ -2113,7 +2091,7 @@ export function canIssueRepairAt(world: WorldState, worker: WorldUnit, x: number
 
 export function canIssueRepairTarget(world: WorldState, worker: WorldUnit, target: WorldUnit): boolean {
   return canRepairTarget(worker, target, world)
-    && (isInRepairRange(worker, target) || findPath(world, worker, target.x, target.y).length > 0);
+    && (isInRepairRange(worker, target, world) || sourceUnitInteractionPath(world, worker, target, sourceRepairRange(worker)).length > 0);
 }
 
 export function canIssueQueueRepairTarget(world: WorldState, worker: WorldUnit, target: WorldUnit): boolean {
@@ -2122,7 +2100,7 @@ export function canIssueQueueRepairTarget(world: WorldState, worker: WorldUnit, 
   }
   const origin = queuedPathOrigin(worker);
   const pathingWorker = origin ? { ...worker, x: origin.x, y: origin.y } : worker;
-  return isInRepairRange(pathingWorker, target) || findPath(world, pathingWorker, target.x, target.y).length > 0;
+  return isInRepairRange(pathingWorker, target, world) || sourceUnitInteractionPath(world, pathingWorker, target, sourceRepairRange(pathingWorker)).length > 0;
 }
 
 export function canSelectedIssueRepairAt(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
@@ -2285,8 +2263,8 @@ export function issueHarvestOrder(world: WorldState, unitId: string, targetId: s
     return false;
   }
 
-  const path = findPath(world, unit, target.x, target.y);
-  if (path.length === 0 && !isInResourceRangePoint(unit, target.x, target.y, target.radius)) {
+  const path = sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit));
+  if (path.length === 0 && !isInResourceSourceRange(world, unit, target)) {
     return false;
   }
   const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
@@ -2325,7 +2303,7 @@ export function canIssueQueueHarvestTarget(world: WorldState, unit: WorldUnit, t
   }
   const origin = queuedPathOrigin(unit);
   const pathingUnit = origin ? { ...unit, x: origin.x, y: origin.y } : unit;
-  return isInResourceRangePoint(pathingUnit, target.x, target.y, target.radius) || findPath(world, pathingUnit, target.x, target.y).length > 0;
+  return isInResourceSourceRange(world, pathingUnit, target) || sourceUnitInteractionPath(world, pathingUnit, target, sourceResourceSourceRange(world, pathingUnit)).length > 0;
 }
 
 export function issueHarvestWoodOrder(world: WorldState, unitId: string, tileX: number, tileY: number): boolean {
@@ -2402,8 +2380,8 @@ export function issueHarvestOilOrder(world: WorldState, unitId: string, targetId
     return false;
   }
 
-  const path = findPath(world, unit, target.x, target.y);
-  if (path.length === 0 && !isInResourceRangePoint(unit, target.x, target.y, target.radius)) {
+  const path = sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit));
+  if (path.length === 0 && !isInResourceSourceRange(world, unit, target)) {
     return false;
   }
   const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
@@ -2553,7 +2531,7 @@ export function issueAttackOrder(world: WorldState, unitId: string, targetId: st
   if (!unit || !target || !canIssueAttackTargetWithPath(world, unit, target)) {
     return false;
   }
-  const path = isInAttackRange(unit, target, world) ? [] : findPath(world, unit, target.x, target.y);
+  const path = sourceAttackTargetPath(world, unit, target);
   unit.moveQueue = [];
   unit.order = {
     kind: "attack",
@@ -2579,7 +2557,7 @@ export function canIssueAttackTarget(world: WorldState, unit: WorldUnit, target:
 
 export function canIssueAttackTargetWithPath(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
   return canIssueAttackTarget(world, unit, target)
-    && (isInAttackRange(unit, target, world) || findPath(world, unit, target.x, target.y).length > 0);
+    && (isInAttackRange(unit, target, world) || sourceAttackTargetPath(world, unit, target).length > 0);
 }
 
 export function canIssueAttackTargetAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
@@ -4997,8 +4975,8 @@ function placeBuilding(world: WorldState, builder: WorldUnit, player: WorldState
   world.units.push(building);
   recordPlayerUnitCreated(world, building);
 
-  const path = findPath(world, builder, building.x, building.y);
-  if (path.length === 0 && !isInTouchRange(builder, building)) {
+  const path = sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder));
+  if (path.length === 0 && !isInTouchRange(builder, building, world)) {
     world.units = world.units.filter((unit) => unit.id !== building.id);
     if (replacedUnits.length > 0) {
       world.units.push(...replacedUnits);
@@ -5037,8 +5015,8 @@ export function issueBuildOilPlatformOrder(world: WorldState, builderId: string,
   if (!builder || !oilPatch || !player || !platformDefinition || !canIssueBuildOilPlatformAt(world, builder, oilPatch, unitDefinitions)) {
     return false;
   }
-  if (!isInTouchRange(builder, oilPatch)) {
-    const path = findPath(world, builder, oilPatch.x, oilPatch.y);
+  if (!isInTouchRange(builder, oilPatch, world)) {
+    const path = sourceUnitInteractionPath(world, builder, oilPatch, sourceTouchRange(world, builder));
     builder.moveQueue = [];
     builder.order = {
       kind: "build-oil-platform",
@@ -5060,8 +5038,8 @@ function startQueuedBuildOilPlatformOrder(world: WorldState, builder: WorldUnit,
   if (!oilPatch || !player || !platformDefinition || !canIssueBuildOilPlatformAt(world, builder, oilPatch, unitDefinitions)) {
     return false;
   }
-  if (!isInTouchRange(builder, oilPatch)) {
-    const path = findPath(world, builder, oilPatch.x, oilPatch.y);
+  if (!isInTouchRange(builder, oilPatch, world)) {
+    const path = sourceUnitInteractionPath(world, builder, oilPatch, sourceTouchRange(world, builder));
     if (path.length === 0) {
       return false;
     }
@@ -5141,7 +5119,7 @@ export function canIssueBuildOilPlatformAt(world: WorldState, builder: WorldUnit
     && isOilPatch(oilPatch)
     && oilPatch.hitPoints > 0
     && oilPatch.resourcesHeld > 0
-    && (isInTouchRange(builder, oilPatch) || findPath(world, builder, oilPatch.x, oilPatch.y).length > 0);
+    && (isInTouchRange(builder, oilPatch, world) || sourceUnitInteractionPath(world, builder, oilPatch, sourceTouchRange(world, builder)).length > 0);
 }
 
 export function canIssueBuildOilPlatformAtPoint(world: WorldState, builder: WorldUnit, x: number, y: number, unitDefinitions: WargusUnit[] = world.unitDefinitions): boolean {
@@ -5840,7 +5818,7 @@ function stepPatrolOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
       return;
     }
     if (world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-      unit.order.path = findPath(world, unit, target.x, target.y);
+      unit.order.path = sourceAttackTargetPath(world, unit, target);
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -5976,7 +5954,7 @@ function stepAttackMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
       return;
     }
     if (world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-      unit.order.path = findPath(world, unit, target.x, target.y);
+      unit.order.path = sourceAttackTargetPath(world, unit, target);
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -6085,7 +6063,7 @@ function stepFollowOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
         return;
       }
       if (world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-        unit.order.path = findPath(world, unit, attackTarget.x, attackTarget.y);
+        unit.order.path = sourceAttackTargetPath(world, unit, attackTarget);
         unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
       }
       stepMoveOrder(world, unit, tickSeconds);
@@ -6147,7 +6125,7 @@ function stepDefendOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
       return;
     }
     if (canReceiveMoveOrders(unit)) {
-      unit.order.path = findPath(world, unit, attackTarget.x, attackTarget.y);
+      unit.order.path = sourceAttackTargetPath(world, unit, attackTarget);
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
       stepMoveOrder(world, unit, tickSeconds);
       return;
@@ -8586,7 +8564,7 @@ function canReachAttackTarget(world: WorldState, attacker: WorldUnit, target: Wo
   if (isInAttackRange(attacker, target, world) || attacker.kind === "fly") {
     return true;
   }
-  return findPath(world, attacker, target.x, target.y).length > 0;
+  return sourceAttackTargetPath(world, attacker, target).length > 0;
 }
 
 function canAutoAcquireSourceTarget(attacker: WorldUnit, target: WorldUnit): boolean {
@@ -8635,9 +8613,9 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
     return;
   }
   building.construction.builderId = unit.id;
-  if (!isInTouchRange(unit, building)) {
+  if (!isInTouchRange(unit, building, world)) {
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-      unit.order.path = findPath(world, unit, building.x, building.y);
+      unit.order.path = sourceUnitInteractionPath(world, unit, building, sourceTouchRange(world, unit));
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -8703,9 +8681,9 @@ function stepBuildOilPlatformOrder(world: WorldState, unit: WorldUnit, tickSecon
   }
   unit.order.targetX = oilPatch.x;
   unit.order.targetY = oilPatch.y;
-  if (!isInTouchRange(unit, oilPatch)) {
+  if (!isInTouchRange(unit, oilPatch, world)) {
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-      unit.order.path = findPath(world, unit, oilPatch.x, oilPatch.y);
+      unit.order.path = sourceUnitInteractionPath(world, unit, oilPatch, sourceTouchRange(world, unit));
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -8730,10 +8708,10 @@ function stepRepairOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   }
   unit.order.targetX = target.x;
   unit.order.targetY = target.y;
-  if (!isInRepairRange(unit, target)) {
+  if (!isInRepairRange(unit, target, world)) {
     unit.order.repairCycle = 0;
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 20) === 0) {
-      unit.order.path = findPath(world, unit, target.x, target.y);
+      unit.order.path = sourceUnitInteractionPath(world, unit, target, sourceRepairRange(unit));
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -9147,7 +9125,7 @@ function issueRallyOrderToTrainedUnit(world: WorldState, producer: WorldUnit, tr
   }
   const enemy = findVisibleEnemyNearPointForUnit(world, trainedUnit, producer.rallyPoint.x, producer.rallyPoint.y);
   if (enemy && trainedUnit.canAttack) {
-    const path = isInAttackRange(trainedUnit, enemy, world) ? [] : findPath(world, trainedUnit, enemy.x, enemy.y);
+    const path = sourceAttackTargetPath(world, trainedUnit, enemy);
     if (path.length === 0 && !isInAttackRange(trainedUnit, enemy, world)) {
       return;
     }
@@ -9202,7 +9180,7 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
 
   unit.order.targetX = target.x;
   unit.order.targetY = target.y;
-  if (isTargetInsideMinimumAttackRange(unit, target) && canReceiveMoveOrders(unit)) {
+  if (isTargetInsideMinimumAttackRange(world, unit, target) && canReceiveMoveOrders(unit)) {
     const path = findBetterAttackPositionPath(world, unit, target.x, target.y);
     if (path.length > 0) {
       unit.order.path = path;
@@ -9224,7 +9202,7 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   }
 
   if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-    unit.order.path = findPath(world, unit, target.x, target.y);
+    unit.order.path = sourceAttackTargetPath(world, unit, target);
     unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
   }
   if (unit.order.path.length > 0) {
@@ -9603,7 +9581,9 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
       return;
     }
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-      unit.order.path = findPath(world, unit, targetX, targetY);
+      unit.order.path = target
+        ? sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit))
+        : findPath(world, unit, targetX, targetY);
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
       if (unit.order.resource === "wood" && unit.order.tileX !== null && unit.order.tileY !== null && !isReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY)) {
         const woodTile = resolveReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY);
@@ -9709,7 +9689,9 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     unit.order.phase = "to-resource";
     unit.order.targetX = targetX;
     unit.order.targetY = targetY;
-    unit.order.path = findPath(world, unit, targetX, targetY);
+    unit.order.path = target
+      ? sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit))
+      : findPath(world, unit, targetX, targetY);
     unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     return;
   }
@@ -9787,7 +9769,7 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   const waypoint = unit.order.path[unit.order.pathIndex] ?? unit.order.path[unit.order.path.length - 1];
   const waypointTile = worldToTile(world, waypoint.x, waypoint.y);
   if (!isTilePassable(world, waypointTile.x, waypointTile.y, movementKindForUnit(unit), unit.id)) {
-    const path = findPath(world, unit, unit.order.targetX, unit.order.targetY);
+    const path = sourceOrderTargetPath(world, unit);
     unit.order.path = path;
     unit.order.pathIndex = path.length > 1 ? 1 : 0;
     if (!isUsableReplacementPath(world, unit, path)) {
@@ -9821,7 +9803,7 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   const nextY = unit.y + (dy / distance) * step;
   const nextTile = worldToTile(world, nextX, nextY);
   if (!isTilePassable(world, nextTile.x, nextTile.y, movementKindForUnit(unit), unit.id)) {
-    const path = findPath(world, unit, unit.order.targetX, unit.order.targetY);
+    const path = sourceOrderTargetPath(world, unit);
     unit.order.path = path;
     unit.order.pathIndex = path.length > 1 ? 1 : 0;
     if (!isUsableReplacementPath(world, unit, path)) {
@@ -10052,8 +10034,8 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
       if (!repairTarget || !canRepairTarget(unit, repairTarget, world)) {
         continue;
       }
-      const path = findPath(world, unit, repairTarget.x, repairTarget.y);
-      if (path.length === 0 && !isInRepairRange(unit, repairTarget)) {
+      const path = sourceUnitInteractionPath(world, unit, repairTarget, sourceRepairRange(unit));
+      if (path.length === 0 && !isInRepairRange(unit, repairTarget, world)) {
         continue;
       }
       if (repairTarget.construction) {
@@ -10097,8 +10079,8 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
       if (!dropoff) {
         continue;
       }
-      const path = findPath(world, unit, resourceTarget.x, resourceTarget.y);
-      if (path.length === 0 && !isInResourceRangePoint(unit, resourceTarget.x, resourceTarget.y, resourceTarget.radius)) {
+      const path = sourceUnitInteractionPath(world, unit, resourceTarget, sourceResourceSourceRange(world, unit));
+      if (path.length === 0 && !isInResourceSourceRange(world, unit, resourceTarget)) {
         continue;
       }
       const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
@@ -10192,7 +10174,7 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
         continue;
       }
       const inRange = isInAttackRange(unit, attackTarget, world);
-      const path = inRange ? [] : findPath(world, unit, attackTarget.x, attackTarget.y);
+      const path = inRange ? [] : sourceAttackTargetPath(world, unit, attackTarget);
       if (!inRange && path.length === 0) {
         continue;
       }
@@ -10419,6 +10401,116 @@ export function findVisibleOilPatchAt(world: WorldState, x: number, y: number, p
 function pointHitsUnitFootprint(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
   const { halfWidth, halfHeight } = unitFootprintHalfSize(unit, world.tileSize);
   return x >= unit.x - halfWidth && x <= unit.x + halfWidth && y >= unit.y - halfHeight && y <= unit.y + halfHeight;
+}
+
+function unitFootprintBounds(world: WorldState, unit: WorldUnit): { left: number; right: number; top: number; bottom: number; minTileX: number; maxTileX: number; minTileY: number; maxTileY: number } {
+  const { halfWidth, halfHeight } = unitFootprintHalfSize(unit, world.tileSize);
+  const left = unit.x - halfWidth;
+  const right = unit.x + halfWidth;
+  const top = unit.y - halfHeight;
+  const bottom = unit.y + halfHeight;
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    minTileX: Math.floor(left / world.tileSize),
+    maxTileX: Math.floor((right - 1) / world.tileSize),
+    minTileY: Math.floor(top / world.tileSize),
+    maxTileY: Math.floor((bottom - 1) / world.tileSize)
+  };
+}
+
+function distanceToUnitFootprint(world: WorldState, target: WorldUnit, x: number, y: number): number {
+  const bounds = unitFootprintBounds(world, target);
+  const clampedX = Math.max(bounds.left, Math.min(x, bounds.right));
+  const clampedY = Math.max(bounds.top, Math.min(y, bounds.bottom));
+  return Math.hypot(x - clampedX, y - clampedY);
+}
+
+function isInUnitFootprintRange(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): boolean {
+  return distanceToUnitFootprint(world, target, unit.x, unit.y) <= rangePixels;
+}
+
+function sourceTouchRange(world: WorldState, unit: WorldUnit): number {
+  return unit.radius + world.tileSize * 0.55;
+}
+
+function sourceRepairRange(unit: WorldUnit): number {
+  return unit.radius + Math.max(10, unit.repairRange);
+}
+
+function sourceResourceSourceRange(world: WorldState, unit: WorldUnit): number {
+  return unit.radius + world.tileSize * 0.55;
+}
+
+function sourceUnitInteractionTargetPoint(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): { x: number; y: number } | null {
+  const bounds = unitFootprintBounds(world, target);
+  const movement = movementKindForUnit(unit);
+  const rangeTiles = Math.max(1, Math.ceil(rangePixels / world.tileSize));
+  const candidates: Array<{ x: number; y: number; distance: number; edgeDistance: number }> = [];
+  for (let tileY = bounds.minTileY - rangeTiles; tileY <= bounds.maxTileY + rangeTiles; tileY += 1) {
+    for (let tileX = bounds.minTileX - rangeTiles; tileX <= bounds.maxTileX + rangeTiles; tileX += 1) {
+      const outsideFootprint = tileX < bounds.minTileX || tileX > bounds.maxTileX || tileY < bounds.minTileY || tileY > bounds.maxTileY;
+      if (!outsideFootprint || !isTilePassable(world, tileX, tileY, movement, unit.id)) {
+        continue;
+      }
+      const point = tileToWorldCenter(world, tileX, tileY);
+      const edgeDistance = distanceToUnitFootprint(world, target, point.x, point.y);
+      if (edgeDistance > rangePixels + world.tileSize * 0.1) {
+        continue;
+      }
+      candidates.push({ ...point, distance: distanceSquared(unit, point), edgeDistance });
+    }
+  }
+  candidates.sort((left, right) => left.distance - right.distance || left.edgeDistance - right.edgeDistance);
+  for (const candidate of candidates) {
+    if (findPath(world, unit, candidate.x, candidate.y).length > 0) {
+      return { x: candidate.x, y: candidate.y };
+    }
+  }
+  return null;
+}
+
+function sourceUnitInteractionPath(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): Array<{ x: number; y: number }> {
+  if (isInUnitFootprintRange(world, unit, target, rangePixels)) {
+    return [];
+  }
+  const point = sourceUnitInteractionTargetPoint(world, unit, target, rangePixels);
+  return point ? findPath(world, unit, point.x, point.y) : [];
+}
+
+function sourceAttackTargetPath(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
+  if (isInAttackRange(unit, target, world)) {
+    return [];
+  }
+  if (isBuildingLike(target)) {
+    return sourceUnitInteractionPath(world, unit, target, unit.attackRange);
+  }
+  return findPath(world, unit, target.x, target.y);
+}
+
+function sourceOrderTargetPath(world: WorldState, unit: WorldUnit): Array<{ x: number; y: number }> {
+  if (!unit.order || !("path" in unit.order)) {
+    return [];
+  }
+  if (unit.order.kind === "build" || unit.order.kind === "build-oil-platform") {
+    const target = findUnit(world, unit.order.targetId);
+    return target ? sourceUnitInteractionPath(world, unit, target, sourceTouchRange(world, unit)) : [];
+  }
+  if (unit.order.kind === "repair") {
+    const target = findUnit(world, unit.order.targetId);
+    return target ? sourceUnitInteractionPath(world, unit, target, sourceRepairRange(unit)) : [];
+  }
+  if (unit.order.kind === "harvest" && unit.order.phase === "to-resource" && unit.order.targetId) {
+    const target = findUnit(world, unit.order.targetId);
+    return target ? sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit)) : [];
+  }
+  if (unit.order.kind === "attack") {
+    const target = findUnit(world, unit.order.targetId);
+    return target ? sourceAttackTargetPath(world, unit, target) : [];
+  }
+  return findPath(world, unit, unit.order.targetX, unit.order.targetY);
 }
 
 function findFriendlyRepairTargetAt(world: WorldState, worker: WorldUnit, x: number, y: number): WorldUnit | undefined {
@@ -10727,13 +10819,10 @@ function resourceDropoffTargetPoint(world: WorldState, unit: WorldUnit, dropoff:
 }
 
 function isInResourceDropoffRange(world: WorldState, unit: WorldUnit, dropoff: WorldUnit): boolean {
-  if (isInTouchRange(unit, dropoff)) {
+  if (isInTouchRange(unit, dropoff, world)) {
     return true;
   }
-  const { halfWidth, halfHeight } = unitFootprintHalfSize(dropoff, world.tileSize);
-  const clampedX = Math.max(dropoff.x - halfWidth, Math.min(unit.x, dropoff.x + halfWidth));
-  const clampedY = Math.max(dropoff.y - halfHeight, Math.min(unit.y, dropoff.y + halfHeight));
-  return Math.hypot(unit.x - clampedX, unit.y - clampedY) <= unit.radius + world.tileSize * 0.55;
+  return isInUnitFootprintRange(world, unit, dropoff, sourceResourceSourceRange(world, unit));
 }
 
 function resourceDeliveryAmount(world: WorldState, unit: WorldUnit, resource: "gold" | "wood" | "oil", carried: number): number {
@@ -10754,11 +10843,17 @@ function completedProductionBonusPercent(world: WorldState, playerId: number, re
     .reduce((best, unit) => Math.max(best, unit.improveProduction[resource] ?? 0), 0);
 }
 
-function isInTouchRange(unit: WorldUnit, target: WorldUnit): boolean {
+function isInTouchRange(unit: WorldUnit, target: WorldUnit, world?: WorldState): boolean {
+  if (world && isBuildingLike(target)) {
+    return isInUnitFootprintRange(world, unit, target, sourceTouchRange(world, unit));
+  }
   return Math.hypot(target.x - unit.x, target.y - unit.y) <= unit.radius + target.radius + 10;
 }
 
-function isInRepairRange(unit: WorldUnit, target: WorldUnit): boolean {
+function isInRepairRange(unit: WorldUnit, target: WorldUnit, world?: WorldState): boolean {
+  if (world && isBuildingLike(target)) {
+    return isInUnitFootprintRange(world, unit, target, sourceRepairRange(unit));
+  }
   return Math.hypot(target.x - unit.x, target.y - unit.y) <= unit.radius + target.radius + Math.max(10, unit.repairRange);
 }
 
@@ -10794,17 +10889,10 @@ function isInResourceRange(world: WorldState, unit: WorldUnit): boolean {
 }
 
 function isInResourceSourceRange(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
-  if (isInTouchRange(unit, target)) {
+  if (isInTouchRange(unit, target, world)) {
     return true;
   }
-  const { halfWidth, halfHeight } = unitFootprintHalfSize(target, world.tileSize);
-  const clampedX = Math.max(target.x - halfWidth, Math.min(unit.x, target.x + halfWidth));
-  const clampedY = Math.max(target.y - halfHeight, Math.min(unit.y, target.y + halfHeight));
-  return Math.hypot(unit.x - clampedX, unit.y - clampedY) <= unit.radius + world.tileSize * 0.55;
-}
-
-function isInResourceRangePoint(unit: WorldUnit, x: number, y: number, radius: number): boolean {
-  return Math.hypot(x - unit.x, y - unit.y) <= unit.radius + radius + 10;
+  return isInUnitFootprintRange(world, unit, target, sourceResourceSourceRange(world, unit));
 }
 
 function hasHarvestableTarget(world: WorldState, unit: WorldUnit): boolean {
@@ -11065,9 +11153,11 @@ function isForestRegrowthTileOccupied(world: WorldState, tileX: number, tileY: n
 }
 
 function isInAttackRange(unit: WorldUnit, target: WorldUnit, world?: WorldState): boolean {
-  const distance = Math.hypot(target.x - unit.x, target.y - unit.y);
+  const distance = world && isBuildingLike(target)
+    ? distanceToUnitFootprint(world, target, unit.x, unit.y)
+    : Math.hypot(target.x - unit.x, target.y - unit.y);
   return canAttackTarget(unit, target, world)
-    && distance <= unit.attackRange + target.radius
+    && distance <= unit.attackRange + (world && isBuildingLike(target) ? 0 : target.radius)
     && distance >= minimumAttackDistanceForTarget(unit, target)
     && (!world || isSourceInsideAttackLineClear(world, unit, target));
 }
@@ -11680,9 +11770,12 @@ function isSourceInsideAttackObstacleTile(world: WorldState, tileX: number, tile
   return flags.includes("rock") || flags.includes("forest");
 }
 
-function isTargetInsideMinimumAttackRange(unit: WorldUnit, target: WorldUnit): boolean {
+function isTargetInsideMinimumAttackRange(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
   const minimumDistance = minimumAttackDistanceForTarget(unit, target);
-  return minimumDistance > 0 && Math.hypot(target.x - unit.x, target.y - unit.y) < minimumDistance;
+  const distance = isBuildingLike(target)
+    ? distanceToUnitFootprint(world, target, unit.x, unit.y)
+    : Math.hypot(target.x - unit.x, target.y - unit.y);
+  return minimumDistance > 0 && distance < minimumDistance;
 }
 
 function isGroundTargetInsideMinimumAttackRange(unit: WorldUnit, targetX: number, targetY: number): boolean {
@@ -17489,7 +17582,7 @@ export function canPlaceReachableBuilding(world: WorldState, builder: WorldUnit,
   building.hitPoints = Math.max(1, Math.floor(building.maxHitPoints * 0.1));
   building.construction = { builderId: builder.id, remainingSeconds: 1, totalSeconds: 1 };
   world.units.push(building);
-  const reachable = findPath(world, builder, building.x, building.y).length > 0 || isInTouchRange(builder, building);
+  const reachable = sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder)).length > 0 || isInTouchRange(builder, building, world);
   world.units = world.units.filter((unit) => unit.id !== building.id);
   if (replacedUnits.length > 0) {
     world.units.push(...replacedUnits);

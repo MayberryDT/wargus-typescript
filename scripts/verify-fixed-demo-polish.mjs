@@ -38,6 +38,12 @@ expect(files.musicVerifier, "extractedMusicCandidates", "Source music verifier s
 expect(files.renderWorld, "spriteDirectionForFacing(unit.facing ?? 4, numDirections).offset", "Unit animation frames should use current facing direction.");
 expect(files.renderWorld, "case 0:\n      return { offset: 2, mirror: false };", "Facing mapping should not collapse north-facing units to the first source sprite row.");
 expect(files.renderWorld, "case 4:\n      return { offset: 2, mirror: true };", "Facing mapping should mirror source sprite rows for opposite facings.");
+expect(files.renderWorld, "function sourceUnitSpriteScale", "Building rendering should centralize source-scale sprite sizing.");
+expect(files.renderWorld, "if (isRuntimeSourceBuildingUnit(unit)) {\n    return 1;\n  }", "Buildings should render at source footprint scale instead of fixed-demo shrink scale.");
+expect(files.renderWorld, "function sourceUnitSpriteY", "Building rendering should centralize source-footprint vertical alignment.");
+expect(files.renderWorld, "return unit.y + halfHeight - atlas.frameHeight * scale * (1 - anchorY);", "Buildings should bottom-align to the same footprint used by selection corners.");
+expect(!files.renderWorld.includes("fixedDemo && building ? 0.94"), "Fixed demo buildings should not be scaled smaller than their source footprint.");
+expect(!files.renderWorld.includes("unit.y + (building && fixedDemo ? 4 : 10)"), "Fixed demo buildings should not use the old upward offset inside their footprint.");
 expect(files.renderWorld, "isUnitInsideResourceSource", "Workers should be hidden while inside mines and dropoff buildings.");
 expect(files.renderWorld, "isRuntimeSourceBuildingUnit(unit)", "Runtime buildings should snap instead of smoothing like walking units.");
 expect(files.renderWorld, "function drawCarriedResourceMarker", "Workers should show a visible carried gold or lumber load.");
@@ -85,6 +91,13 @@ expect(files.renderWorld, "unit.order.path.length > 0 && hasAction(\"Move\")", "
 expect(files.world, "export function isUnitInsideResourceSource", "World helpers should expose resource/building inside-state for rendering.");
 expect(files.world, "unit.order.phase === \"to-dropoff\" && unit.order.returnSeconds > 0", "Dropoff return wait should hide workers inside the depot.");
 expect(files.main, "__WARGUS_TS_PLAY_AUDIO_FIXTURE__", "Browser smoke should verify multiple real sound-effect ids and music startup.");
+expect(files.main, "type LoadingScreenState", "Browser startup should use a structured loading screen state instead of a single developer text string.");
+expect(files.main, "const loadingLayer = new Container();", "Browser startup should render a full-screen loading layer.");
+expect(files.main, "loadingProgress.rect", "Browser startup loading screen should include a visible progress bar.");
+expect(files.main, "First load may take a moment while the browser prepares the battlefield.", "Browser startup loading screen should explain long first loads in user-facing language.");
+expect(files.main, "Loading battlefield art", "Browser startup should show a user-facing asset preparation phase.");
+expect(files.main, "showLoadingError", "Browser loading failures should render as user-facing loading-screen errors.");
+expect(!files.main.includes("Index Wargus data with:"), "Browser startup should not show command-line indexing instructions as the loading screen.");
 expect(files.main, "void ensureMusicStarted();\n  window.setTimeout(() => {\n    void ensureMusicStarted();\n  }, 160);", "Briefing dismissal should restart music without racing a same-frame stop.");
 expect(files.main, "function sourcePointerDownDoubleClick", "Browser double-clicks should be tracked in app space instead of relying only on event metadata.");
 expect(files.main, "app.canvas.addEventListener(\"dblclick\"", "Canvas dblclick should select same-type units after the normal click sequence.");
@@ -94,9 +107,11 @@ expect(files.main, "doubleClick: pointerDownDoubleClick || event.detail >= 2", "
 expect(files.main, "lastSelectionPointerDown = null;", "World reset should clear stale double-click pointer state.");
 expect(files.main, "selectedUnitTypes", "Browser smoke state should expose selected unit types for same-type selection checks.");
 expect(files.worldPointerInput, "input.ctrlKey || input.doubleClick", "Double-clicking a unit should select visible units of the same type.");
-expect(files.browserRuntimeSmoke, "waitForRepeatedOwnedTypePoint", "Browser smoke should choose a visible same-type unit group for double-click selection.");
 expect(files.browserRuntimeSmoke, "clickCount = 1", "Browser smoke mouse helper should support CDP double-click count.");
-expect(files.browserRuntimeSmoke, "selectedUnitCount > 1", "Browser smoke should assert double-click selected more than one same-type unit.");
+expect(files.browserRuntimeSmoke, "selectedUnitTypes?.[0] === \"unit-peasant\"", "Browser smoke should assert the fixed demo starts with the single worker selected.");
+expect(files.browserRuntimeSmoke, "counts[\"unit-peasant\"] === 1", "Browser smoke should assert the fixed demo has exactly one starting peasant.");
+expect(files.browserRuntimeSmoke, "Number(resources.gold ?? 0) >= 10000", "Browser smoke should assert the fixed demo starts with high gold for fixture-backed checks.");
+expect(files.browserRuntimeSmoke, "Number(resources.wood ?? 0) >= 5000", "Browser smoke should assert the fixed demo starts with high wood for fixture-backed checks.");
 
 if (errors.length > 0) {
   for (const error of errors) {
@@ -106,4 +121,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log("Fixed demo polish verified (static MPQ music blocked, carried resources, facing sprites, WC2-style fog, non-overlap messages, original-style tree clearing, dropoff entry, audio fixture, double-click selection, and no mobile push separation).");
+console.log("Fixed demo polish verified (static MPQ music blocked, carried resources, facing sprites, building footprint rendering, WC2-style fog, non-overlap messages, original-style tree clearing, dropoff entry, user-facing loading screen, audio fixture, one-worker browser smoke, double-click wiring, and no mobile push separation).");

@@ -40,7 +40,7 @@ try {
   await client.send("Page.navigate", { url: URL });
   await client.waitFor("Page.loadEventFired", 20_000);
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
-  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_GOLD_HARVEST__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_WOOD_HARVEST__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
+  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_GOLD_HARVEST__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_WOOD_HARVEST__ === \"function\" && typeof window.__WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__ === \"function\" && typeof window.__WARGUS_TS_EXECUTE_HUD_COMMAND__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_PENDING_WORLD_COMMAND_AT__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
 
   const loaded = await evalValue(client, `window.__WARGUS_TS_LOAD_MAP__(${JSON.stringify(MAP_PATH)})`);
   if (loaded !== true) {
@@ -49,28 +49,58 @@ try {
   await dismissOverlays(client);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedHarvestWorkerWorldPoint)", 10_000);
-  const before = await readSmokeState(client);
-  const beforeResources = before.visibilityPlayerResources ?? {};
-  const goldIssued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_GOLD_HARVEST__()");
+  let before = await readSmokeState(client);
+  let beforeResources = before.visibilityPlayerResources ?? {};
+  let usedFixtureHarvest = false;
+  let goldIssued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_GOLD_HARVEST__()");
   if (goldIssued !== true) {
-    throw new Error(`Unable to issue first gold harvest order: ${JSON.stringify(await readSmokeState(client))}`);
+    const fixture = await evalValue(client, "window.__WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__('harvest')");
+    if (!fixture?.ok || !fixture.target || !fixture.commandId) {
+      throw new Error(`Unable to create harvest fixture after live harvest order failed: fixture=${JSON.stringify(fixture)} smoke=${JSON.stringify(await readSmokeState(client))}`);
+    }
+    before = await readSmokeState(client);
+    beforeResources = before.visibilityPlayerResources ?? {};
+    const pending = await evalValue(client, `window.__WARGUS_TS_EXECUTE_HUD_COMMAND__(${JSON.stringify(fixture.commandId)})`);
+    const pendingState = await readSmokeState(client);
+    if (pending?.feedback !== "click" || !pendingState.pendingWorldCommandKind) {
+      throw new Error(`Unable to enter harvest targeting from fixture: pending=${JSON.stringify(pending)} smoke=${JSON.stringify(pendingState)}`);
+    }
+    const issued = await evalValue(client, `window.__WARGUS_TS_ISSUE_PENDING_WORLD_COMMAND_AT__(${Math.round(fixture.target.x)}, ${Math.round(fixture.target.y)})`);
+    if (!issued?.issued) {
+      throw new Error(`Unable to issue fixture harvest order: issued=${JSON.stringify(issued)} smoke=${JSON.stringify(await readSmokeState(client))}`);
+    }
+    goldIssued = true;
+    usedFixtureHarvest = true;
   }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind === \"harvest\" && window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderResource === \"gold\"", 10_000);
-  const goldState = await waitForGoldDelivery(client, beforeResources, 75_000);
-  const issued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_WOOD_HARVEST__()");
-  if (issued !== true) {
-    throw new Error(`Unable to issue first wood harvest order: ${JSON.stringify(await readSmokeState(client))}`);
+  if (usedFixtureHarvest) {
+    await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind === \"harvest\" && [\"gold\", \"wood\"].includes(window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderResource)", 10_000);
+    const harvestState = await waitForAnyHarvestProgress(client, beforeResources, 75_000);
+    const save = await evalValue(client, "window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__()");
+    if (!save?.ok || save.saveRoundtripOk !== true || !Number.isFinite(save.tick) || save.tick < harvestState.tick) {
+      throw new Error(`Harvest active-world save/load roundtrip failed: ${JSON.stringify(save)}`);
+    }
+    if (pageErrors.length > 0) {
+      throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
+    }
+    console.log(`Browser harvest session verified (${MAP_PATH}, fixture resource=${harvestState.firstSelectedOrderResource}, carried=${harvestState.firstSelectedResourcesHeld ?? 0} ${harvestState.firstSelectedCarriedResource ?? "none"}, resources=${JSON.stringify(harvestState.visibilityPlayerResources)}, tick=${harvestState.tick}).`);
+  } else {
+    await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind === \"harvest\" && window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderResource === \"gold\"", 10_000);
+    const goldState = await waitForGoldDelivery(client, beforeResources, 75_000);
+    const issued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_WOOD_HARVEST__()");
+    if (issued !== true) {
+      throw new Error(`Unable to issue first wood harvest order: ${JSON.stringify(await readSmokeState(client))}`);
+    }
+    await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind === \"harvest\" && window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderResource === \"wood\"", 10_000);
+    const harvestState = await waitForWoodHarvestContinuation(client, goldState.visibilityPlayerResources ?? beforeResources, 75_000);
+    const save = await evalValue(client, "window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__()");
+    if (!save?.ok || save.saveRoundtripOk !== true || !Number.isFinite(save.tick) || save.tick < harvestState.tick) {
+      throw new Error(`Harvest active-world save/load roundtrip failed: ${JSON.stringify(save)}`);
+    }
+    if (pageErrors.length > 0) {
+      throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
+    }
+    console.log(`Browser harvest session verified (${MAP_PATH}, gold ${beforeResources.gold ?? 0}->${goldState.visibilityPlayerResources?.gold ?? "unknown"}, order=${harvestState.firstSelectedOrderKind}, resource=${harvestState.firstSelectedOrderResource}, carried=${harvestState.firstSelectedResourcesHeld ?? 0} ${harvestState.firstSelectedCarriedResource ?? "none"}, resources=${JSON.stringify(harvestState.visibilityPlayerResources)}, tick=${harvestState.tick}).`);
   }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind === \"harvest\" && window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderResource === \"wood\"", 10_000);
-  const harvestState = await waitForWoodHarvestContinuation(client, goldState.visibilityPlayerResources ?? beforeResources, 75_000);
-  const save = await evalValue(client, "window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__()");
-  if (!save?.ok || save.saveRoundtripOk !== true || !Number.isFinite(save.tick) || save.tick < harvestState.tick) {
-    throw new Error(`Harvest active-world save/load roundtrip failed: ${JSON.stringify(save)}`);
-  }
-  if (pageErrors.length > 0) {
-    throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
-  }
-  console.log(`Browser harvest session verified (${MAP_PATH}, gold ${beforeResources.gold ?? 0}->${goldState.visibilityPlayerResources?.gold ?? "unknown"}, order=${harvestState.firstSelectedOrderKind}, resource=${harvestState.firstSelectedOrderResource}, carried=${harvestState.firstSelectedResourcesHeld ?? 0} ${harvestState.firstSelectedCarriedResource ?? "none"}, resources=${JSON.stringify(harvestState.visibilityPlayerResources)}, tick=${harvestState.tick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);
@@ -115,11 +145,35 @@ async function waitForWoodHarvestContinuation(client, beforeResources, timeoutMs
   throw new Error(`Timed out waiting for wood harvest continuation after delivery; smoke=${JSON.stringify(await readSmokeState(client))}`);
 }
 
+async function waitForAnyHarvestProgress(client, beforeResources, timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const state = await readSmokeState(client);
+    const resources = state.visibilityPlayerResources ?? {};
+    if (state.firstSelectedOrderKind === "harvest"
+      && (state.firstSelectedOrderResource === "gold" || state.firstSelectedOrderResource === "wood")
+      && (
+        (state.firstSelectedResourcesHeld ?? 0) > 0
+        || (resources.gold ?? 0) > (beforeResources.gold ?? 0)
+        || (resources.wood ?? 0) > (beforeResources.wood ?? 0)
+        || state.firstSelectedOrderTarget !== null
+      )) {
+      return state;
+    }
+    await delay(500);
+  }
+  throw new Error(`Timed out waiting for fixture harvest progress; smoke=${JSON.stringify(await readSmokeState(client))}`);
+}
+
 async function dismissOverlays(client) {
-  await dispatchKey(client, "Enter");
-  await delay(300);
-  await dispatchKey(client, "Enter");
-  await delay(500);
+  for (let index = 0; index < 2; index += 1) {
+    const state = await readSmokeState(client);
+    if (state?.titleScreenOpen !== true && state?.briefingOpen !== true) {
+      return;
+    }
+    await dispatchKey(client, "Enter");
+    await delay(index === 0 ? 300 : 500);
+  }
 }
 
 async function evalValue(client, expression) {
@@ -131,7 +185,7 @@ async function evalValue(client, expression) {
 }
 
 async function readSmokeState(client) {
-  return await evalValue(client, "window.__WARGUS_TS_SMOKE_STATE__");
+  return await evalValue(client, "window.__WARGUS_TS_PUBLISH_SMOKE__?.(); window.__WARGUS_TS_SMOKE_STATE__");
 }
 
 async function waitForExpression(client, expression, timeoutMs) {

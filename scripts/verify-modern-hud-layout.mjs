@@ -191,6 +191,7 @@ function assertModernHud(state, label) {
   }
   assertRectInside(hud.resourceBar, hud.topBar, `${label} resource bar inside top bar`);
   assertRectInside(hud.minimap, hud.minimapPanel, `${label} minimap inside minimap panel`);
+  assertFixedDemoSpeedControls(hud, label);
   if (!hud.portrait?.filled || hud.portrait.source === "empty") {
     throw new Error(`${label} portrait should never be blank: ${JSON.stringify(hud.portrait)}`);
   }
@@ -216,6 +217,37 @@ function assertModernHud(state, label) {
   }
 }
 
+function assertFixedDemoSpeedControls(hud, label) {
+  if (!Array.isArray(hud.mapButtonControls)) {
+    throw new Error(`${label} fixed-demo map controls should be exposed as layout debug data: ${JSON.stringify(hud.mapButtonControls)}`);
+  }
+  if (!hud.mapButtons) {
+    throw new Error(`${label} fixed-demo speed controls need a map button container: ${JSON.stringify(hud)}`);
+  }
+  const slower = hud.mapButtonControls.find((control) => control.id === "slower-game");
+  const faster = hud.mapButtonControls.find((control) => control.id === "faster-game");
+  if (!slower || !faster) {
+    throw new Error(`${label} fixed-demo speed controls should expose slower and faster buttons: ${JSON.stringify(hud.mapButtonControls)}`);
+  }
+  if (slower.width < 42 || faster.width < 42 || slower.height < 28 || faster.height < 28) {
+    throw new Error(`${label} fixed-demo speed controls should be large press targets: ${JSON.stringify({ slower, faster })}`);
+  }
+  if (!(faster.x > slower.x)) {
+    throw new Error(`${label} fixed-demo faster speed control should stay to the right: ${JSON.stringify({ slower, faster })}`);
+  }
+  if (slower.trigger !== "press" || faster.trigger !== "press") {
+    throw new Error(`${label} fixed-demo speed controls should trigger on press: ${JSON.stringify({ slower, faster })}`);
+  }
+  if (!slower.hitRect || !faster.hitRect || slower.hitRect.width <= slower.width || faster.hitRect.width <= faster.width || slower.hitRect.height <= slower.height || faster.hitRect.height <= faster.height) {
+    throw new Error(`${label} fixed-demo speed controls should expose padded hit rects: ${JSON.stringify({ slower, faster })}`);
+  }
+  if (rectsOverlap(slower.hitRect, faster.hitRect)) {
+    throw new Error(`${label} fixed-demo speed hit rects should not overlap: ${JSON.stringify({ slower, faster })}`);
+  }
+  assertRectInsideWithTolerance(slower.hitRect, hud.mapButtons, `${label} slower speed hit rect`, 4);
+  assertRectInsideWithTolerance(faster.hitRect, hud.mapButtons, `${label} faster speed hit rect`, 4);
+}
+
 function assertRectInside(rect, container, label) {
   const inside = rect.x >= container.x - 1
     && rect.y >= container.y - 1
@@ -224,6 +256,23 @@ function assertRectInside(rect, container, label) {
   if (!inside) {
     throw new Error(`${label} escaped container: rect=${JSON.stringify(rect)}, container=${JSON.stringify(container)}`);
   }
+}
+
+function assertRectInsideWithTolerance(rect, container, label, tolerance) {
+  const inside = rect.x >= container.x - tolerance
+    && rect.y >= container.y - tolerance
+    && rect.x + rect.width <= container.x + container.width + tolerance
+    && rect.y + rect.height <= container.y + container.height + tolerance;
+  if (!inside) {
+    throw new Error(`${label} escaped container: rect=${JSON.stringify(rect)}, container=${JSON.stringify(container)}, tolerance=${tolerance}`);
+  }
+}
+
+function rectsOverlap(left, right) {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y;
 }
 
 async function loadFixedDemoMap(client) {

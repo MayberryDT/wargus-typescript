@@ -46,8 +46,14 @@ for (const [name, source, fragments] of [
 }
 
 const unitMinRangeBody = ordersSource.match(/function isTargetInsideMinimumAttackRange[\s\S]*?\n}/)?.[0] ?? "";
-if (!unitMinRangeBody.includes("const minimumDistance = minimumAttackDistanceForTarget(unit, target)") || !unitMinRangeBody.includes("Math.hypot(target.x - unit.x, target.y - unit.y) < minimumDistance")) {
-  error("Unit-target minimum attack range should route through minimumAttackDistanceForTarget once per check.");
+if (
+  !unitMinRangeBody.includes("const minimumDistance = minimumAttackDistanceForTarget(unit, target)")
+  || !unitMinRangeBody.includes("const distance = isBuildingLike(target)")
+  || !unitMinRangeBody.includes("? distanceToUnitFootprint(world, target, unit.x, unit.y)")
+  || !unitMinRangeBody.includes(": Math.hypot(target.x - unit.x, target.y - unit.y)")
+  || !unitMinRangeBody.includes("return minimumDistance > 0 && distance < minimumDistance;")
+) {
+  error("Unit-target minimum attack range should route through minimumAttackDistanceForTarget and use footprint-aware distance once per check.");
 }
 
 const groundMinRangeBody = ordersSource.match(/function isGroundTargetInsideMinimumAttackRange[\s\S]*?\n}/)?.[0] ?? "";

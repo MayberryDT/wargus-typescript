@@ -36,7 +36,7 @@ for (const [name, source, fragments] of [
     "world.engineSettings.showNoSelectionStatsDefault = booleanOr(record.showNoSelectionStatsDefault, world.engineSettings.showNoSelectionStatsDefault)"
   ]],
   ["HUD render", hudSource, [
-    "const showNoSelectionStats = selected !== null || world.engineSettings.showNoSelectionStatsDefault",
+    "const showNoSelectionStats = !fixedDemo && (selected !== null || world.engineSettings.showNoSelectionStatsDefault)",
     "...(showNoSelectionStats ? [",
     "idleWorkerSummary(world)",
     "controlGroupSummary(controlGroups, world)",

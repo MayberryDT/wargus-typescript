@@ -74,17 +74,97 @@ const overlayLayer = new Container();
 worldLayer.addChild(mapLayer, unitLayer, fogLayer, selectionLayer);
 app.stage.addChild(worldLayer, hudLayer, overlayLayer, cursorLayer);
 
-const loading = new Text({
-  text: "Index Wargus data with: npm run index:wargus",
+type LoadingScreenTone = "loading" | "error";
+type LoadingScreenState = {
+  visible: boolean;
+  tone: LoadingScreenTone;
+  title: string;
+  mapName: string;
+  message: string;
+  detail: string;
+  progress: number;
+};
+
+const loadingLayer = new Container();
+const loadingBackdrop = new Graphics();
+const loadingFrame = new Graphics();
+const loadingProgress = new Graphics();
+const loadingTitle = new Text({
+  text: "",
+  style: {
+    fill: "#f4d78a",
+    fontFamily: "Georgia, 'Times New Roman', serif",
+    fontSize: 34,
+    fontWeight: "700"
+  }
+});
+const loadingMapName = new Text({
+  text: "",
+  style: {
+    fill: "#f2e4b2",
+    fontFamily: "Georgia, 'Times New Roman', serif",
+    fontSize: 20,
+    fontWeight: "700"
+  }
+});
+const loadingMessage = new Text({
+  text: "",
   style: {
     fill: "#d8d3bd",
     fontFamily: "system-ui, sans-serif",
-    fontSize: 18
+    fontSize: 16,
+    fontWeight: "700"
   }
 });
-loading.x = 24;
-loading.y = 24;
-app.stage.addChild(loading);
+const loadingDetail = new Text({
+  text: "",
+  style: {
+    fill: "#a99d79",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: 13
+  }
+});
+const loadingProgressLabel = new Text({
+  text: "",
+  style: {
+    fill: "#f8e3a0",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: 12,
+    fontWeight: "700"
+  }
+});
+const statusText = new Text({
+  text: "",
+  style: {
+    fill: "#f2e4b2",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: 15,
+    fontWeight: "700"
+  }
+});
+const loadingState: LoadingScreenState = {
+  visible: true,
+  tone: "loading",
+  title: "Wargus TypeScript",
+  mapName: "Preparing battle",
+  message: "Loading game data",
+  detail: "First load may take a moment while the browser prepares the battlefield.",
+  progress: 0.05
+};
+
+loadingTitle.anchor.set(0.5, 0);
+loadingMapName.anchor.set(0.5, 0);
+loadingMessage.anchor.set(0.5, 0);
+loadingDetail.anchor.set(0.5, 0);
+loadingProgressLabel.anchor.set(0.5, 0);
+loadingLayer.addChild(loadingBackdrop, loadingFrame, loadingProgress, loadingTitle, loadingMapName, loadingMessage, loadingDetail, loadingProgressLabel);
+app.stage.addChild(loadingLayer);
+statusText.x = 24;
+statusText.y = 24;
+statusText.visible = false;
+app.stage.addChild(statusText);
+renderLoadingScreen();
+window.addEventListener("resize", () => renderLoadingScreen());
 
 let manifest: WargusManifest | null = null;
 let activeMap: WargusMap | null = null;
@@ -255,6 +335,10 @@ type BrowserSmokeCommandResult = {
   feedback: "acknowledge" | "click" | "error" | null;
 };
 type BrowserSmokeState = {
+  loadingVisible: boolean;
+  loadingProgress: number;
+  loadingMessage: string;
+  loadingDetail: string;
   worldLoaded: boolean;
   activeMapPath: string | null;
   mapWidth: number | null;
@@ -1805,17 +1889,23 @@ if (browserSmokeStateEnabled) {
 	    };
 	  };
 	  window.__WARGUS_TS_ISSUE_FIXED_DEMO_FINAL_ATTACK__ = () => {
-	    const target = browserSmokeFixedDemoObjectiveTarget();
+	    const targets = browserSmokeFixedDemoObjectiveTargets();
+	    const target = targets[0] ?? null;
 	    if (!world || !target) {
 	      return { issued: false, attackerIds: [], targetId: target?.id ?? null, targetHitPoints: target?.hitPoints ?? null, matchStatus: world?.matchState.status ?? null };
 	    }
-	    const attackers = browserSmokeFixedDemoAttackers(target);
+	    const attackers = browserSmokeFixedDemoAttackers(targets);
 	    selectedUnitIds = clampSelectionToSourceLimit(world, attackers.map((attacker) => attacker.id));
 	    centerCameraOnWorldPoint(world, target.x, target.y);
 	    paused = false;
-	    const attackerIds = attackers
-	      .filter((attacker) => issueAttackOrder(world!, attacker.id, target.id))
-	      .map((attacker) => attacker.id);
+	    const attackerIds: string[] = [];
+	    attackers.forEach((attacker, index) => {
+	      const candidateTargets = targets.filter((candidate) => canAttackTarget(attacker, candidate, world!));
+	      const assignedTarget = candidateTargets[index % Math.max(candidateTargets.length, 1)];
+	      if (assignedTarget && issueAttackOrder(world!, attacker.id, assignedTarget.id)) {
+	        attackerIds.push(attacker.id);
+	      }
+	    });
 	    publishBrowserSmokeState(true);
 	    return {
 	      issued: attackerIds.length > 0,
@@ -2311,10 +2401,14 @@ window.addEventListener("pointerup", () => {
 });
 
 try {
+  setLoadingScreen({ message: "Loading game data", detail: "Reading the Wargus manifest and source assets.", progress: 0.12 });
   manifest = await loadWargusManifest();
+  setLoadingScreen({ message: "Starting audio engine", detail: "Preparing music and battle sound playback.", progress: 0.24 });
   audioEngine = new AudioEngine(manifest);
   activeMap = chooseInitialMap(manifest);
+  setLoadingScreen({ mapName: mapLoadingName(activeMap), message: "Reading map setup", detail: "Choosing a fresh Garden of War start for this battle.", progress: 0.36 });
   const setup = await loadMapSetup(activeMap);
+  setLoadingScreen({ message: "Creating world", detail: "Placing units, fog, resources, and AI opponents.", progress: 0.56 });
   world = createInitialWorld(activeMap, manifest.units, setup, manifest.upgrades, manifest.missiles, manifest.spells, manifest.allowRules, manifest.dependencies, manifest.buttons, manifest.engineSettings, manifest.aiDefinitions, manifest.unitDatabase, manifest.tilesets, manifest.animations);
   applyFixedBrowserDemoWorldPresentation(activeMap, world);
   captureBrowserSmokeScenarioSnapshot();
@@ -2331,10 +2425,12 @@ try {
   resetUnitAtlasTracking();
   focusInitialCameraOnPlayableStart(world);
   selectedUnitIds = isFixedBrowserDemoMap(activeMap) ? fixedBrowserDemoInitialSelection(world) : selectedUnitIds;
+  setLoadingScreen({ message: "Loading battlefield art", detail: "Preparing terrain, units, command buttons, and fog.", progress: 0.78 });
   applyCompleteWorldViewAssets(await loadCompleteWorldViewAssets(manifest, world, setup));
-  loading.visible = false;
+  setLoadingScreen({ message: "Entering battle", detail: "The map is ready.", progress: 0.96 });
+  hideLoadingScreen();
 } catch (error) {
-  loading.text = error instanceof Error ? error.message : "Unable to load Wargus manifest";
+  showLoadingError(error, "Unable to load Wargus data");
 }
 
 const frame = new Graphics();
@@ -2788,15 +2884,165 @@ function smoothedTiming(previous: number | null, next: number): number {
   return previous === null ? next : previous * 0.9 + next * 0.1;
 }
 
+function setLoadingScreen(update: Partial<LoadingScreenState>): void {
+  if (typeof update.visible === "boolean") {
+    loadingState.visible = update.visible;
+  }
+  if (update.tone) {
+    loadingState.tone = update.tone;
+  }
+  if (typeof update.title === "string") {
+    loadingState.title = update.title;
+  }
+  if (typeof update.mapName === "string") {
+    loadingState.mapName = update.mapName;
+  }
+  if (typeof update.message === "string") {
+    loadingState.message = update.message;
+  }
+  if (typeof update.detail === "string") {
+    loadingState.detail = update.detail;
+  }
+  if (typeof update.progress === "number") {
+    loadingState.progress = Math.max(0, Math.min(1, update.progress));
+  }
+  renderLoadingScreen();
+}
+
+function hideLoadingScreen(): void {
+  setLoadingScreen({ visible: false, progress: 1 });
+}
+
+function showLoadingError(error: unknown, fallback: string): void {
+  setLoadingScreen({
+    visible: true,
+    tone: "error",
+    message: fallback,
+    detail: error instanceof Error ? error.message : "The game data could not be prepared.",
+    progress: 1
+  });
+}
+
+function mapLoadingName(map: WargusMap | null): string {
+  if (!map) {
+    return "Preparing battle";
+  }
+  return map.title === "(unnamed)" ? map.path : map.title;
+}
+
+function renderLoadingScreen(): void {
+  loadingLayer.visible = loadingState.visible;
+  if (!loadingState.visible) {
+    return;
+  }
+
+  const screenWidth = Math.max(1, app.screen.width);
+  const screenHeight = Math.max(1, app.screen.height);
+  const panelWidth = Math.min(680, Math.max(292, screenWidth - 32));
+  const panelHeight = Math.min(316, Math.max(250, screenHeight - 32));
+  const left = Math.round((screenWidth - panelWidth) / 2);
+  const top = Math.round((screenHeight - panelHeight) / 2);
+  const accent = loadingState.tone === "error" ? 0xd65d46 : 0xc79a3f;
+  const progress = Math.max(0.04, Math.min(1, loadingState.progress));
+  const barLeft = left + 44;
+  const barTop = top + panelHeight - 82;
+  const barWidth = panelWidth - 88;
+  const barHeight = 20;
+
+  loadingBackdrop.clear();
+  loadingBackdrop.rect(0, 0, screenWidth, screenHeight);
+  loadingBackdrop.fill(0x050708);
+  loadingBackdrop.rect(0, 0, screenWidth, Math.max(0, top - 26));
+  loadingBackdrop.fill({ color: 0x0f1516, alpha: 0.55 });
+  loadingBackdrop.rect(0, top + panelHeight + 26, screenWidth, Math.max(0, screenHeight - top - panelHeight - 26));
+  loadingBackdrop.fill({ color: 0x0f1516, alpha: 0.55 });
+
+  loadingFrame.clear();
+  loadingFrame.rect(left - 8, top - 8, panelWidth + 16, panelHeight + 16);
+  loadingFrame.fill(0x070605);
+  loadingFrame.rect(left - 5, top - 5, panelWidth + 10, panelHeight + 10);
+  loadingFrame.stroke({ width: 2, color: 0x2b2317, alpha: 1 });
+  loadingFrame.rect(left, top, panelWidth, panelHeight);
+  loadingFrame.fill(0x16110d);
+  loadingFrame.rect(left + 8, top + 8, panelWidth - 16, panelHeight - 16);
+  loadingFrame.stroke({ width: 2, color: accent, alpha: 0.78 });
+  loadingFrame.rect(left + 16, top + 16, panelWidth - 32, panelHeight - 32);
+  loadingFrame.stroke({ width: 1, color: 0x5d4c2c, alpha: 0.9 });
+  loadingFrame.rect(left + 24, top + 24, panelWidth - 48, panelHeight - 48);
+  loadingFrame.fill({ color: 0x241b13, alpha: 0.45 });
+  for (const corner of [
+    [left + 10, top + 10],
+    [left + panelWidth - 38, top + 10],
+    [left + 10, top + panelHeight - 38],
+    [left + panelWidth - 38, top + panelHeight - 38]
+  ] as const) {
+    loadingFrame.rect(corner[0], corner[1], 28, 28);
+    loadingFrame.fill(0x2c2318);
+    loadingFrame.rect(corner[0] + 5, corner[1] + 5, 18, 18);
+    loadingFrame.stroke({ width: 1, color: accent, alpha: 0.65 });
+  }
+
+  loadingProgress.clear();
+  loadingProgress.rect(barLeft - 3, barTop - 3, barWidth + 6, barHeight + 6);
+  loadingProgress.fill(0x080604);
+  loadingProgress.rect(barLeft, barTop, barWidth, barHeight);
+  loadingProgress.fill(0x21170e);
+  loadingProgress.rect(barLeft + 2, barTop + 2, Math.max(1, (barWidth - 4) * progress), barHeight - 4);
+  loadingProgress.fill(loadingState.tone === "error" ? 0x9d332a : 0xa46c26);
+  loadingProgress.rect(barLeft + 2, barTop + 2, Math.max(1, (barWidth - 4) * progress), Math.max(1, Math.floor((barHeight - 4) / 2)));
+  loadingProgress.fill({ color: loadingState.tone === "error" ? 0xe07a58 : 0xe0ad45, alpha: 0.82 });
+  loadingProgress.rect(barLeft, barTop, barWidth, barHeight);
+  loadingProgress.stroke({ width: 1, color: 0xe2c06d, alpha: 0.85 });
+
+  loadingTitle.text = loadingState.title;
+  loadingMapName.text = loadingState.mapName;
+  loadingMessage.text = loadingState.message;
+  loadingDetail.text = loadingState.detail;
+  loadingProgressLabel.text = `${Math.round(loadingState.progress * 100)}%`;
+
+  fitLoadingText(loadingTitle, panelWidth - 72, 34, 25);
+  fitLoadingText(loadingMapName, panelWidth - 88, 20, 15);
+  fitLoadingText(loadingMessage, panelWidth - 88, 16, 12);
+  fitLoadingText(loadingDetail, panelWidth - 88, 13, 10);
+  fitLoadingText(loadingProgressLabel, panelWidth - 88, 12, 10);
+
+  loadingTitle.x = left + panelWidth / 2;
+  loadingTitle.y = top + 46;
+  loadingMapName.x = left + panelWidth / 2;
+  loadingMapName.y = top + 100;
+  loadingMessage.x = left + panelWidth / 2;
+  loadingMessage.y = top + 146;
+  loadingDetail.x = left + panelWidth / 2;
+  loadingDetail.y = top + 174;
+  loadingProgressLabel.x = left + panelWidth / 2;
+  loadingProgressLabel.y = barTop + barHeight + 14;
+}
+
+function fitLoadingText(text: Text, maxWidth: number, fontSize: number, minFontSize: number): void {
+  text.scale.set(1);
+  text.style.fontSize = fontSize;
+  while (text.width > maxWidth && Number(text.style.fontSize) > minFontSize) {
+    text.style.fontSize = Number(text.style.fontSize) - 1;
+  }
+}
+
 async function loadPlayableMap(map: WargusMap): Promise<void> {
   if (!manifest) {
     return;
   }
-  loading.visible = true;
-  loading.text = `Loading ${map.title === "(unnamed)" ? map.path : map.title}`;
+  setLoadingScreen({
+    visible: true,
+    tone: "loading",
+    mapName: mapLoadingName(map),
+    message: "Opening battlefield",
+    detail: "Loading the map setup and source rules.",
+    progress: 0.18
+  });
   try {
+    setLoadingScreen({ message: "Reading map setup", detail: "Finding starting positions, resources, and AI opponents.", progress: 0.32 });
     const setup = await loadMapSetup(map);
     activeMap = setup ? manifest.maps.find((candidate) => candidate.path === setup.presentationPath) ?? map : map;
+    setLoadingScreen({ mapName: mapLoadingName(activeMap), message: "Creating world", detail: "Placing units, fog, resources, and victory rules.", progress: 0.55 });
     world = createInitialWorld(activeMap, manifest.units, setup, manifest.upgrades, manifest.missiles, manifest.spells, manifest.allowRules, manifest.dependencies, manifest.buttons, manifest.engineSettings, manifest.aiDefinitions, manifest.unitDatabase, manifest.tilesets, manifest.animations);
     applyFixedBrowserDemoWorldPresentation(activeMap, world);
     captureBrowserSmokeScenarioSnapshot();
@@ -2814,13 +3060,15 @@ async function loadPlayableMap(map: WargusMap): Promise<void> {
     startBriefingAudio(world);
     resetMatchMusicCue(audioCueState);
     resetUnitAtlasTracking();
+    setLoadingScreen({ message: "Loading battlefield art", detail: "Preparing terrain, unit sprites, buttons, and fog.", progress: 0.78 });
     applyCoreWorldViewAssets(await loadCoreWorldViewAssets(manifest, world, setup));
+    setLoadingScreen({ message: "Entering battle", detail: "The map is ready.", progress: 0.96 });
     selectedUnitIds = isFixedBrowserDemoMap(activeMap) ? fixedBrowserDemoInitialSelection(world) : [];
     focusInitialCameraOnPlayableStart(world);
     resetSourceViewportCameras();
-    loading.visible = false;
+    hideLoadingScreen();
   } catch (error) {
-    loading.text = error instanceof Error ? error.message : "Unable to load selected map";
+    showLoadingError(error, "Unable to load selected map");
   }
 }
 
@@ -2866,6 +3114,10 @@ function publishBrowserSmokeState(force = false): void {
   ensurePlaytestTelemetryLoaded();
   const lastTelemetryEntry = playtestTelemetryLog[playtestTelemetryLog.length - 1] ?? null;
   window.__WARGUS_TS_SMOKE_STATE__ = {
+    loadingVisible: loadingState.visible,
+    loadingProgress: loadingState.progress,
+    loadingMessage: loadingState.message,
+    loadingDetail: loadingState.detail,
     worldLoaded: Boolean(world),
     activeMapPath: activeMap?.path ?? null,
     mapWidth: world?.map.width ?? null,
@@ -3182,14 +3434,41 @@ function browserSmokeCombatPair(): { attacker: WorldUnit; target: WorldUnit } | 
 }
 
 function browserSmokeFixedDemoObjectiveTarget(): WorldUnit | null {
+  return browserSmokeFixedDemoObjectiveTargets()[0] ?? null;
+}
+
+function browserSmokeFixedDemoObjectiveTargets(): WorldUnit[] {
   if (!world || !isFixedBrowserDemoMap(activeMap)) {
-    return null;
+    return [];
   }
-  return world.units.find((unit) => (
-    unit.player !== world?.visibilityPlayer
-    && (unit.typeId === "unit-great-hall" || unit.typeId === "unit-stronghold" || unit.typeId === "unit-fortress" || unit.typeId === "unit-town-hall" || unit.typeId === "unit-keep" || unit.typeId === "unit-castle")
-    && unit.hitPoints > 0
-  )) ?? null;
+  return world.units
+    .filter((unit) => (
+      unit.player === FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID
+      && unit.hitPoints > 0
+      && !isUnitHiddenInConstruction(unit)
+      && !isInvisibleUtilityUnit(unit)
+    ))
+    .sort((left, right) => sourceFixedDemoTargetScore(left) - sourceFixedDemoTargetScore(right) || left.id.localeCompare(right.id));
+}
+
+function sourceFixedDemoTargetScore(unit: WorldUnit): number {
+  if (
+    unit.typeId === "unit-great-hall"
+    || unit.typeId === "unit-stronghold"
+    || unit.typeId === "unit-fortress"
+    || unit.typeId === "unit-town-hall"
+    || unit.typeId === "unit-keep"
+    || unit.typeId === "unit-castle"
+  ) {
+    return 0;
+  }
+  if (unit.kind === "building") {
+    return 1;
+  }
+  if (unit.canAttack) {
+    return 2;
+  }
+  return 3;
 }
 
 function browserSmokeFixedDemoRaidTargets(): WorldUnit[] {
@@ -3221,17 +3500,19 @@ function browserSmokeFixedDemoDefenders(targets: WorldUnit[]): WorldUnit[] {
     .sort((left, right) => sourceFixedDemoAttackerScore(right) - sourceFixedDemoAttackerScore(left) || left.id.localeCompare(right.id));
 }
 
-function browserSmokeFixedDemoAttackers(target: WorldUnit): WorldUnit[] {
+function browserSmokeFixedDemoAttackers(targets: WorldUnit | WorldUnit[]): WorldUnit[] {
   if (!world || !isFixedBrowserDemoMap(activeMap)) {
     return [];
   }
-  return world.units
+  const currentWorld = world;
+  const targetList = Array.isArray(targets) ? targets : [targets];
+  return currentWorld.units
     .filter((unit) => (
-      unit.player === world?.visibilityPlayer
+      unit.player === currentWorld.visibilityPlayer
       && unit.hitPoints > 0
       && unit.canAttack
       && !unit.construction
-      && canAttackTarget(unit, target, world)
+      && targetList.some((target) => canAttackTarget(unit, target, currentWorld))
     ))
     .sort((left, right) => sourceFixedDemoAttackerScore(right) - sourceFixedDemoAttackerScore(left) || left.id.localeCompare(right.id));
 }
@@ -3818,10 +4099,10 @@ function sourceShowOrdersDurationTicks(loadedWorld: WorldState): number {
 }
 
 function showLoadingStatus(message: string, durationMs: number): void {
-  loading.visible = true;
-  loading.text = message;
+  statusText.text = message;
+  statusText.visible = true;
   window.setTimeout(() => {
-    loading.visible = false;
+    statusText.visible = false;
   }, durationMs);
 }
 
@@ -3842,27 +4123,42 @@ function saveCommandContext(): SaveCommandContext {
 }
 
 async function applyLoadedGame(loaded: LoadedSavedGame): Promise<void> {
-  world = loaded.world;
-  gameSpeed = sourceGameSpeedMultiplier(world);
-  resetWorldTransientState();
-  briefingOpen = false;
-  resetBriefingAudioCue(audioCueState);
-  audioEngine?.stopBriefingSounds();
-  resetMatchMusicCue(audioCueState);
-  activeMap = loaded.map;
-  audioEngine?.setTileset(activeMap.setup?.tileset);
-  syncAudioSettingsFromWorld();
-  resetUnitAtlasTracking();
-  if (manifest) {
-    applyCompleteWorldViewAssets(await loadCompleteWorldViewAssets(manifest, world, activeMap.setup ? { tileset: activeMap.setup.tileset } : null));
+  setLoadingScreen({
+    visible: true,
+    tone: "loading",
+    mapName: mapLoadingName(loaded.map),
+    message: "Restoring saved battle",
+    detail: "Loading the saved map, units, camera, and command state.",
+    progress: 0.35
+  });
+  try {
+    world = loaded.world;
+    gameSpeed = sourceGameSpeedMultiplier(world);
+    resetWorldTransientState();
+    briefingOpen = false;
+    resetBriefingAudioCue(audioCueState);
+    audioEngine?.stopBriefingSounds();
+    resetMatchMusicCue(audioCueState);
+    activeMap = loaded.map;
+    audioEngine?.setTileset(activeMap.setup?.tileset);
+    syncAudioSettingsFromWorld();
+    resetUnitAtlasTracking();
+    if (manifest) {
+      setLoadingScreen({ message: "Loading saved battle art", detail: "Preparing terrain, unit sprites, buttons, and fog.", progress: 0.72 });
+      applyCompleteWorldViewAssets(await loadCompleteWorldViewAssets(manifest, world, activeMap.setup ? { tileset: activeMap.setup.tileset } : null));
+    }
+    selectedUnitIds = [];
+    replaceControlGroups(world, controlGroups, loaded.controlGroups);
+    camera.x = loaded.camera.x;
+    camera.y = loaded.camera.y;
+    camera.zoom = loaded.camera.zoom;
+    clampCameraToWorld(camera, world, playableCameraViewport());
+    restoreLoadedSourceViewportCameras(loaded);
+    setLoadingScreen({ message: "Entering saved battle", detail: "The map is ready.", progress: 0.96 });
+    hideLoadingScreen();
+  } catch (error) {
+    showLoadingError(error, "Unable to restore saved battle");
   }
-  selectedUnitIds = [];
-  replaceControlGroups(world, controlGroups, loaded.controlGroups);
-  camera.x = loaded.camera.x;
-  camera.y = loaded.camera.y;
-  camera.zoom = loaded.camera.zoom;
-  clampCameraToWorld(camera, world, playableCameraViewport());
-  restoreLoadedSourceViewportCameras(loaded);
 }
 
 function resetWorldTransientState(): void {

@@ -100,7 +100,7 @@ for (const [label, text, fragments] of [
     "builder.order = {\n    kind: \"build\"",
     "buildCycle: 0",
     "function stepBuildOrder",
-    "if (!isInTouchRange(unit, building))",
+    "if (!isInTouchRange(unit, building, world))",
     "updateUnitFacing(unit, building.x - unit.x, building.y - unit.y)",
     "unit.order.buildCycle += sourceElapsedCycles(world, tickSeconds)",
     "const buildCycleTicks = sourceBuildCycleTicks(world, unit)",

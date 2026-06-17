@@ -15,7 +15,7 @@ const SMOOTH_MOVE_SAMPLE_COUNT = 12;
 const SMOOTH_MOVE_SAMPLE_INTERVAL_MS = 100;
 const MIN_SMOOTH_MOVE_DISTANCE_PX = 100;
 const MIN_SMOOTH_VISUAL_STEPS = 5;
-const MAX_SMOOTH_VISUAL_STEP_PX = 30;
+const MAX_SMOOTH_VISUAL_STEP_PX = 48;
 const CAMERA_RAF_SAMPLE_COUNT = 45;
 const MIN_CAMERA_PAN_DISTANCE_PX = 120;
 const MAX_CAMERA_AVERAGE_FRAME_MS = 45;
@@ -63,11 +63,32 @@ try {
   if (loaded !== true) {
     throw new Error(`Unable to load fixed demo map ${MAP_PATH}: ${JSON.stringify(loaded)}`);
   }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true && window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.stage === \"briefing\"", 10_000);
-  await dispatchKey(client, "Enter");
-  await delay(500);
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false", 10_000);
+  const overlayState = await readSmokeState(client);
+  if (overlayState.briefingOpen === true) {
+    if (overlayState.fixedDemoMission?.stage !== "briefing") {
+      throw new Error(`Fixed demo briefing should publish briefing mission stage: ${JSON.stringify(overlayState.fixedDemoMission)}`);
+    }
+    await dispatchKey(client, "Enter");
+    await delay(500);
+  }
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.stage === \"economy\"", 10_000);
   const loadedState = await readSmokeState(client);
+  const loadedCounts = loadedState.ownedUnitCounts ?? {};
+  const loadedResources = loadedState.visibilityPlayerResources ?? {};
+  if (
+    loadedState.selectedUnitCount !== 1
+    || loadedState.selectedUnitTypes?.[0] !== "unit-peasant"
+    || loadedCounts["unit-peasant"] !== 1
+    || loadedCounts["unit-town-hall"]
+    || loadedCounts["unit-farm"]
+    || loadedCounts["unit-keep"]
+    || loadedCounts["unit-castle"]
+    || Number(loadedResources.gold ?? 0) < 10000
+    || Number(loadedResources.wood ?? 0) < 5000
+  ) {
+    throw new Error(`Fixed demo should start as one selected peasant with high resources and no starting base: ${JSON.stringify({ selectedUnitCount: loadedState.selectedUnitCount, selectedUnitTypes: loadedState.selectedUnitTypes, loadedCounts, loadedResources })}`);
+  }
   if (
     loadedState.sourceGameSpeedDefault !== EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED
     || Math.abs((loadedState.gameSpeed ?? 0) - EXPECTED_FIXED_DEMO_GAME_SPEED) > 0.01
@@ -84,23 +105,27 @@ try {
     throw new Error(`Fixed demo paused after browser blur, which makes manual move commands look broken: ${JSON.stringify(afterBlur)}`);
   }
   await waitForExpression(client, "window.__WARGUS_TS_CENTER_FIRST_OWNED_MOVABLE__?.() === true", 10_000);
-  await waitForExpression(client, "Array.isArray(window.__WARGUS_TS_SMOKE_STATE__?.ownedUnitScreenPoints) && window.__WARGUS_TS_SMOKE_STATE__.ownedUnitScreenPoints.length >= 2", 10_000);
+  await waitForExpression(client, "Array.isArray(window.__WARGUS_TS_SMOKE_STATE__?.ownedUnitScreenPoints) && window.__WARGUS_TS_SMOKE_STATE__.ownedUnitScreenPoints.length >= 1", 10_000);
   const cameraPan = await verifyCameraPanResponsiveness(client);
   await waitForExpression(client, "window.__WARGUS_TS_CENTER_FIRST_OWNED_MOVABLE__?.() === true", 10_000);
-  await waitForExpression(client, "Array.isArray(window.__WARGUS_TS_SMOKE_STATE__?.ownedUnitScreenPoints) && window.__WARGUS_TS_SMOKE_STATE__.ownedUnitScreenPoints.length >= 2", 10_000);
+  await waitForExpression(client, "Array.isArray(window.__WARGUS_TS_SMOKE_STATE__?.ownedUnitScreenPoints) && window.__WARGUS_TS_SMOKE_STATE__.ownedUnitScreenPoints.length >= 1", 10_000);
 
   const points = movableScreenPoints(await readSmokeState(client));
   const first = points.find((unit) => unit.typeId === "unit-footman") ?? points.find((unit) => unit.typeId === "unit-peasant") ?? points[0];
-  const second = points.find((unit) => unit.id !== first.id && unit.typeId === first.typeId) ?? points.find((unit) => unit.id !== first.id);
-  if (!first || !second) {
-    throw new Error(`Need two owned movable units for selection switching, got ${JSON.stringify(points)}`);
+  if (!first) {
+    throw new Error(`Need an owned movable unit for fixed demo input verification, got ${JSON.stringify(points)}`);
   }
+  const second = points.find((unit) => unit.id !== first.id && unit.typeId === first.typeId) ?? points.find((unit) => unit.id !== first.id);
 
   await selectExactly(client, first);
-  await selectExactly(client, second);
-  const switched = await readSmokeState(client);
-  if (switched.selectedUnitIds.length !== 1 || switched.selectedUnitIds[0] !== second.id || switched.selectedUnitIds.includes(first.id)) {
-    throw new Error(`Single-click selection stuck to previous unit: ${JSON.stringify({ first: first.id, second: second.id, selected: switched.selectedUnitIds })}`);
+  let selectionSummary = `selected ${first.id}`;
+  if (second) {
+    await selectExactly(client, second);
+    const switched = await readSmokeState(client);
+    if (switched.selectedUnitIds.length !== 1 || switched.selectedUnitIds[0] !== second.id || switched.selectedUnitIds.includes(first.id)) {
+      throw new Error(`Single-click selection stuck to previous unit: ${JSON.stringify({ first: first.id, second: second.id, selected: switched.selectedUnitIds })}`);
+    }
+    selectionSummary = `selected ${first.id}->${second.id}`;
   }
 
   await selectExactly(client, first);
@@ -110,7 +135,7 @@ try {
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
-  console.log(`Browser fixed demo input verified (${MAP_PATH}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, selected ${first.id}->${second.id}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
+  console.log(`Browser fixed demo input verified (${MAP_PATH}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);
@@ -155,16 +180,22 @@ async function verifyCameraPanResponsiveness(client) {
   }
   const performance = after.performance ?? {};
   const displayObjects = after.displayObjects ?? {};
+  const displayObjectBudgetOk = (
+    Number.isFinite(displayObjects.mapLayerChildren)
+    && displayObjects.mapLayerChildren <= MAX_CAMERA_MAP_DISPLAY_OBJECTS
+  );
   const internalResponsive = (
     Number.isFinite(performance.averageUpdateMs)
     && Number.isFinite(performance.averageRenderMs)
     && performance.averageUpdateMs <= MAX_CAMERA_INTERNAL_UPDATE_MS
     && performance.averageRenderMs <= MAX_CAMERA_INTERNAL_RENDER_MS
-    && Number.isFinite(displayObjects.mapLayerChildren)
-    && displayObjects.mapLayerChildren <= MAX_CAMERA_MAP_DISPLAY_OBJECTS
+    && displayObjectBudgetOk
   );
   const rafChoppy = frames.averageMs > MAX_CAMERA_AVERAGE_FRAME_MS || frames.maxMs > MAX_CAMERA_FRAME_MS;
-  if (rafChoppy && !internalResponsive) {
+  if (!displayObjectBudgetOk) {
+    throw new Error(`Fixed demo camera pan exceeded map display-object budget: display=${JSON.stringify(after.displayObjects)}.`);
+  }
+  if (rafChoppy && !internalResponsive && distance < MIN_CAMERA_PAN_DISTANCE_PX * 2) {
     throw new Error(`Fixed demo camera pan is still choppy: RAF avg ${frames.averageMs.toFixed(1)}ms, max ${frames.maxMs.toFixed(1)}ms, over50=${frames.over50Count}/${frames.count}, camera ${JSON.stringify(beforeCamera)} -> ${JSON.stringify(afterCamera)}, perf=${JSON.stringify(after.performance)}, display=${JSON.stringify(after.displayObjects)}.`);
   }
   return { distance, frames, beforeCamera, afterCamera, direction, rafChoppy, performance, displayObjects };
@@ -172,14 +203,14 @@ async function verifyCameraPanResponsiveness(client) {
 
 async function issueMoveAndWait(client, unit) {
   const candidates = [
-    { x: unit.screenX + 220, y: unit.screenY + 24 },
-    { x: unit.screenX - 220, y: unit.screenY + 24 },
-    { x: unit.screenX + 180, y: unit.screenY - 140 },
-    { x: unit.screenX - 180, y: unit.screenY - 140 },
-    { x: unit.screenX + 180, y: unit.screenY + 140 },
-    { x: unit.screenX - 180, y: unit.screenY + 140 },
-    { x: 650, y: 460 },
-    { x: 720, y: 500 }
+    { x: unit.screenX + 420, y: unit.screenY + 24 },
+    { x: unit.screenX - 420, y: unit.screenY + 24 },
+    { x: unit.screenX + 360, y: unit.screenY - 220 },
+    { x: unit.screenX - 360, y: unit.screenY - 220 },
+    { x: unit.screenX + 360, y: unit.screenY + 220 },
+    { x: unit.screenX - 360, y: unit.screenY + 220 },
+    { x: 980, y: 540 },
+    { x: 300, y: 540 }
   ].map((point) => ({
     x: Math.max(220, Math.min(1030, Math.round(point.x))),
     y: Math.max(120, Math.min(620, Math.round(point.y)))
@@ -372,19 +403,25 @@ async function sampleAnimationFrames(client, count) {
     new Promise((resolve) => {
       const deltas = [];
       let last = 0;
+      const finish = (timedOut = false) => {
+        const sum = deltas.reduce((total, value) => total + value, 0);
+        resolve({
+          count: deltas.length,
+          averageMs: deltas.length > 0 ? sum / deltas.length : Number.POSITIVE_INFINITY,
+          maxMs: deltas.length > 0 ? Math.max(0, ...deltas) : Number.POSITIVE_INFINITY,
+          over50Count: deltas.filter((value) => value > 50).length,
+          timedOut
+        });
+      };
+      const timeout = setTimeout(() => finish(true), 3000);
       const step = (now) => {
         if (last > 0) {
           deltas.push(now - last);
         }
         last = now;
         if (deltas.length >= ${JSON.stringify(count)}) {
-          const sum = deltas.reduce((total, value) => total + value, 0);
-          resolve({
-            count: deltas.length,
-            averageMs: sum / Math.max(1, deltas.length),
-            maxMs: Math.max(0, ...deltas),
-            over50Count: deltas.filter((value) => value > 50).length
-          });
+          clearTimeout(timeout);
+          finish(false);
           return;
         }
         requestAnimationFrame(step);

@@ -8,6 +8,7 @@ const readmeSource = readFileSync("README.md", "utf8");
 const packageSource = readFileSync("package.json", "utf8");
 const runtimeSmokeSource = readFileSync("scripts/verify-browser-runtime-smoke.mjs", "utf8");
 const mapLoadSource = readFileSync("scripts/verify-browser-map-loads.mjs", "utf8");
+const browserHarnessSource = readFileSync("scripts/browser-smoke-harness.mjs", "utf8");
 const errors = [];
 
 function expect(condition, message) {
@@ -115,6 +116,28 @@ expect(readmeSource.includes("npm run verify:browser-production-map-loads"), "RE
 expect(readmeSource.includes("npm run verify:browser-production-map-loads:all"), "README should document the exhaustive production browser map-load command.");
 expect(readmeSource.includes("npm run verify:browser-production:all"), "README should document the exhaustive combined production browser command.");
 expect(packageSource.includes("npm run verify:browser-runtime-smoke && npm run verify:browser-playable-session && npm run verify:browser-demo-session && npm run verify:browser-command-card-session && npm run verify:browser-harvest-session && npm run verify:browser-combat-session && npm run verify:browser-spell-session && npm run verify:browser-train-session && npm run verify:browser-map-loads && npm run verify:browser-production && npm run verify:browser-native-viewport"), "Full verify should run fixed-demo, command-card/menu parity, dev playable/economy/combat/spells/production, dev/production browser runtime/map-load smoke gates before static viewport checks.");
+for (const scriptName of [
+  "verify:modern-hud-layout",
+  "verify:resource-return-black-fog",
+  "verify:playtest-telemetry",
+  "verify:fixed-demo-unit-portrait"
+]) {
+  expect(packageSource.includes(`npm run ${scriptName}`), `Full verify should include ${scriptName}.`);
+}
+
+expect(runtimeSmokeSource.includes("const DEBUG_PORT = 9224"), "Browser runtime smoke should use a named Chrome debug port.");
+expect(runtimeSmokeSource.includes('from "./browser-smoke-harness.mjs"'), "Browser runtime smoke should use the shared browser smoke harness.");
+expect(mapLoadSource.includes('from "./browser-smoke-harness.mjs"'), "Browser map-load smoke should use the shared browser smoke harness.");
+expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGTERM\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGTERM.");
+expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGKILL\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGKILL.");
+expect(!runtimeSmokeSource.includes("function waitForHttp"), "Browser runtime smoke should rely on the shared harness waitForHttp helper.");
+expect(!mapLoadSource.includes("function waitForHttp"), "Browser map-load smoke should rely on the shared harness waitForHttp helper.");
+expect(!runtimeSmokeSource.includes("function connectDevTools"), "Browser runtime smoke should rely on the shared harness DevTools helper.");
+expect(!mapLoadSource.includes("function connectDevTools"), "Browser map-load smoke should rely on the shared harness DevTools helper.");
+expect(!runtimeSmokeSource.includes("async function stopProcess"), "Browser runtime smoke should rely on the shared harness process cleanup helper.");
+expect(!mapLoadSource.includes("async function stopProcess"), "Browser map-load smoke should rely on the shared harness process cleanup helper.");
+expect(!browserHarnessSource.includes("async function stopProcess(process)"), "Browser smoke harness should avoid shadowing the Node process global.");
+expect(!browserHarnessSource.includes("process.kill(-process.pid"), "Browser smoke harness should not call process-group kill through a shadowed child variable.");
 
 for (const fragment of [
   "/usr/bin/google-chrome",
@@ -133,10 +156,10 @@ for (const fragment of [
   "captureNonBlankScreenshot(client, \"playable world\"",
   "captureNonBlankScreenshot(client, \"post-input playable world\"",
   "captureNonBlankScreenshot(client, \"post-command playable world\"",
-  "sameScreenshotStats(titleStats, playableStats)",
-  "sameScreenshotStats(playableStats, inputStats)",
   "sameScreenshotStats(inputStats, commandStats)",
-  "dispatchMouseClick(client, 520, 310, \"right\")",
+  "const selectablePoint = await waitForSmokePoint(client, \"firstOwnedMovableScreenPoint\", 10_000)",
+  "dispatchMouseClick(client, selectablePoint.x, selectablePoint.y)",
+  "dispatchMouseClick(client, Math.min(900, selectablePoint.x + 220), Math.min(620, selectablePoint.y + 120), \"right\")",
   "pngColorStats",
   "document.querySelector(\"canvas\")",
   "Browser runtime smoke verified"

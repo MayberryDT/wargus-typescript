@@ -243,7 +243,26 @@ function fixedDemoSeed(): string {
   if (params.has("smoke")) {
     return "smoke";
   }
-  return `${DEMO_DEFAULT_SEED}:${Date.now()}:${Math.random()}`;
+  const runtimeSeed = runtimeFixedDemoSeed();
+  if (runtimeSeed) {
+    return runtimeSeed;
+  }
+  return DEMO_DEFAULT_SEED;
+}
+
+function runtimeFixedDemoSeed(): string | null {
+  const seedSource = (globalThis as {
+    __WARGUS_TS_RANDOM_DEMO_SEED__?: () => string;
+  }).__WARGUS_TS_RANDOM_DEMO_SEED__;
+  if (typeof seedSource !== "function") {
+    return null;
+  }
+  try {
+    const seed = seedSource();
+    return seed ? seed : null;
+  } catch {
+    return null;
+  }
 }
 
 function seededIndex(seed: string, length: number): number {

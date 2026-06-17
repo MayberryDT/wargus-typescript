@@ -568,10 +568,11 @@ function drawUnits(
       const direction = spriteDirectionForFacing(unit.facing ?? 4, atlas.numDirections);
       const fixedDemo = isFixedBrowserDemoMap(world.map);
       const building = isRuntimeSourceBuildingUnit(unit);
-      sprite.anchor.set(0.5, building ? 0.74 : 0.72);
-      sprite.position.set(unit.x, unit.y + (building && fixedDemo ? 4 : 10));
+      const anchorY = building ? 0.74 : 0.72;
+      const scale = sourceUnitSpriteScale(unit, fixedDemo);
+      sprite.anchor.set(0.5, anchorY);
+      sprite.position.set(unit.x, sourceUnitSpriteY(world, unit, atlas, scale, anchorY));
       const mirror = constructionFrame ? false : direction.mirror || sourceFancyBuildingMirror(world, unit);
-      const scale = fixedDemo && building ? 0.94 : fixedDemo ? 0.82 : 0.72;
       sprite.scale.set(mirror ? -scale : scale, scale);
       sprite.alpha = hasHiddenUnitEffect(unit) ? (isOwned ? 0.68 : 0.48) : 1;
       layer.addChild(sprite);
@@ -872,6 +873,21 @@ function drawUnits(
     }
   }
   layer.addChild(graphics);
+}
+
+function sourceUnitSpriteScale(unit: WorldState["units"][number], fixedDemo: boolean): number {
+  if (isRuntimeSourceBuildingUnit(unit)) {
+    return 1;
+  }
+  return fixedDemo ? 0.82 : 0.72;
+}
+
+function sourceUnitSpriteY(world: WorldState, unit: WorldState["units"][number], atlas: UnitTextureAtlas, scale: number, anchorY: number): number {
+  if (!isRuntimeSourceBuildingUnit(unit)) {
+    return unit.y + 10;
+  }
+  const { halfHeight } = unitFootprintHalfSize(unit, world.tileSize);
+  return unit.y + halfHeight - atlas.frameHeight * scale * (1 - anchorY);
 }
 
 function drawSourceControlGroupNumber(layer: Container, world: WorldState, unit: WorldState["units"][number], controlGroups: Record<number, string[]>, sourceSelectedOrdersVisible: boolean): void {

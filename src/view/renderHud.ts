@@ -138,10 +138,17 @@ export interface ModernHudLayoutDebug {
   resourceBar: HudRect;
   minimapPanel: HudRect;
   minimap: HudRect;
+  mapButtons: HudRect;
   selectionPanel: HudRect;
   commandPanel: HudRect;
   toastLane: HudRect;
   portrait: (HudRect & { filled: boolean; source: "icon" | "unit-sprite" | "initial" | "empty" }) | null;
+  mapButtonControls: Array<HudRect & {
+    id: HudMapCommandId;
+    label: string;
+    hitRect: HudRect;
+    trigger: "tap" | "press";
+  }>;
   resourceChips: Array<HudRect & { key: string; value: string; textFits: boolean }>;
   commandButtons: Array<HudRect & { id: string; label: string; longLabel: string; statusText: string; textFits: boolean }>;
   messages: Array<HudRect & { text: string; severity: "info" | "warning" | "attack" }>;
@@ -457,10 +464,12 @@ function beginModernHudLayoutDebug(layout: ModernHudLayout): ModernHudLayoutDebu
     resourceBar: layout.resourceBar,
     minimapPanel: layout.minimapPanel,
     minimap: layout.minimap,
+    mapButtons: layout.mapButtons,
     selectionPanel: layout.selectionPanel,
     commandPanel: layout.commandPanel,
     toastLane: layout.toastLane,
     portrait: null,
+    mapButtonControls: [],
     resourceChips: [],
     commandButtons: [],
     messages: [],
@@ -532,7 +541,7 @@ function drawFixedBrowserDemoHud(args: {
 
   drawFixedDemoPanel(graphics, layout.minimapPanel.x, layout.minimapPanel.y, layout.minimapPanel.width, layout.minimapPanel.height, 0.7);
   drawMinimap(layer, graphics, layout.minimap.x, layout.minimap.y, layout.minimap.width, layout.minimap.height, world, camera, sourceViewportCameras, alertPings, screenWidth, screenHeight, screenWidth, screenHeight, onMinimapPoint);
-  drawFixedDemoMapButtons(layer, graphics, layout.mapButtons.x, layout.mapButtons.y, layout.mapButtons.width, paused, gameSpeed, onMapCommand);
+  drawFixedDemoMapButtons(layer, graphics, layout.mapButtons.x, layout.mapButtons.y, layout.mapButtons.width, paused, gameSpeed, onMapCommand, debug);
 
   drawFixedDemoSelectedPanel(layer, graphics, layout.selectionPanel, manifest, world, selectedUnits, selected, selectedFromHover, selectedIsOwned, iconAtlas, unitAtlases, statusDecorationAtlas, onSelectedUnitPick, onProductionQueuePick, debug);
   drawFixedDemoCommandPanel(layer, graphics, layout.commandPanel, manifest, world, selectedUnits, iconAtlas, commandPage, onCommand, debug);
@@ -635,15 +644,46 @@ function drawFixedDemoResourceChip(layer: Container, graphics: Graphics, rect: H
   return valueFit.fits && labelFit.fits;
 }
 
-function drawFixedDemoMapButtons(layer: Container, graphics: Graphics, x: number, y: number, width: number, paused: boolean, gameSpeed: number, onMapCommand: (command: HudMapCommandId) => void): void {
+function drawFixedDemoMapButtons(layer: Container, graphics: Graphics, x: number, y: number, width: number, paused: boolean, gameSpeed: number, onMapCommand: (command: HudMapCommandId) => void, debug: ModernHudLayoutDebug): void {
   const gap = 6;
   const buttonHeight = 24;
   const wideButtonWidth = Math.floor((width - gap) / 2);
-  drawFixedDemoButton(layer, graphics, x, y, wideButtonWidth, buttonHeight, "Restart", false, () => onMapCommand("restart-map"));
-  drawFixedDemoButton(layer, graphics, x + wideButtonWidth + gap, y, width - wideButtonWidth - gap, buttonHeight, paused ? "Run" : "Pause", false, () => onMapCommand("toggle-pause"));
-  addFixedDemoText(layer, `Speed ${gameSpeed.toFixed(gameSpeed % 1 === 0 ? 0 : 1)}x`, x, y + 35, 11, paused ? "#ffb0a0" : "#a6f0a5", 700, width - 80);
-  drawFixedDemoButton(layer, graphics, x + width - 68, y + 30, 30, buttonHeight, "+", false, () => onMapCommand("faster-game"));
-  drawFixedDemoButton(layer, graphics, x + width - 32, y + 30, 32, buttonHeight, "-", false, () => onMapCommand("slower-game"));
+  const speedButtonWidth = 42;
+  const speedButtonHeight = 28;
+  const speedButtonHitPadding = 4;
+  const speedButtonGap = speedButtonHitPadding * 2;
+  const speedControlsWidth = speedButtonWidth * 2 + speedButtonGap;
+  const speedControlsX = x + width - speedButtonHitPadding - speedControlsWidth;
+  const speedControlsY = y + 28;
+  const speedValue = gameSpeed.toFixed(gameSpeed % 1 === 0 ? 0 : 1);
+  const speedText = width < 150 ? `${speedValue}x` : `Speed ${speedValue}x`;
+  const addButton = (
+    id: HudMapCommandId,
+    rect: HudRect,
+    label: string,
+    onTap: () => void,
+    options: { hitPadding?: number; trigger?: "tap" | "press" } = {}
+  ): void => {
+    const hitPadding = Math.max(0, options.hitPadding ?? 0);
+    debug.mapButtonControls.push({
+      ...rect,
+      id,
+      label,
+      hitRect: {
+        x: rect.x - hitPadding,
+        y: rect.y - hitPadding,
+        width: rect.width + hitPadding * 2,
+        height: rect.height + hitPadding * 2
+      },
+      trigger: options.trigger ?? "tap"
+    });
+    drawFixedDemoButton(layer, graphics, rect.x, rect.y, rect.width, rect.height, label, false, onTap, options);
+  };
+  addButton("restart-map", { x, y, width: wideButtonWidth, height: buttonHeight }, "Restart", () => onMapCommand("restart-map"));
+  addButton("toggle-pause", { x: x + wideButtonWidth + gap, y, width: width - wideButtonWidth - gap, height: buttonHeight }, paused ? "Run" : "Pause", () => onMapCommand("toggle-pause"));
+  addFixedDemoText(layer, speedText, x, y + 36, 11, paused ? "#ffb0a0" : "#a6f0a5", 700, Math.max(24, speedControlsX - x - 8));
+  addButton("slower-game", { x: speedControlsX, y: speedControlsY, width: speedButtonWidth, height: speedButtonHeight }, "-", () => onMapCommand("slower-game"), { hitPadding: speedButtonHitPadding, trigger: "press" });
+  addButton("faster-game", { x: speedControlsX + speedButtonWidth + speedButtonGap, y: speedControlsY, width: speedButtonWidth, height: speedButtonHeight }, "+", () => onMapCommand("faster-game"), { hitPadding: speedButtonHitPadding, trigger: "press" });
 }
 
 function drawFixedDemoSelectedPanel(layer: Container, graphics: Graphics, rect: HudRect, manifest: WargusManifest, world: WorldState, selectedUnits: WorldState["units"], selected: WorldState["units"][number] | null, selectedFromHover: boolean, selectedIsOwned: boolean, iconAtlas: IconTextureAtlas | null, unitAtlases: Map<string, UnitTextureAtlas>, statusDecorationAtlas: StatusDecorationAtlas | null, onSelectedUnitPick: (unitId: string, additive: boolean) => void, onProductionQueuePick: (buildingId: string, item: { kind: "production"; index: number } | { kind: "research" }) => void, debug: ModernHudLayoutDebug): void {
@@ -1156,7 +1196,9 @@ function fixedDemoToastSeverity(text: string): "info" | "warning" | "attack" {
   return "info";
 }
 
-function drawFixedDemoButton(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, label: string, disabled: boolean, onTap: (event: FederatedPointerEvent) => void): void {
+function drawFixedDemoButton(layer: Container, graphics: Graphics, x: number, y: number, width: number, height: number, label: string, disabled: boolean, onTap: (event: FederatedPointerEvent) => void, options: { hitPadding?: number; trigger?: "tap" | "press" } = {}): void {
+  const hitPadding = Math.max(0, options.hitPadding ?? 0);
+  const trigger = options.trigger ?? "tap";
   graphics.roundRect(x, y, width, height, 5);
   graphics.fill({ color: disabled ? 0x20231d : 0x26341f, alpha: disabled ? 0.76 : 0.92 });
   graphics.roundRect(x, y, width, height, 5);
@@ -1165,12 +1207,15 @@ function drawFixedDemoButton(layer: Container, graphics: Graphics, x: number, y:
     addFixedDemoText(layer, label, x + width / 2, y + 6, 12, disabled ? "#8f876d" : "#f6e8a8", 800, width - 8, 0.5);
   }
   const hit = new Graphics();
-  hit.rect(x, y, width, height);
+  hit.rect(x - hitPadding, y - hitPadding, width + hitPadding * 2, height + hitPadding * 2);
   hit.fill({ color: 0xffffff, alpha: 0.001 });
   if (!disabled) {
     hit.eventMode = "static";
     hit.cursor = "pointer";
-    hit.on("pointertap", onTap);
+    hit.on(trigger === "press" ? "pointerdown" : "pointertap", (event) => {
+      event.stopPropagation();
+      onTap(event);
+    });
   }
   layer.addChild(hit);
 }

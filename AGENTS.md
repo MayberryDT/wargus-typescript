@@ -1,0 +1,110 @@
+# AGENTS.md
+
+Scope: this file applies to the entire repository.
+
+## Browser Automation
+
+When browser automation is needed, use the Codex in-app Browser plugin with the `iab` backend first.
+
+Do not fall back to standalone Playwright, external browser-control servers, shell-launched browsers, or Computer Use for browser work unless the user explicitly approves that fallback.
+
+References to `tab.playwright` inside the Browser plugin are acceptable only after the in-app Browser runtime is connected, because that still controls the in-app Browser.
+
+## Source Of Truth
+
+- `public/wargus/manifest.json` and the `public/wargus` asset pack are critical runtime dependencies.
+- Treat `npm run verify:wargus-assets` as a release-blocking gate for asset or build changes.
+- A `200` from the app shell is not enough to prove the demo works; verify critical asset routes such as `/wargus/manifest.json` when debugging black screens.
+- Do not deploy to Netlify unless the user explicitly asks for deployment or live-site debugging.
+- Do not introduce `Math.random()`, `Date.now()`, or `crypto.getRandomValues()` under `src/**/*.ts` without redesigning the runtime determinism verifier.
+
+## Coding Guidelines
+
+### Think Before Coding
+
+Do not assume, do not hide confusion, and surface tradeoffs.
+
+Before implementing:
+
+- State assumptions explicitly when they affect the implementation.
+- If multiple interpretations exist, present them instead of silently choosing.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear and cannot be safely inferred from the repo or task context, stop, name what is confusing, and ask.
+
+### Simplicity First
+
+Write the minimum code that solves the problem. Do not add speculative behavior.
+
+- Do not add features beyond what was asked.
+- Do not add abstractions for single-use code.
+- Do not add flexibility or configurability that was not requested.
+- Do not add error handling for impossible scenarios.
+- If a solution is much longer than it needs to be, simplify it before finishing.
+
+Ask: would a senior engineer say this is overcomplicated? If yes, simplify.
+
+### Surgical Changes
+
+Touch only what is necessary. Clean up only your own changes.
+
+When editing existing code:
+
+- Do not improve adjacent code, comments, or formatting unless required.
+- Do not refactor unrelated code.
+- Match existing style, even when a different style seems preferable.
+- If unrelated dead code is noticed, mention it instead of deleting it.
+
+When your changes create orphans:
+
+- Remove imports, variables, functions, files, or tests that your changes made unused.
+- Do not remove pre-existing dead code unless explicitly asked.
+
+Every changed line should trace directly to the user's request.
+
+### Goal-Driven Execution
+
+Define success criteria and loop until verified.
+
+Transform tasks into verifiable goals:
+
+- "Add validation" means write tests for invalid inputs, then make them pass.
+- "Fix the bug" means reproduce it with a test or focused verification, then make it pass.
+- "Refactor X" means ensure relevant tests or checks pass before and after.
+
+For multi-step tasks, state a brief plan:
+
+```text
+1. [Step] -> verify: [check]
+2. [Step] -> verify: [check]
+3. [Step] -> verify: [check]
+```
+
+Strong success criteria let agents proceed independently. Weak criteria such as "make it work" require clarification.
+
+## Verification
+
+Common checks:
+
+- `./node_modules/.bin/tsc --noEmit`
+- `npm run verify:wargus-assets`
+- `npm run build`
+- `npm run verify`
+
+Browser smoke verifier scripts include:
+
+- `npm run verify:browser-runtime-smoke`
+- `npm run verify:browser-playable-session`
+- `npm run verify:browser-demo-session`
+- `npm run verify:browser-map-loads`
+- `npm run verify:browser-production`
+- `npm run verify:browser-native-viewport`
+
+Choose the smallest relevant check for the change, then broaden when the touched surface affects shared runtime, assets, build output, or browser behavior.
+
+## Working With Plans
+
+- Read full plan files under `plans/` before editing.
+- Run each plan's drift checks first and compare live files against the plan's stated current state.
+- Honor STOP conditions exactly. Stop and report instead of improvising when one applies.
+- Do not implement adjacent plans while executing a scoped plan.
+- Update `plans/README.md` status when the plan assigns that responsibility, unless a coordinator explicitly owns shared status rows.
