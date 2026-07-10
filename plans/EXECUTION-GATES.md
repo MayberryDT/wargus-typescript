@@ -38,6 +38,7 @@ Only one active implementation plan may own a hotspot at a time:
 | `src/simulation/orders.ts` | 011 -> 012 -> 013 -> 014 -> 016 |
 | `src/simulation/world.ts` | 013 -> 014 -> 016 |
 | `src/wargus/saveGame.ts` | 013 -> 014 -> 016 |
+| `src/view/sourceUiHelpers.ts` | 011 -> 016 |
 | `src/main.ts` | 011 -> 012 -> 013 -> 014 -> 016 -> 017 |
 | `src/wargus/demoScenario.ts` | 015 -> 017 |
 | `scripts/verify-fixed-demo-random-ai.mjs` | 011 -> 015 -> 014 -> 017 |
