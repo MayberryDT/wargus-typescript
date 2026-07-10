@@ -66,8 +66,11 @@ Confirmed movement and combat contracts at the installed Stratagus commit:
   occupancy are filtered separately. Live movement still forbids same-layer
   overlap. Ordinary Move waits/retries and expands acceptable goal range after
   an unreachable search.
-- Empty-ground right-click for groups under 12 preserves integer source-tile
-  offsets around the selection center; it does not rescale or reserve slots.
+- Empty-ground right-click preserves integer source-top-left-tile offsets for a
+  compact, formation-enabled selection under 12 around one whole-selection
+  center; it does not rotate, rescale, split movement layers, pre-resolve
+  passability, or reserve slots. Explicit command-card Move sends one identical
+  clicked tile to every selected unit.
 - Attack-move drops unreachable automatic aggro and resumes its original point.
   Idle auto-response saves an attack-move back to the defender's current point;
   it has no origin-radius leash.

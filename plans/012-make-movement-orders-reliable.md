@@ -17,7 +17,8 @@ blockers, while live movement still forbids same-layer overlap. Distinguish a te
 from a statically unreachable goal, expand the latter to the minimum reachable
 goal range with one bounded reachability traversal rather than repeated
 per-ring A*, replan after stack recovery, and commit one source-relative path
-per unit.
+per unit. Apply source-relative formation only at compact empty-ground
+right-click; explicit command-card Move keeps one common target.
 
 **Tech Stack:** TypeScript 6 simulation, deterministic A* pathfinding, PixiJS 8 runtime, repo-native browser/CDP verifier scripts.
 
@@ -249,18 +250,25 @@ Expected: all exit 0. STOP on a pre-existing red baseline.
 
 ### Task 6: Preserve original small-group formation offsets
 
-- [ ] For empty-ground right-click with fewer than 12 selected units, compute
-  the integer source-tile center of the selected group.
+- [ ] For empty-ground right-click only, apply formation when the preference is
+  enabled, the complete selection has fewer than 12 units, and its source-tile
+  bounding box is compact (at most seven tiles). Object smart orders bypass it.
+- [ ] Snapshot every selected unit's integer source top-left tile before
+  committing any order and compute one integer whole-selection center. Do not
+  split or recenter by movement layer.
 - [ ] Give each unit `clickedTile + (unitSourceTile - sourceCenter)`, then clamp
-  only to map bounds before normal per-unit planning.
-- [ ] Preserve the existing size/selection gate. Do not add spacing rescale,
-  passability pre-resolution, or a destination reservation set.
-- [ ] Keep explicit command-card Move behavior unchanged if it intentionally
-  sends the identical target to every selected unit.
+  only to map tile bounds before normal per-unit planning. Convert the assigned
+  top-left tile to the planner's center representation for that unit footprint.
+- [ ] Do not add rotation, spacing rescale, passability/uniqueness
+  pre-resolution, destination reservation, or random sidesteps.
+- [ ] Keep explicit command-card Move and queued Move source-correct: every
+  selected unit receives the identical clicked target, without the right-click
+  formation transform.
 
 **Verify**: update `scripts/verify-source-formation-movement.mjs` to require
-integer source-relative offsets for the under-12 right-click path and to reject
-the previous `0.92` rescale, without requiring a new spacing multiplier.
+integer source-relative offsets for the compact under-12 right-click path and
+to reject the previous `0.92`/`1.35` rescale/layer grouping, while requiring
+explicit Move to keep one common target.
 
 ### Task 7: Add browser-level movement scenarios
 
