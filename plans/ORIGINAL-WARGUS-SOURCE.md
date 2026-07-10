@@ -72,10 +72,16 @@ Confirmed movement and combat contracts at the installed Stratagus commit:
   Idle auto-response saves an attack-move back to the defender's current point;
   it has no origin-radius leash.
 - Ordinary point-to-point arrows/axes snapshot their impact point; only tracer
-  missiles track. Already-launched impact is not cancelled by fog.
+  missiles track. Zero-range arrows/axes still damage their stored live target
+  at that fixed point; nonzero-range siege/area missiles resolve against units
+  at the fixed ground impact instead of unconditionally hitting a moved stored
+  target. Already-launched impact is not cancelled by fog.
 - Demolish damages all alive non-flying units in range. Default Wargus area
   missiles damage owner/allies/enemies/neutrals while excluding only their
   source caster when `CanHitOwner` is false.
+- Stratagus combat sound is viewport/distance based rather than fog-gated. The
+  TypeScript rule that visible enemy combat is audible while fully hidden enemy
+  combat is silent is a deliberate anti-information-leak policy.
 
 Confirmed source-AI contracts:
 

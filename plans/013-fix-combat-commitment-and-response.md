@@ -15,7 +15,8 @@ idle mobile defenders engage nearby enemies then resume a saved return order.
 Preserve each missile class's fixed or tracking trajectory, restore Wargus's
 actual ownership rules at impact, and let idle automatic attacks reuse the
 existing attack order with a saved return origin instead of an invented radius
-leash.
+leash. Route combat through an attack-range-valid path result rather than
+accepting general Move's range-expanded endpoint as a firing position.
 
 **Tech Stack:** TypeScript 6 deterministic simulation, PixiJS 8 runtime/audio feedback, JSON save normalization, repo-native browser combat verifier.
 
@@ -63,6 +64,9 @@ leash.
 - `src/simulation/orders.ts:14089-14110` and `14888-14906` filter splash/area victims by current caster visibility.
 - `src/view/worldEventFeedback.ts:50-73` plays death and sound events only when `event.player` is the local player, even when an enemy event is currently visible.
 - `WorldOrder` attack orders have no automatic saved-return metadata.
+- Dead-target cleanup and save `orderReferencesMissingUnit` treat every attack
+  target as a hard reference, so they would erase an automatic return before
+  the attack step can restore it.
 
 ## Interfaces
 
@@ -93,6 +97,19 @@ Add a feedback predicate:
 function isWorldEventAudibleToLocalPlayer(world: WorldState, event: { player: number; x?: number; y?: number }): boolean;
 ```
 
+Keep a combat-private route classification whose accepted endpoint is inside
+the attacker's weapon range:
+
+```ts
+type AttackTargetPathResult = {
+  status: "ready" | "temporarily-blocked" | "unreachable";
+  path: PathPoint[];
+};
+```
+
+It may use Plan 012's path result internally, but it must reject any expanded
+endpoint outside `isInAttackRange` and preserve terrain-only temporary intent.
+
 ## Design decision and rollback
 
 - **Rejected:** re-check visibility at impact; that is the bug and makes legal attacks nondeterministically disappear.
@@ -102,8 +119,11 @@ function isWorldEventAudibleToLocalPlayer(world: WorldState, event: { player: nu
 - **Rejected:** make every projectile track a moving target. Ordinary Wargus
   arrows/axes snapshot their destination; only tracer-class missiles update it.
 - **Chosen:** use optional saved-return metadata on ordinary attacks, preserve
-  missile trajectory class, remove visibility from committed impact, and
-  reproduce source ownership rules for area damage.
+  missile trajectory/impact class, use attack-range-valid path results, remove
+  visibility from committed impact, and reproduce source ownership rules for
+  area damage. Visible-enemy/hidden-enemy audio gating is a deliberate
+  TypeScript anti-information-leak policy; installed Stratagus itself does not
+  fog-gate combat sound.
 - **Rollback trigger:** M06 damages a target that was never legal at launch,
   area victims contradict the source matrix, M07 leaks auto-return behavior
   into explicit attacks, or hidden enemy audio increments playback.
@@ -152,22 +172,20 @@ Expected: all exit 0. STOP on a pre-existing unrelated failure.
 
 ### Task 2: Recover attack-move from unreachable aggro
 
-- [ ] In `stepAttackMoveOrder`, after replanning toward an acquired target, detect `path.length === 0 && !isInAttackRange(...)`.
-- [ ] Clear only `targetId`, rebuild the path to the attack-move destination already stored in `targetX/targetY`, and continue the original order.
+- [ ] Add a private `sourceAttackTargetPathResult` that considers only
+  deterministic candidate centers inside weapon range, preserves Plan 012's
+  `temporarily-blocked` route status, and returns `unreachable` only when no
+  attack-range candidate is statically reachable.
+- [ ] Never accept a general Move range-expanded endpoint unless the endpoint
+  is still inside weapon range/line-of-fire. Do not modify shared
+  repair/harvest/build interaction-path behavior.
+- [ ] In `stepAttackMoveOrder`, reject an acquired target only when the combat
+  result is `unreachable`. Clear only `targetId`, rebuild the path to the
+  attack-move destination already stored in `targetX/targetY`, and continue the
+  original order.
 - [ ] Do not clear the whole attack-move order unless plan 012's static pathfinder says the original destination is itself unreachable.
-
-Target branch:
-
-```ts
-const path = sourceAttackTargetPath(world, unit, target);
-if (path.length === 0 && !isInAttackRange(unit, target, world)) {
-  unit.order.targetId = null;
-  unit.order.path = findPath(world, unit, unit.order.targetX, unit.order.targetY);
-  unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
-  stepMoveOrder(world, unit, tickSeconds);
-  return;
-}
-```
+- [ ] A `temporarily-blocked` chase retains the target/order and waits through
+  congestion; it is not static unreachability.
 
 **Verify**: `./node_modules/.bin/tsc --noEmit` -> exit 0.
 
@@ -188,6 +206,9 @@ if (path.length === 0 && !isInAttackRange(unit, target, world)) {
   current reaction range without the attacked-by-target exception, issue an
   attack-move back to `autoReturn`. This return may acquire another enemy; once
   it reaches the saved point the unit becomes idle.
+- [ ] Narrow dead/unavailable-unit cleanup so an attack with non-null
+  `autoReturn` is restored or left for the attack step; explicit attacks remain
+  hard references and clear normally.
 - [ ] Keep defensive buildings firing only at weapon range and keep Hold
   Position stationary.
 - [ ] Throttle acquisition with the existing `nextAutoActionTick`; do not scan
@@ -202,6 +223,10 @@ saved-return shape, current-position reaction retention, explicit attacks'
 - [ ] In `normalizeLoadedOrder`, normalize attack `autoReturn` when it is a
   finite world point inside map bounds; otherwise use `null`.
 - [ ] Old saves without the field must load as explicit ordinary attacks.
+- [ ] Treat a non-null automatic return as a soft target reference during load:
+  a missing, hidden, out-of-reaction, or unreachable target must survive long
+  enough to restore the return rather than being erased by
+  `orderReferencesMissingUnit` or explicit-attack visibility validation.
 - [ ] Ensure `hasInvalidLoadedAttackOrder` validates target/path as before and
   does not reject a valid return solely because the target is temporarily
   outside current visibility.
@@ -231,9 +256,13 @@ return targetId ? {
   launch-time impact coordinates; only tracer-class projectiles update target
   coordinates in flight.
 - [ ] On impact, apply direct damage once when the stored target is still alive
-  and compatible. If it died or transformed into an invalid target kind,
-  retain existing ground-impact behavior for siege/cannon/area projectiles and
-  discard ordinary direct projectiles.
+  and compatible only for zero-range direct missiles such as Wargus arrows and
+  axes. They keep the fixed launch point but damage that stored live target
+  once even if it moved or entered fog.
+- [ ] For nonzero-range siege/cannon/area missiles, resolve at immutable
+  `targetX/targetY` against compatible units at the fixed ground point; do not
+  grant a moved stored target an unconditional direct hit. If a zero-range
+  target died or became incompatible, discard that ordinary direct impact.
 - [ ] Do not re-run acquisition, fog visibility, or pre-launch selection rules
   from the projectile step.
 
@@ -262,6 +291,8 @@ return targetId ? {
 ### Task 7: Make visible enemy combat audible
 
 - [ ] Implement `isWorldEventAudibleToLocalPlayer` in `worldEventFeedback.ts`.
+- [ ] Record that visibility-gated enemy audio is the port's anti-leak policy,
+  not original Stratagus sound behavior.
 - [ ] Return true for local-player events.
 - [ ] For enemy events with finite coordinates, return true only when the event position is currently visible to `world.visibilityPlayer`.
 - [ ] Use the predicate for generic `sound` events and enemy death sounds. Keep local help/alert messages ownership-gated.
@@ -276,12 +307,18 @@ return targetId ? {
   primary acceptance; the existing shell-launched verifier remains a guardrail.
 - [ ] Extend `scripts/verify-browser-combat-session.mjs` with actual-world scenarios:
   1. Launch an arrow, remove target visibility before impact, confirm HP still decreases once.
+     Move the target laterally and confirm the fixed point-to-point destination
+     does not turn into tracer motion; the zero-range stored target still takes
+     exactly one committed hit.
   2. Start Blizzard/Death and Decay, move sight away during pulses, confirm valid units inside the area continue taking damage.
   3. Put an unreachable enemy inside attack-move reaction range, confirm the attacker resumes the original destination.
   4. Put an enemy just outside melee range but inside reaction range, confirm
      the idle defender chases, attacks, and attack-moves back within one tile of
      its saved origin after combat ends.
   5. Confirm Hold Position does not chase.
+- [ ] Add a nonzero-range projectile control: move the stored target away from
+  the fixed ground impact and confirm only compatible units actually at the
+  impact point are considered.
 - [ ] Add ownership fixtures for Demolish and one default area spell: own unit,
   allied unit, enemy, neutral, caster/source. Assert the source matrix above.
 - [ ] Record at least one visible-enemy combat audio start and confirm a hidden enemy event does not increment playback.
@@ -332,6 +369,14 @@ Expected observable behavior:
 - Enemy audio cannot be visibility-gated without exposing hidden-unit information.
 - Auto-response requires a new top-level order kind rather than optional saved
   return metadata on the existing attack order.
+- A combat route cannot distinguish temporary congestion from static
+  unreachability or cannot validate its endpoint inside weapon range without
+  editing Plan 012-owned pathfinding.
+- Dead-target cleanup or save validation clears a non-null automatic return
+  before it can restore.
+- A nonzero-range projectile implementation requires unconditionally hitting
+  or tracking a moved stored target instead of resolving the fixed ground
+  impact.
 - Plan 012's movement behavior is not complete or attack-move still drops orders due transient blockers.
 - Any focused verification fails twice after a reasonable correction.
 
