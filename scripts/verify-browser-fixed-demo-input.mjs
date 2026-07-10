@@ -139,7 +139,8 @@ try {
     throw new Error(`M03 route semantics should reject the isolated first candidate and use the reachable tile in the minimum goal range: ${JSON.stringify(routeSemantics)}`);
   }
   if (
-    routeSemantics.dynamicM02?.retainedWhileBlocked !== true
+    routeSemantics.dynamicM02?.startTick !== 0
+    || routeSemantics.dynamicM02?.retainedWhileBlocked !== true
     || routeSemantics.dynamicM02?.retainedExactTarget !== true
     || routeSemantics.dynamicM02?.droppedWhileBlocked !== false
     || !(routeSemantics.dynamicM02?.blockedTicks >= 10)
@@ -154,7 +155,8 @@ try {
     throw new Error(`Dynamic M02 should retain a nonempty exact Move through friendly congestion, avoid overlap, and complete after clearance under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.dynamicM02)}`);
   }
   if (
-    routeSemantics.stack?.relocated !== true
+    routeSemantics.stack?.startTick !== 0
+    || routeSemantics.stack?.relocated !== true
     || routeSemantics.stack?.immediateOrderKind !== "move"
     || !(routeSemantics.stack?.immediatePathLength > 0)
     || routeSemantics.stack?.liveEmptyPathTicks !== 0

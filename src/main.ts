@@ -1905,7 +1905,10 @@ if (browserSmokeStateEnabled) {
     const dynamicCongestionRecovery = () => {
       const fixtureWorld = createFixtureWorld(9, 3, Array.from({ length: 9 }, (_, x) => ({ x, y: 1 })));
       fixtureWorld.accumulator = 0;
+      fixtureWorld.elapsed = 0;
+      fixtureWorld.tick = 0;
       fixtureWorld.matchState.status = "playing";
+      const startTick = fixtureWorld.tick;
       const dynamicRear = unitAt(fixtureWorld, "__smoke-fixture-m02-dynamic-rear", 1, 1);
       const dynamicBlocker = unitAt(fixtureWorld, "__smoke-fixture-m02-dynamic-blocker", 2, 1);
       const opponent = inertOpponentAt(fixtureWorld, "__smoke-fixture-m02-dynamic-opponent", 8, 0);
@@ -1971,6 +1974,7 @@ if (browserSmokeStateEnabled) {
         }
       }
       return {
+        startTick,
         blockedTicks,
         retainedWhileBlocked: !droppedWhileBlocked && blockedTicks >= retryCadence,
         retainedExactTarget,
@@ -1991,7 +1995,10 @@ if (browserSmokeStateEnabled) {
       ];
       const fixtureWorld = createFixtureWorld(8, 3, stackTiles);
       fixtureWorld.accumulator = 0;
+      fixtureWorld.elapsed = 0;
+      fixtureWorld.tick = 0;
       fixtureWorld.matchState.status = "playing";
+      const startTick = fixtureWorld.tick;
       const stackMover = unitAt(fixtureWorld, "__smoke-fixture-stack-mover", 1, 1);
       const stackBlocker = unitAt(fixtureWorld, "__smoke-fixture-stack-blocker", 1, 1);
       const opponent = inertOpponentAt(fixtureWorld, "__smoke-fixture-stack-opponent", 7, 0);
@@ -2022,6 +2029,7 @@ if (browserSmokeStateEnabled) {
         }
       }
       return {
+        startTick,
         relocated,
         immediateOrderKind,
         immediatePathLength,
