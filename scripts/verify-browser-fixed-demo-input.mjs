@@ -118,6 +118,19 @@ try {
     throw new Error(`Realistic isolated-goal searches should resolve in one bounded traversal under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.isolatedPerformance)}`);
   }
   if (
+    !Array.isArray(routeSemantics.liveFootprint)
+    || routeSemantics.liveFootprint.length !== 2
+    || routeSemantics.liveFootprint.some((sample) => (
+      sample.planningStatus !== "ready"
+      || !(sample.planningPathLength > 0)
+      || sample.beforeOverlap !== false
+      || sample.afterOverlap !== false
+      || sample.movedDistance !== 0
+    ))
+  ) {
+    throw new Error(`2x2 moving blockers should be cost-5 planning crossings but whole-footprint live blockers for west/up approaches: ${JSON.stringify(routeSemantics.liveFootprint)}`);
+  }
+  if (
     routeSemantics.m03?.selectedTile?.x !== 4
     || routeSemantics.m03?.selectedTile?.y !== 4
     || routeSemantics.m03?.goalRange !== 1
@@ -196,7 +209,8 @@ try {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
   const isolatedTiming = routeSemantics.isolatedPerformance.map((sample) => `${sample.size}=${formatTiming(sample.elapsedMs)}ms`).join("/");
-  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
+  const liveFootprintSummary = routeSemantics.liveFootprint.map((sample) => `${sample.direction}=${formatTiming(sample.movedDistance)}px/overlap:${sample.afterOverlap}`).join("/");
+  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, 2x2 ${liveFootprintSummary}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);

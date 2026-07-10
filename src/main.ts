@@ -1717,8 +1717,9 @@ if (browserSmokeStateEnabled) {
       return { ok: false, error: "missing world" };
     }
     const definition = world.unitDefinitions.find((candidate) => candidate.id === "unit-footman");
-    if (!definition) {
-      return { ok: false, error: "missing footman definition" };
+    const tankerDefinition = world.unitDefinitions.find((candidate) => candidate.id === "unit-human-oil-tanker");
+    if (!definition || !tankerDefinition) {
+      return { ok: false, error: "missing movement fixture definition" };
     }
     const createFixtureWorld = (width: number, height: number, landTiles: Array<{ x: number; y: number }>, initialTile = 0x080): WorldState => {
       const fixtureWorld = structuredClone(world) as WorldState;
@@ -1869,6 +1870,78 @@ if (browserSmokeStateEnabled) {
       };
     };
     const isolatedPerformance = [isolatedGoalPerformance(48), isolatedGoalPerformance(64)];
+    const unitFootprintsOverlap = (fixtureWorld: WorldState, left: WorldUnit, right: WorldUnit): boolean => {
+      const leftTileX = Math.floor(left.x / fixtureWorld.tileSize);
+      const leftTileY = Math.floor(left.y / fixtureWorld.tileSize);
+      const rightTileX = Math.floor(right.x / fixtureWorld.tileSize);
+      const rightTileY = Math.floor(right.y / fixtureWorld.tileSize);
+      const leftMinX = leftTileX - Math.floor(left.tileWidth / 2);
+      const leftMinY = leftTileY - Math.floor(left.tileHeight / 2);
+      const rightMinX = rightTileX - Math.floor(right.tileWidth / 2);
+      const rightMinY = rightTileY - Math.floor(right.tileHeight / 2);
+      return leftMinX < rightMinX + right.tileWidth
+        && leftMinX + left.tileWidth > rightMinX
+        && leftMinY < rightMinY + right.tileHeight
+        && leftMinY + left.tileHeight > rightMinY;
+    };
+    const liveFootprintApproach = (direction: "west" | "up") => {
+      const fixtureWorld = createFixtureWorld(12, 12, [], 0);
+      fixtureWorld.accumulator = 0;
+      fixtureWorld.matchState.status = "playing";
+      if (direction === "west") {
+        for (let x = 0; x < fixtureWorld.map.width; x += 1) {
+          fixtureWorld.tiles[3 * fixtureWorld.map.width + x] = 0x010;
+          fixtureWorld.tiles[4 * fixtureWorld.map.width + x] = 0x010;
+        }
+      } else {
+        for (let y = 0; y < fixtureWorld.map.height; y += 1) {
+          fixtureWorld.tiles[y * fixtureWorld.map.width + 3] = 0x010;
+          fixtureWorld.tiles[y * fixtureWorld.map.width + 4] = 0x010;
+        }
+      }
+      const createTanker = (id: string, tileX: number, tileY: number) => createWorldUnit({
+        unit: tankerDefinition,
+        id,
+        player: fixtureWorld.visibilityPlayer,
+        tileX,
+        tileY,
+        tileset: null
+      });
+      const mover = createTanker(`__smoke-fixture-live-${direction}-mover`, direction === "west" ? 5 : 3, direction === "up" ? 5 : 3);
+      const blocker = createTanker(`__smoke-fixture-live-${direction}-blocker`, 3, 3);
+      if (direction === "west") {
+        mover.x = 6 * fixtureWorld.tileSize + 2;
+      } else {
+        mover.y = 6 * fixtureWorld.tileSize + 2;
+      }
+      mover.speed = 96;
+      blocker.speed = 0;
+      blocker.order = {
+        kind: "move",
+        targetX: direction === "west" ? tilePoint(5, 4).x : tilePoint(4, 5).x,
+        targetY: direction === "west" ? tilePoint(5, 4).y : tilePoint(4, 5).y,
+        path: direction === "west"
+          ? [tilePoint(4, 4), tilePoint(5, 4)]
+          : [tilePoint(4, 4), tilePoint(4, 5)],
+        pathIndex: 1
+      };
+      fixtureWorld.units = [mover, blocker];
+      const target = direction === "west" ? tilePoint(2, 4) : tilePoint(4, 2);
+      const planned = findPathResult(fixtureWorld, mover, target.x, target.y);
+      issueMoveOrder(fixtureWorld, mover.id, target.x, target.y);
+      const before = { x: mover.x, y: mover.y, overlap: unitFootprintsOverlap(fixtureWorld, mover, blocker) };
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      return {
+        direction,
+        planningStatus: planned.status,
+        planningPathLength: planned.path.length,
+        beforeOverlap: before.overlap,
+        afterOverlap: unitFootprintsOverlap(fixtureWorld, mover, blocker),
+        movedDistance: Math.hypot(mover.x - before.x, mover.y - before.y),
+        orderKindAfter: mover.order?.kind ?? null
+      };
+    };
+    const liveFootprint = [liveFootprintApproach("west"), liveFootprintApproach("up")];
 
     return {
       ok: true,
@@ -1897,6 +1970,7 @@ if (browserSmokeStateEnabled) {
       },
       layerMatrix,
       isolatedPerformance,
+      liveFootprint,
       performance: {
         blockedPathfindingMs,
         expansionPathfindingMs,

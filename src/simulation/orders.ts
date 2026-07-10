@@ -4,7 +4,7 @@ import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
 import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath, findPathResult } from "./pathfinding";
-import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
+import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
 
 export { sourceDefaultGameSpeed } from "./world";
@@ -9863,9 +9863,10 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   if (unit.order.path.length === 0) {
     return;
   }
+  const movement = movementKindForUnit(unit);
   const waypoint = unit.order.path[unit.order.pathIndex] ?? unit.order.path[unit.order.path.length - 1];
   const waypointTile = worldToTile(world, waypoint.x, waypoint.y);
-  if (!isTilePassable(world, waypointTile.x, waypointTile.y, movementKindForUnit(unit), unit.id)) {
+  if (!isUnitFootprintPassable(world, waypointTile.x, waypointTile.y, unit, movement, false)) {
     const path = sourceOrderTargetPath(world, unit);
     unit.order.path = path;
     unit.order.pathIndex = path.length > 1 ? 1 : 0;
@@ -9899,7 +9900,7 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   const nextX = unit.x + (dx / distance) * step;
   const nextY = unit.y + (dy / distance) * step;
   const nextTile = worldToTile(world, nextX, nextY);
-  if (!isTilePassable(world, nextTile.x, nextTile.y, movementKindForUnit(unit), unit.id)) {
+  if (!isUnitFootprintPassable(world, nextTile.x, nextTile.y, unit, movement, false)) {
     const path = sourceOrderTargetPath(world, unit);
     unit.order.path = path;
     unit.order.pathIndex = path.length > 1 ? 1 : 0;

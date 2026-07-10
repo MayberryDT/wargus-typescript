@@ -155,9 +155,16 @@ expectIncludes("orders path use", ordersSource, [
   "const path = findPathResult(world, unit, clampedX, clampedY).path",
   "findPathResult(world, unit, clampedX, clampedY).status !== \"unreachable\"",
   "unit.order.path = findPath(world, unit, unit.order.targetX, unit.order.targetY)",
-  "if (!isTilePassable(world, waypointTile.x, waypointTile.y, movementKindForUnit(unit), unit.id))",
+  "const movement = movementKindForUnit(unit)",
+  "isUnitFootprintPassable(world, waypointTile.x, waypointTile.y, unit, movement, false)",
+  "isUnitFootprintPassable(world, nextTile.x, nextTile.y, unit, movement, false)",
   "const path = findPath(world, unit, target.x, target.y)"
 ]);
+
+const liveMoveStep = ordersSource.match(/function stepMoveOrder[\s\S]*?\n}\n\nfunction isUsableReplacementPath/)?.[0] ?? "";
+if ((liveMoveStep.match(/isUnitFootprintPassable\(/g) ?? []).length !== 2 || liveMoveStep.includes("isTilePassable(")) {
+  errors.push("stepMoveOrder must use whole-unit footprint passability at both live movement gates");
+}
 
 expectIncludes("save path normalization", saveSource, [
   "function hasValidLoadedPathToPoint",
