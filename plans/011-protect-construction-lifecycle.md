@@ -9,13 +9,14 @@
 
 **Goal:** Make a paid builder-inside foundation impossible to orphan through an ordinary player or AI retask, while preserving the deliberate one-Peasant opening and the existing explicit 75% construction-cancel path.
 
-**Architecture:** Treat a worker with an active `build` or `build-oil-platform` order as committed until that order completes, fails, or the player cancels the foundation. Centralize this predicate and use it at command eligibility boundaries. AI construction selection must use genuinely idle workers and wait when all workers are committed.
+**Architecture:** Treat a worker whose `build` order already targets a paid foundation as committed until construction completes, fails, or the player cancels the foundation. Pre-foundation `build-oil-platform` travel remains interruptible because the original flow has not spent resources or created a platform yet; once it creates the platform it becomes an ordinary committed `build` order. Centralize this predicate at command eligibility boundaries. AI construction selection must use genuinely idle workers and wait when all workers are committed.
 
 **Tech Stack:** TypeScript 6, PixiJS 8 runtime, Vite 8, repo-native browser/CDP verifier scripts.
 
 ## Global constraints
 
 - Read `plans/MECHANICS-ACCEPTANCE.md` and `plans/EXECUTION-GATES.md` fully before editing; both are mandatory contracts.
+- Use `plans/ORIGINAL-WARGUS-SOURCE.md` when construction semantics are ambiguous.
 - Preserve the fixed demo's one Peasant, no starting Hall, and high resources.
 - Do not make builder-inside foundations repairable by unrelated workers in this plan.
 - Do not change construction costs, durations, the 10% starting hit points, or the 75% cancellation refund.
@@ -61,6 +62,9 @@ export function canReceiveMoveOrders(unit: WorldUnit): boolean {
 
 - Produce `isCommittedToConstruction(unit: WorldUnit): boolean` in `src/simulation/orders.ts`.
 - `canReceiveMoveOrders`, `isUsableBuilder`, and `isUsableSourceBuildActor` consume that predicate.
+- Pending harvest/repair eligibility and direct selected-unit commands must
+  delegate to the same predicate or to `canReceiveMoveOrders`; do not duplicate
+  order-kind tests at each call site.
 - AI building selection continues to use existing order functions; it receives no new bypass flag.
 - Explicit cancellation continues through `issueCancelConstructionOrder(world, buildingId)`.
 
@@ -69,7 +73,6 @@ Target predicate:
 ```ts
 function isCommittedToConstruction(unit: WorldUnit): boolean {
   return unit.order?.kind === "build"
-    || unit.order?.kind === "build-oil-platform"
     || isUnitHiddenInConstruction(unit);
 }
 ```
@@ -78,6 +81,7 @@ function isCommittedToConstruction(unit: WorldUnit): boolean {
 
 - **Rejected:** silently cancel/refund the first foundation when a new order arrives; this makes an accidental click economically destructive.
 - **Rejected:** add general foundation resumption; that expands construction semantics and save state before the orphan source is removed.
+- **Rejected:** lock a tanker during pre-foundation oil-platform travel; no cost or foundation exists yet, so ordinary retask remains safe and matches the approved original-game rule.
 - **Chosen:** reject non-cancel retasks while committed, using centralized eligibility. It is the smallest reversible seam and keeps the existing explicit cancel UX.
 - **Rollback trigger:** M01 cannot cancel/release the builder, or a normal harvesting worker becomes unselectable for its first build. Restore the last green checkpoint and report which eligibility caller bypasses or over-applies the predicate.
 
@@ -122,6 +126,12 @@ Expected: both exit 0. If either is already red for an unrelated reason, STOP.
 
 - [ ] Add `isCommittedToConstruction` beside the builder eligibility helpers in `src/simulation/orders.ts`.
 - [ ] Make `canReceiveMoveOrders`, `isUsableBuilder`, and `isUsableSourceBuildActor` return false while the predicate is true.
+- [ ] Make harvest and repair eligibility delegate to the same commitment gate,
+  and make direct selected-unit commands (including Stop) reject a committed
+  builder before any order setter runs.
+- [ ] Keep a pre-foundation `build-oil-platform` travel order interruptible. The
+  worker becomes committed only after `startOilPlatformConstruction` spends the
+  cost, creates the platform, and replaces the travel order with `kind: "build"`.
 - [ ] Do not modify `issueCancelConstructionOrder`; it remains the only ordinary way to release the commitment early.
 
 Target shape:
@@ -160,7 +170,7 @@ if (builder) {
 - [ ] Extend the construction-cancel fixture in `scripts/verify-browser-command-card-session.mjs`:
   1. Select a Peasant fixture.
   2. Place a Town Hall far enough away that the Peasant is still walking.
-  3. Attempt a move command and a second build command before entry.
+  3. Attempt Move, Stop, Harvest, Repair, Attack, and a second build command before entry.
   4. Confirm the first foundation remains, the Peasant's order still targets it, and no second foundation is created.
   5. Select the first foundation and cancel it.
   6. Confirm the Peasant becomes commandable and the existing 75% refund remains.
@@ -195,7 +205,8 @@ Expected observable behavior:
 
 ## Done criteria
 
-- [ ] Active builder-inside and oil-platform build orders cannot be overwritten by move, harvest, repair, or another build command.
+- [ ] A worker attached to a paid foundation cannot be overwritten by Move, Stop, Harvest, Repair, Attack, or another build command.
+- [ ] Pre-foundation oil-platform travel remains interruptible; once the paid platform exists its ordinary `build` order is protected.
 - [ ] AI never selects a busy worker as a construction fallback.
 - [ ] Explicit construction cancellation still refunds 75% and releases the worker.
 - [ ] The fixed demo still starts with exactly one selected Peasant, no Hall, and high resources.
@@ -208,7 +219,7 @@ Expected observable behavior:
 - Preventing retasks also prevents cancelling the selected foundation.
 - More than the three centralized eligibility functions require bespoke committed-builder checks.
 - AI construction cannot progress without stealing a worker and fixing that requires changing economy strategy.
-- Oil-platform construction has materially different retask semantics in live code.
+- Paid oil-platform construction does not convert the tanker to the ordinary protected `build` order shown in the approved preflight.
 - Any focused verification fails twice after a reasonable correction.
 
 ## Maintenance notes

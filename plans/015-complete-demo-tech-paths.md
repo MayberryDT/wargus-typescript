@@ -16,10 +16,13 @@
 ## Global constraints
 
 - Read `plans/MECHANICS-ACCEPTANCE.md` and `plans/EXECUTION-GATES.md` fully before editing; both are mandatory contracts.
+- Preserve the installed production graph in `plans/ORIGINAL-WARGUS-SOURCE.md`.
 - Keep the one-Peasant/no-Hall/high-resource opening.
 - Do not add starting buildings or units.
 - Do not bypass manifest dependency rules or pre-research upgrades.
-- Do not add demolition squads, ships, heroes, or other units not already advertised by the fixed-demo roster.
+- Add only the source-faithful units produced by the newly allowed
+  Inventor/Alchemist: Flying Machine/Dwarves and Zeppelin/Goblin Sappers. Do
+  not add ships, heroes, or unrelated roster expansion.
 - Air producers already exist in the allow list; do not duplicate them.
 
 ---
@@ -44,8 +47,8 @@
 
 `src/wargus/demoScenario.ts:127-174` allows these advanced combat units:
 
-- Human: Knight, Paladin, Ballista, Mage, Gryphon Rider.
-- Orc: Ogre, Ogre Mage, Catapult, Death Knight, Dragon.
+- Human: Knight, Paladin, Ballista, Mage, Gryphon Rider, Flying Machine, Dwarves.
+- Orc: Ogre, Ogre Mage, Catapult, Death Knight, Dragon, Zeppelin, Goblin Sappers.
 
 It already allows Stables/Ogre Mound and Gryphon Aviary/Dragon Roost, but omits:
 
@@ -112,7 +115,9 @@ Expected: all exit 0. These commands do not currently prove the missing producer
 
 - [ ] Confirm each missing producer above exists in `public/wargus/manifest.json` with a build button and the expected train/research buttons.
 
-Expected: all six definitions exist. If any definition or button is absent from the manifest, STOP; the work is no longer a scenario-only fix.
+Expected: all six producer definitions and their source-faithful unit buttons
+exist. If any definition or button is absent from the manifest, STOP; the work
+is no longer a scenario allow-list fix.
 
 ### Task 2: Complete the fixed-demo allow list
 
@@ -129,6 +134,10 @@ Target additions:
 "unit-temple-of-the-damned",
 "unit-inventor",
 "unit-alchemist",
+"unit-balloon",
+"unit-zeppelin",
+"unit-dwarves",
+"unit-goblin-sappers",
 ```
 
 **Verify**: `./node_modules/.bin/tsc --noEmit` -> exit 0.
@@ -157,18 +166,24 @@ Target additions:
   - Altar exposes Ogre Mage conversion research.
   - Mage Tower trains Mage.
   - Temple trains Death Knight.
-  - Inventor trains Ballista.
-  - Alchemist trains Catapult.
+  - Human Barracks trains Ballista.
+  - Orc Barracks trains Catapult.
+  - Inventor trains Flying Machine and Dwarves.
+  - Alchemist trains Zeppelin and Goblin Sappers.
 - [ ] For conversion-based units, verify the prerequisite base unit and research path instead of expecting direct training if the manifest says conversion.
 - [ ] For each directly trained unit, verify resource deduction, queue progress, completion, spawn, and supply reservation/release using the existing train-session conventions.
 
-**Verify**: `npm run verify:browser-train-session` -> exits 0 and reports all six advanced paths.
+**Verify**: `npm run verify:browser-train-session` -> exits 0 and reports all
+ten source-faithful advanced paths.
 
 ### Task 6: Perform the playable progression session
 
 - [ ] Start the fixed demo at 2x through the visible speed control only for the duration of this acceptance session.
-- [ ] From one Peasant, build through Keep/Castle and produce at least one Paladin, Mage, and Ballista.
-- [ ] Use an Orc fixture or deterministic AI observation to confirm the mirrored Altar/Temple/Alchemist paths.
+- [ ] From one Peasant, build through Keep/Castle and produce at least one
+  Paladin, Mage, Ballista, Flying Machine, and Dwarves.
+- [ ] Use an Orc fixture or deterministic AI observation to confirm Catapult,
+  Ogre Mage, Death Knight, Zeppelin, and Goblin Sappers through the mirrored
+  Altar/Temple/Alchemist paths.
 
 Expected observable behavior:
 
@@ -191,7 +206,9 @@ Expected observable behavior:
 
 - [ ] All six missing advanced producer buildings are allowed in the fixed demo.
 - [ ] Human and Orc advanced build cards expose the producers at the correct tech tier.
-- [ ] Paladin/Ogre Mage, Mage/Death Knight, and Ballista/Catapult paths complete through real production/research mechanics.
+- [ ] Paladin/Ogre Mage, Mage/Death Knight, Ballista/Catapult, Flying
+  Machine/Zeppelin, and Dwarves/Goblin Sappers complete through their original
+  production/research mechanics.
 - [ ] The one-Peasant/no-Hall/high-resource start remains unchanged.
 - [ ] No manifest or asset files changed.
 - [ ] Focused browser scenarios and playable progression session pass.

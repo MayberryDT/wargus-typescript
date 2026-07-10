@@ -61,7 +61,9 @@ Each plan was optimized against this 100-point rubric:
 - 010 depends on 008 because the modern HUD layout verifier should be part of the full gate before it becomes the primary speed-control contract.
 - 012 depends on 011 because both modify `orders.ts`; construction retask ownership must land and replay as M01 before movement-order recovery takes the hotspot.
 - 013 depends on 012 because attack-move recovery and bounded auto-chase need movement orders that survive transient congestion.
-- 014 depends on 011-013 because AI timing cannot be judged while its builder, movement, or combat orders can silently fail, and on 015 because its late siege producer is forbidden until Inventor/Alchemist are allowed.
+- 014 depends on 011-013 because AI timing cannot be judged while its builder,
+  movement, or combat orders can silently fail, and on 015 so AI execution is
+  evaluated against the completed source-faithful producer graph.
 - 015 depends on 011 because the full producer chain should not be exposed until construction orders cannot orphan paid foundations.
 - 016 depends on 014 and 015 because it changes shared world/order/save types after the AI work and its disabled reasons must describe the completed demo tech graph.
 - 017 depends on 011-016 because contact pacing is the final tuning pass after mechanics and feedback are trustworthy.
@@ -86,6 +88,8 @@ Each plan was optimized against this 100-point rubric:
 - `plans/MECHANICS-ACCEPTANCE.md` defines the M01–M13 player-visible scenarios, determinism/performance budgets, regression replay, and evidence-packet format.
 - `plans/EXECUTION-GATES.md` defines the corrected critical path, shared-file ownership, checkpoint reviews, integration gates, and rollback triggers.
 - `plans/ROADMAP-OPTIMIZATION.md` contains the frozen quality rubric, starting 60/100 score, rewrite history, and final score.
+- `plans/ORIGINAL-WARGUS-SOURCE.md` defines the installed original game,
+  scripts, engine source, and upstream repositories used to resolve ambiguity.
 
 No gameplay plan may be marked DONE without its READY evidence packet under
 `plans/evidence/` and the replay scenarios assigned by the shared acceptance

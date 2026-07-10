@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow all steps and verification gates. This plan repairs the existing source-style AI; it does not invent a new strategy system. Stop on any STOP condition and update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-ai-difficulty.mjs scripts/verify-source-ai-forces.mjs scripts/verify-source-ai-explores.mjs scripts/verify-browser-runtime-smoke.mjs plans/evidence/014.md plans/014-make-ai-execute-its-strategy.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-ai-difficulty.mjs scripts/verify-source-ai-force-plans.mjs scripts/verify-source-ai-explores.mjs scripts/verify-browser-runtime-smoke.mjs plans/evidence/014.md plans/014-make-ai-execute-its-strategy.md plans/README.md`
 > If the source AI instruction loop, build-order representation, difficulty factors, or exploration state changed, STOP and reconcile.
 
 **Goal:** Make the AI honor sleep/attack barriers, build the requested number of producers with idle workers, use sane difficulty factors, and scout from its own explored map.
@@ -16,6 +16,7 @@
 ## Global constraints
 
 - Read `plans/MECHANICS-ACCEPTANCE.md` and `plans/EXECUTION-GATES.md` fully before editing; both are mandatory contracts.
+- Preserve producer relationships from `plans/ORIGINAL-WARGUS-SOURCE.md`.
 - Preserve the existing land/air scripts and force compositions unless a producer is currently impossible to request.
 - Do not add omniscient targeting or start-position knowledge.
 - Preserve the one-Peon AI opening.
@@ -106,7 +107,7 @@ Index by player id. `exploredTiles` remains the rendering alias for `visibilityP
 - `src/main.ts` only for data-only AI smoke-state fields required by Task 8
 - `scripts/verify-fixed-demo-random-ai.mjs`
 - `scripts/verify-source-ai-difficulty.mjs`
-- `scripts/verify-source-ai-forces.mjs`
+- `scripts/verify-source-ai-force-plans.mjs`
 - `scripts/verify-source-ai-explores.mjs`
 - `scripts/verify-browser-runtime-smoke.mjs`
 - `plans/evidence/014.md` (create during execution)
@@ -132,7 +133,7 @@ Index by player id. `exploredTiles` remains the rendering alias for `visibilityP
 
 | Checkpoint | Tasks | Allowed result | Acceptance before continuing |
 |---|---|---|---|
-| 014-A — script execution | 2–4 | Barriers yield/block correctly, requested building counts remain bounded, and the late siege request has an allowed producer from completed plan 015. | M08 shows 1 -> 4 -> 16 attack activation and two Barracks without an orphaned Hall; no difficulty/fog state changes yet. |
+| 014-A — script execution | 2–4 | Barriers yield/block correctly, requested building counts remain bounded, and unit targets retain their original Wargus producers. | M08 shows 1 -> 4 -> 16 attack activation and two Barracks without an orphaned Hall; Catapult/Ballista remain Barracks units; no difficulty/fog state changes yet. |
 | 014-B — timing boundary | 5 | Imported percentages become bounded runtime factors and every difficulty selection resets all factors. | M09 factors/durations pass for difficulties 1–5 and switching back to normal; no save-schema diff. |
 | 014-C — AI knowledge | 6–9 | Each AI persists and consults its own explored map at a bounded update cadence. | Save round-trip passes, AI exploration never reads the human buffer, update time stays under 20ms, and M01/M04/M07 replay passes. |
 
@@ -200,14 +201,19 @@ function ensureSourceAiBuildNeed(state: WorldAiState, role: SourceAiBuildRole, d
 
 **Verify**: an AI state after `set barracks 2` contains two `barracks` entries and repeated evaluation does not add a third.
 
-### Task 4: Ensure the late siege request has a producer
+### Task 4: Preserve the original producer graph
 
-- [ ] Add `demolition` to `SourceAiBuildRole` and `isSourceAiBuildRole`; the underlying role mapping already resolves Inventor/Alchemist.
-- [ ] Add `demolition` to the save loader's `SOURCE_AI_BUILD_ROLES` allow set so the desired producer survives save/load.
-- [ ] Insert `{ kind: "need", role: "demolition" }` before the first force that requests a `catapult` role in the land script.
-- [ ] Do not add demolition units or other new force members.
+- [ ] Keep Ballista/Catapult production on Human/Orc Barracks, as defined by
+  the installed Wargus button scripts.
+- [ ] Keep Flying Machine/Dwarves on Inventor and Zeppelin/Goblin Sappers on
+  Alchemist. Do not insert a demolition-producer need for a Catapult force.
+- [ ] If a source AI force later requests Dwarves or Goblin Sappers, derive the
+  corresponding Inventor/Alchemist need from that actual unit target rather
+  than treating the `catapult` role as demolition.
+- [ ] Do not add or remove force members in this plan.
 
-**Verify**: `npm run verify:fixed-demo-random-ai` -> exits 0 and asserts the producer request precedes the siege force.
+**Verify**: `npm run verify:fixed-demo-random-ai` -> exits 0 and asserts the
+source force order without a false demolition-before-catapult dependency.
 
 ### Task 5: Normalize and reset difficulty speed factors
 
@@ -298,7 +304,7 @@ Expected observable behavior:
 ## STOP conditions
 
 - Plan 011, 012, 013, or 015 is not complete.
-- Implementing barriers requires changing the declared source script order or force composition beyond the missing siege producer.
+- Implementing barriers requires changing the declared source script order or force composition.
 - Difficulty normalization conflicts with another documented factor representation in live code.
 - Per-player exploration requires rewriting fog rendering rather than rebinding the existing local alias.
 - AI exploration updates cause a sustained update-time regression in the browser smoke telemetry.

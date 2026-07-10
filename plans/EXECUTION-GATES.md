@@ -4,6 +4,14 @@ These gates apply to plans 011–017. They keep risky simulation changes
 reviewable, prevent overlapping edits to central files, and stop later tuning
 from hiding an upstream mechanics regression.
 
+## Original-game authority
+
+Read `plans/ORIGINAL-WARGUS-SOURCE.md` before changing a mechanic. If a plan
+assumption conflicts with the installed game or its installed source, the
+original behavior governs unless the user explicitly approves a deliberate
+departure. Record the exact runtime observation or installed source path in the
+evidence packet.
+
 ## Critical path and safe concurrency
 
 ```text
@@ -15,8 +23,8 @@ from hiding an upstream mechanics regression.
 - Plans 012 and 015 may run concurrently after 011 because their runtime source
   scopes do not overlap. Merge 015 before 014.
 - Plan 013 waits for 012.
-- Plan 014 waits for 011, 012, 013, and 015. Its demolition-producer request
-  cannot work until Inventor/Alchemist are allowed by 015.
+- Plan 014 waits for 011, 012, 013, and 015 so AI execution is evaluated only
+  after the source-faithful Barracks/Inventor/Alchemist graph is reachable.
 - Plan 016 waits for 014 and 015 because it changes the same world/order/save
   types and must explain the final tech graph.
 - Plan 017 is the only tuning plan and always lands last.
@@ -30,7 +38,7 @@ Only one active implementation plan may own a hotspot at a time:
 | `src/simulation/orders.ts` | 011 -> 012 -> 013 -> 014 -> 016 |
 | `src/simulation/world.ts` | 013 -> 014 -> 016 |
 | `src/wargus/saveGame.ts` | 013 -> 014 -> 016 |
-| `src/main.ts` | 014 -> 016 -> 017 |
+| `src/main.ts` | 012 -> 013 -> 014 -> 016 -> 017 |
 | `src/wargus/demoScenario.ts` | 015 -> 017 |
 | `scripts/verify-fixed-demo-random-ai.mjs` | 011 -> 015 -> 014 -> 017 |
 | `scripts/verify-browser-command-card-session.mjs` | 011 -> 015 -> 016 |

@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow every step and verification gate. Stop rather than inventing new combat rules. Update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/worldEventFeedback.ts scripts/verify-browser-combat-session.mjs scripts/verify-source-attack-action.mjs scripts/verify-source-fov-fog.mjs scripts/verify-source-event-audio-pan.mjs plans/evidence/013.md plans/013-fix-combat-commitment-and-response.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/worldEventFeedback.ts src/main.ts scripts/verify-browser-combat-session.mjs scripts/verify-source-attack-action.mjs scripts/verify-source-fov-fog.mjs scripts/verify-source-event-audio-pan.mjs plans/evidence/013.md plans/013-fix-combat-commitment-and-response.md plans/README.md`
 > If attack orders, projectile impact, area damage, or world-event feedback changed semantically, STOP and reconcile the plan.
 
 **Goal:** Make attacks that were legal when launched resolve consistently through fog, prevent attack-move from freezing on unreachable aggro, and make idle mobile defenders engage nearby enemies with a bounded chase.
@@ -94,6 +94,7 @@ function isWorldEventAudibleToLocalPlayer(world: WorldState, event: { player: nu
 - `src/simulation/orders.ts`
 - `src/wargus/saveGame.ts`
 - `src/view/worldEventFeedback.ts`
+- `src/main.ts` only to extend the smoke-mode M02–M07 mechanics scenario hook
 - `scripts/verify-browser-combat-session.mjs`
 - `scripts/verify-source-attack-action.mjs`
 - `scripts/verify-source-fov-fog.mjs`
@@ -154,6 +155,9 @@ if (path.length === 0 && !isInAttackRange(unit, target, world)) {
 - [ ] Update every explicit attack-order constructor to set `autoLeash: null`.
 - [ ] In `stepDefensiveAutoAttack`, when a mobile unit finds an enemy inside reaction range but outside weapon range, create an attack order whose leash origin is the unit's current point and whose radius is `sourceReactionRangeForUnit(world, unit)`.
 - [ ] In `stepAttackOrder`, when `autoLeash` is non-null, abandon the target if the unit or target moves beyond the leash radius from the origin. Issue a normal move back to the origin; after arrival the unit becomes idle.
+- [ ] Use the same return-to-origin helper when an auto-leashed target dies,
+  disappears, or otherwise becomes invalid. A successful defensive kill must
+  not leave the defender idle at the fight location.
 - [ ] Keep defensive buildings firing only at weapon range and keep Hold Position unchanged.
 - [ ] Throttle reacquisition with the existing `nextAutoActionTick`; do not scan every frame.
 
@@ -193,7 +197,8 @@ return targetId ? {
 
 ### Task 6: Remove visibility from already-cast area damage
 
-- [ ] In `applySplashDamage` and `tickAreaDamageSpell`, remove only the current-visibility filter.
+- [ ] In `applySplashDamage`, `tickAreaDamageSpell`, and
+  `tickWhirlwindSpell`, remove only the current-visibility filter.
 - [ ] Preserve source spell condition checks, ownership/friendly-fire checks, radius, unit liveness, and unit-kind rules.
 - [ ] Do not change spell target selection before casting.
 
@@ -211,6 +216,9 @@ return targetId ? {
 
 ### Task 8: Add playable combat scenarios
 
+- [ ] Extend the smoke-mode-only `runMechanicsScenario` hook begun in plan 012
+  with deterministic M05–M07 setup/actions/results. Use the in-app Browser for
+  primary acceptance; the existing shell-launched verifier remains a guardrail.
 - [ ] Extend `scripts/verify-browser-combat-session.mjs` with actual-world scenarios:
   1. Launch an arrow, remove target visibility before impact, confirm HP still decreases once.
   2. Start Blizzard/Death and Decay, move sight away during pulses, confirm valid units inside the area continue taking damage.

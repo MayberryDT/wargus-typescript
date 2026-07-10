@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow every step and verification gate. Stop on any STOP condition; do not broaden the pathfinding rewrite. Update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/pathfinding.ts src/simulation/passability.ts src/simulation/orders.ts scripts/verify-source-pathfinding.mjs scripts/verify-source-formation-movement.mjs scripts/verify-browser-fixed-demo-input.mjs plans/evidence/012.md plans/012-make-movement-orders-reliable.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/pathfinding.ts src/simulation/passability.ts src/simulation/orders.ts src/main.ts scripts/verify-source-pathfinding.mjs scripts/verify-source-formation-movement.mjs scripts/verify-browser-fixed-demo-input.mjs plans/evidence/012.md plans/012-make-movement-orders-reliable.md plans/README.md`
 > If the cited pathfinding, formation, or movement-order shapes changed, STOP and reconcile before editing.
 
 **Goal:** Ensure a valid move command remains active through temporary unit congestion, chooses a reachable nearby destination when the clicked tile is blocked, preserves orders after stack recovery, and assigns distinct formation destinations.
@@ -98,6 +98,7 @@ function commitMoveOrder(unit: WorldUnit, planned: PlannedMoveOrder, clearQueue:
 - `src/simulation/pathfinding.ts`
 - `src/simulation/passability.ts`
 - `src/simulation/orders.ts`
+- `src/main.ts` only for a smoke-mode, data-only M02–M04 scenario setup/result hook
 - `scripts/verify-source-pathfinding.mjs`
 - `scripts/verify-source-formation-movement.mjs`
 - `scripts/verify-browser-fixed-demo-input.mjs`
@@ -230,6 +231,9 @@ function reserveFormationDestination(
 
 ### Task 7: Add browser-level movement scenarios
 
+- [ ] Add one smoke-mode-only `runMechanicsScenario` hook in `src/main.ts` for
+  deterministic M02–M04 fixture setup and data-only results. It must call the
+  real simulation/order functions and have no effect outside `?smoke=1`.
 - [ ] Extend `scripts/verify-browser-fixed-demo-input.mjs` with three actual simulation scenarios using existing smoke hooks or narrowly scoped new fixture hooks:
   1. Two friendly units in a one-tile choke: the rear unit retains its move order while blocked and completes it after the front unit moves.
   2. A blocked clicked tile whose first ring candidate is isolated: the unit reaches a different valid ring tile.
