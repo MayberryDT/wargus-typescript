@@ -1748,6 +1748,15 @@ if (browserSmokeStateEnabled) {
       unit.kind = kind;
       return unit;
     };
+    const inertOpponentAt = (fixtureWorld: WorldState, id: string, tileX: number, tileY: number): WorldUnit => {
+      const unit = unitAt(fixtureWorld, id, tileX, tileY);
+      unit.player = fixtureWorld.players.find((player) => player.id !== fixtureWorld.visibilityPlayer && player.id !== 15)?.id ?? (fixtureWorld.visibilityPlayer === 0 ? 1 : 0);
+      unit.nonSolid = true;
+      unit.canAttack = false;
+      unit.baseSpeed = 0;
+      unit.speed = 0;
+      return unit;
+    };
     const tilePoint = (tileX: number, tileY: number): BrowserSmokeOrderTarget => ({
       x: tileX * 32 + 16,
       y: tileY * 32 + 16
@@ -1884,6 +1893,145 @@ if (browserSmokeStateEnabled) {
         && leftMinY < rightMinY + right.tileHeight
         && leftMinY + left.tileHeight > rightMinY;
     };
+    const unitTile = (fixtureWorld: WorldState, unit: WorldUnit) => ({
+      x: Math.floor(unit.x / fixtureWorld.tileSize),
+      y: Math.floor(unit.y / fixtureWorld.tileSize)
+    });
+    const simulateFixtureTick = (fixtureWorld: WorldState): number => {
+      const startedAt = performance.now();
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      return performance.now() - startedAt;
+    };
+    const dynamicCongestionRecovery = () => {
+      const fixtureWorld = createFixtureWorld(9, 3, Array.from({ length: 9 }, (_, x) => ({ x, y: 1 })));
+      fixtureWorld.accumulator = 0;
+      fixtureWorld.matchState.status = "playing";
+      const dynamicRear = unitAt(fixtureWorld, "__smoke-fixture-m02-dynamic-rear", 1, 1);
+      const dynamicBlocker = unitAt(fixtureWorld, "__smoke-fixture-m02-dynamic-blocker", 2, 1);
+      const opponent = inertOpponentAt(fixtureWorld, "__smoke-fixture-m02-dynamic-opponent", 8, 0);
+      fixtureWorld.units.push(dynamicRear, dynamicBlocker, opponent);
+      const rearTarget = tilePoint(6, 1);
+      const blockerTarget = tilePoint(7, 1);
+      issueMoveOrder(fixtureWorld, dynamicRear.id, rearTarget.x, rearTarget.y);
+      let blockedTicks = 0;
+      let liveEmptyPathTicks = 0;
+      let overlapTicks = 0;
+      let minimumPathLength = dynamicRear.order?.kind === "move" ? dynamicRear.order.path.length : 0;
+      let maximumRetryUpdateMs = 0;
+      let droppedWhileBlocked = false;
+      let previousRear = { x: dynamicRear.x, y: dynamicRear.y };
+      const retryCadence = Math.max(1, Math.round(10 * (sourceDefaultGameSpeed(fixtureWorld) / 30)));
+      for (let ticks = 0; ticks < 180 && blockedTicks < retryCadence + 2; ticks += 1) {
+        const retryTick = fixtureWorld.tick % retryCadence === 0;
+        const elapsedMs = simulateFixtureTick(fixtureWorld);
+        if (retryTick) {
+          maximumRetryUpdateMs = Math.max(maximumRetryUpdateMs, elapsedMs);
+        }
+        if (unitFootprintsOverlap(fixtureWorld, dynamicRear, dynamicBlocker)) {
+          overlapTicks += 1;
+        }
+        if (dynamicRear.order?.kind !== "move") {
+          droppedWhileBlocked = true;
+          break;
+        }
+        minimumPathLength = Math.min(minimumPathLength, dynamicRear.order.path.length);
+        if (dynamicRear.order.path.length === 0) {
+          liveEmptyPathTicks += 1;
+        }
+        const moved = Math.hypot(dynamicRear.x - previousRear.x, dynamicRear.y - previousRear.y);
+        if (moved <= 0.001 && unitTile(fixtureWorld, dynamicRear).x < 6) {
+          blockedTicks += 1;
+        }
+        previousRear = { x: dynamicRear.x, y: dynamicRear.y };
+      }
+      const retainedExactTarget = dynamicRear.order?.kind === "move"
+        && dynamicRear.order.targetX === rearTarget.x
+        && dynamicRear.order.targetY === rearTarget.y;
+      issueMoveOrder(fixtureWorld, dynamicBlocker.id, blockerTarget.x, blockerTarget.y);
+      let completionTick: number | null = null;
+      for (let ticks = 0; ticks < 1800; ticks += 1) {
+        const retryTick = fixtureWorld.tick % retryCadence === 0;
+        const elapsedMs = simulateFixtureTick(fixtureWorld);
+        if (retryTick) {
+          maximumRetryUpdateMs = Math.max(maximumRetryUpdateMs, elapsedMs);
+        }
+        if (unitFootprintsOverlap(fixtureWorld, dynamicRear, dynamicBlocker)) {
+          overlapTicks += 1;
+        }
+        if (dynamicRear.order?.kind === "move") {
+          minimumPathLength = Math.min(minimumPathLength, dynamicRear.order.path.length);
+          if (dynamicRear.order.path.length === 0) {
+            liveEmptyPathTicks += 1;
+          }
+        }
+        const tile = unitTile(fixtureWorld, dynamicRear);
+        if (!dynamicRear.order && tile.x === 6 && tile.y === 1) {
+          completionTick = fixtureWorld.tick;
+          break;
+        }
+      }
+      return {
+        blockedTicks,
+        retainedWhileBlocked: !droppedWhileBlocked && blockedTicks >= retryCadence,
+        retainedExactTarget,
+        droppedWhileBlocked,
+        minimumPathLength,
+        liveEmptyPathTicks,
+        overlapTicks,
+        completed: completionTick !== null,
+        completionTick,
+        finalTile: unitTile(fixtureWorld, dynamicRear),
+        maximumRetryUpdateMs
+      };
+    };
+    const stackRecovery = () => {
+      const stackTiles = [
+        ...Array.from({ length: 8 }, (_, x) => ({ x, y: 1 })),
+        { x: 1, y: 2 }
+      ];
+      const fixtureWorld = createFixtureWorld(8, 3, stackTiles);
+      fixtureWorld.accumulator = 0;
+      fixtureWorld.matchState.status = "playing";
+      const stackMover = unitAt(fixtureWorld, "__smoke-fixture-stack-mover", 1, 1);
+      const stackBlocker = unitAt(fixtureWorld, "__smoke-fixture-stack-blocker", 1, 1);
+      const opponent = inertOpponentAt(fixtureWorld, "__smoke-fixture-stack-opponent", 7, 0);
+      fixtureWorld.units.push(stackMover, stackBlocker, opponent);
+      const target = tilePoint(6, 1);
+      issueMoveOrder(fixtureWorld, stackMover.id, target.x, target.y);
+      const before = { x: stackMover.x, y: stackMover.y };
+      simulateFixtureTick(fixtureWorld);
+      const relocated = Math.hypot(stackMover.x - before.x, stackMover.y - before.y) > fixtureWorld.tileSize / 2;
+      const immediateOrderKind = stackMover.order?.kind ?? null;
+      const immediatePathLength = stackMover.order && "path" in stackMover.order ? stackMover.order.path.length : 0;
+      issueMoveOrder(fixtureWorld, stackBlocker.id, tilePoint(1, 2).x, tilePoint(1, 2).y);
+      let liveEmptyPathTicks = immediateOrderKind === "move" && immediatePathLength === 0 ? 1 : 0;
+      let overlapTicks = unitFootprintsOverlap(fixtureWorld, stackMover, stackBlocker) ? 1 : 0;
+      let completionTick: number | null = null;
+      for (let ticks = 0; ticks < 1800; ticks += 1) {
+        simulateFixtureTick(fixtureWorld);
+        if (unitFootprintsOverlap(fixtureWorld, stackMover, stackBlocker)) {
+          overlapTicks += 1;
+        }
+        if (stackMover.order?.kind === "move" && stackMover.order.path.length === 0) {
+          liveEmptyPathTicks += 1;
+        }
+        const tile = unitTile(fixtureWorld, stackMover);
+        if (!stackMover.order && tile.x === 6 && tile.y === 1) {
+          completionTick = fixtureWorld.tick;
+          break;
+        }
+      }
+      return {
+        relocated,
+        immediateOrderKind,
+        immediatePathLength,
+        liveEmptyPathTicks,
+        overlapTicks,
+        completed: completionTick !== null,
+        completionTick,
+        finalTile: unitTile(fixtureWorld, stackMover)
+      };
+    };
     const liveFootprintApproach = (direction: "west" | "up") => {
       const fixtureWorld = createFixtureWorld(12, 12, [], 0);
       fixtureWorld.accumulator = 0;
@@ -1942,6 +2090,8 @@ if (browserSmokeStateEnabled) {
       };
     };
     const liveFootprint = [liveFootprintApproach("west"), liveFootprintApproach("up")];
+    const dynamicM02 = dynamicCongestionRecovery();
+    const stack = stackRecovery();
 
     return {
       ok: true,
@@ -1971,6 +2121,8 @@ if (browserSmokeStateEnabled) {
       layerMatrix,
       isolatedPerformance,
       liveFootprint,
+      dynamicM02,
+      stack,
       performance: {
         blockedPathfindingMs,
         expansionPathfindingMs,

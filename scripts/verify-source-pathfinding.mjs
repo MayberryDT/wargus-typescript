@@ -152,14 +152,61 @@ if (pathSearchResult.includes("goalRange")) {
 
 expectIncludes("orders path use", ordersSource, [
   "import { findPath, findPathResult } from \"./pathfinding\"",
-  "const path = findPathResult(world, unit, clampedX, clampedY).path",
-  "findPathResult(world, unit, clampedX, clampedY).status !== \"unreachable\"",
+  "interface PlannedMoveOrder",
+  "function planMoveOrder",
+  "function commitMoveOrder",
+  "sourceOrderRetryTicks(world, 10)",
   "unit.order.path = findPath(world, unit, unit.order.targetX, unit.order.targetY)",
   "const movement = movementKindForUnit(unit)",
   "isUnitFootprintPassable(world, waypointTile.x, waypointTile.y, unit, movement, false)",
   "isUnitFootprintPassable(world, nextTile.x, nextTile.y, unit, movement, false)",
   "const path = findPath(world, unit, target.x, target.y)"
 ]);
+
+const planMoveOrderBody = ordersSource.match(/function planMoveOrder[\s\S]*?\n}\n\nfunction commitMoveOrder/)?.[0] ?? "";
+const commitMoveOrderBody = ordersSource.match(/function commitMoveOrder[\s\S]*?\n}\n\nexport function issueMoveOrder/)?.[0] ?? "";
+const issueMoveOrderBody = ordersSource.match(/export function issueMoveOrder[\s\S]*?\n}\n\nexport function canIssueMoveAt/)?.[0] ?? "";
+const canIssueMoveAtBody = ordersSource.match(/export function canIssueMoveAt[\s\S]*?\n}\n\nexport function canIssueQueueMoveAt/)?.[0] ?? "";
+const groupSmartMoveBody = ordersSource.match(/export function issueGroupSmartOrder[\s\S]*?\n}\n\nexport function issueGroupQueueSmartOrder/)?.[0] ?? "";
+const groupMoveBody = ordersSource.match(/export function issueGroupMoveOrder[\s\S]*?\n}\n\nexport function issueGroupQueueMoveOrder/)?.[0] ?? "";
+const stackRecoveryBody = ordersSource.match(/function resolveStackedMovableUnit[\s\S]*?\n}\n\nfunction nearestPassableAdjacentTile/)?.[0] ?? "";
+
+if ((planMoveOrderBody.match(/findPathResult\(/g) ?? []).length !== 1) {
+  errors.push("planMoveOrder must calculate exactly one ordinary Move route");
+}
+if (commitMoveOrderBody.includes("findPath") || commitMoveOrderBody.includes("planMoveOrder")) {
+  errors.push("commitMoveOrder must commit the supplied route without planning or revalidation");
+}
+for (const [label, body] of [
+  ["issueMoveOrder", issueMoveOrderBody],
+  ["issueGroupSmartOrder", groupSmartMoveBody],
+  ["issueGroupMoveOrder", groupMoveBody]
+]) {
+  if (
+    (body.match(/planMoveOrder\(/g) ?? []).length !== 1
+    || (body.match(/commitMoveOrder\(/g) ?? []).length !== 1
+  ) {
+    errors.push(`${label} must plan once and commit that exact ordinary Move result`);
+  }
+}
+for (const [label, body] of [
+  ["issueGroupSmartOrder", groupSmartMoveBody],
+  ["issueGroupMoveOrder", groupMoveBody]
+]) {
+  if (body.includes("canIssueMoveAt") || body.includes("issueMoveOrder(")) {
+    errors.push(`${label} must not repeat ordinary Move planning through can/issue wrappers`);
+  }
+}
+if (!canIssueMoveAtBody.includes("planMoveOrder") || canIssueMoveAtBody.includes("findPathResult(")) {
+  errors.push("canIssueMoveAt must use the standalone ordinary Move planner");
+}
+if (
+  !stackRecoveryBody.includes("planMoveOrder(world, unit")
+  || !stackRecoveryBody.includes("sourceOrderTargetPath(world, unit)")
+  || !stackRecoveryBody.includes("stopUnusablePathOrder(world, unit)")
+) {
+  errors.push("stack recovery must replan ordinary Move separately, preserve source target paths for other orders, and stop unusable paths");
+}
 
 const liveMoveStep = ordersSource.match(/function stepMoveOrder[\s\S]*?\n}\n\nfunction isUsableReplacementPath/)?.[0] ?? "";
 if ((liveMoveStep.match(/isUnitFootprintPassable\(/g) ?? []).length !== 2 || liveMoveStep.includes("isTilePassable(")) {

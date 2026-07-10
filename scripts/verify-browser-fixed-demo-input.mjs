@@ -139,6 +139,33 @@ try {
     throw new Error(`M03 route semantics should reject the isolated first candidate and use the reachable tile in the minimum goal range: ${JSON.stringify(routeSemantics)}`);
   }
   if (
+    routeSemantics.dynamicM02?.retainedWhileBlocked !== true
+    || routeSemantics.dynamicM02?.retainedExactTarget !== true
+    || routeSemantics.dynamicM02?.droppedWhileBlocked !== false
+    || !(routeSemantics.dynamicM02?.blockedTicks >= 10)
+    || !(routeSemantics.dynamicM02?.minimumPathLength > 0)
+    || routeSemantics.dynamicM02?.liveEmptyPathTicks !== 0
+    || routeSemantics.dynamicM02?.overlapTicks !== 0
+    || routeSemantics.dynamicM02?.completed !== true
+    || routeSemantics.dynamicM02?.finalTile?.x !== 6
+    || routeSemantics.dynamicM02?.finalTile?.y !== 1
+    || !(routeSemantics.dynamicM02?.maximumRetryUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+  ) {
+    throw new Error(`Dynamic M02 should retain a nonempty exact Move through friendly congestion, avoid overlap, and complete after clearance under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.dynamicM02)}`);
+  }
+  if (
+    routeSemantics.stack?.relocated !== true
+    || routeSemantics.stack?.immediateOrderKind !== "move"
+    || !(routeSemantics.stack?.immediatePathLength > 0)
+    || routeSemantics.stack?.liveEmptyPathTicks !== 0
+    || routeSemantics.stack?.overlapTicks !== 0
+    || routeSemantics.stack?.completed !== true
+    || routeSemantics.stack?.finalTile?.x !== 6
+    || routeSemantics.stack?.finalTile?.y !== 1
+  ) {
+    throw new Error(`Stack recovery should immediately replan a reachable Move, avoid live empty paths/overlap, and complete after clearance: ${JSON.stringify(routeSemantics.stack)}`);
+  }
+  if (
     !(routeSemantics.performance?.blockedPathfindingMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
     || !(routeSemantics.performance?.expansionPathfindingMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
     || !(routeSemantics.performance?.averageUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
@@ -210,7 +237,7 @@ try {
   }
   const isolatedTiming = routeSemantics.isolatedPerformance.map((sample) => `${sample.size}=${formatTiming(sample.elapsedMs)}ms`).join("/");
   const liveFootprintSummary = routeSemantics.liveFootprint.map((sample) => `${sample.direction}=${formatTiming(sample.movedDistance)}px/overlap:${sample.afterOverlap}`).join("/");
-  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, 2x2 ${liveFootprintSummary}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
+  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}/blocked=${routeSemantics.dynamicM02.blockedTicks}/complete=${routeSemantics.dynamicM02.completionTick}/retry=${formatTiming(routeSemantics.dynamicM02.maximumRetryUpdateMs)}ms, stack path=${routeSemantics.stack.immediatePathLength}/complete=${routeSemantics.stack.completionTick}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, 2x2 ${liveFootprintSummary}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);

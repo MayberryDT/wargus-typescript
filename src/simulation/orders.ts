@@ -1009,32 +1009,58 @@ function canDefinitionHarvestResourceAt(world: WorldState, definition: WargusUni
   return isOilPlatform(resource) && resource.player === playerId && isVisibleResourceSource(world, resource, playerId);
 }
 
-export function issueMoveOrder(world: WorldState, unitId: string, x: number, y: number): void {
-  const unit = findUnit(world, unitId);
-  if (!unit || !canIssueMoveAt(world, unit, x, y)) {
-    return;
-  }
+interface PlannedMoveOrder {
+  targetX: number;
+  targetY: number;
+  path: Array<{ x: number; y: number }>;
+  status: "ready" | "temporarily-blocked";
+}
 
+function planMoveOrder(world: WorldState, unit: WorldUnit, x: number, y: number): PlannedMoveOrder | null {
+  if (!canReceiveMoveOrders(unit)) {
+    return null;
+  }
   const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
   const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
-  const path = findPathResult(world, unit, clampedX, clampedY).path;
-  unit.moveQueue = [];
-  unit.order = {
-    kind: "move",
-    targetX: path[path.length - 1].x,
-    targetY: path[path.length - 1].y,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+  const result = findPathResult(world, unit, clampedX, clampedY);
+  const target = result.path[result.path.length - 1];
+  if (result.status === "unreachable" || !target) {
+    return null;
+  }
+  return {
+    targetX: target.x,
+    targetY: target.y,
+    path: result.path,
+    status: result.status
   };
 }
 
-export function canIssueMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
-  if (!canReceiveMoveOrders(unit)) {
-    return false;
+function commitMoveOrder(unit: WorldUnit, planned: PlannedMoveOrder, clearQueue: boolean): void {
+  if (clearQueue) {
+    unit.moveQueue = [];
   }
-  const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
-  const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
-  return findPathResult(world, unit, clampedX, clampedY).status !== "unreachable";
+  unit.order = {
+    kind: "move",
+    targetX: planned.targetX,
+    targetY: planned.targetY,
+    path: planned.path,
+    pathIndex: planned.path.length > 1 ? 1 : 0
+  };
+}
+
+export function issueMoveOrder(world: WorldState, unitId: string, x: number, y: number): void {
+  const unit = findUnit(world, unitId);
+  if (!unit) {
+    return;
+  }
+  const planned = planMoveOrder(world, unit, x, y);
+  if (planned) {
+    commitMoveOrder(unit, planned, true);
+  }
+}
+
+export function canIssueMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
+  return planMoveOrder(world, unit, x, y) !== null;
 }
 
 export function canIssueQueueMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
@@ -1722,8 +1748,9 @@ export function issueGroupSmartOrder(world: WorldState, unitIds: string[], x: nu
   let issued = false;
   for (const unit of movableUnits) {
     const destination = destinations.get(unit.id) ?? { x, y };
-    if (canIssueMoveAt(world, unit, destination.x, destination.y)) {
-      issueMoveOrder(world, unit.id, destination.x, destination.y);
+    const planned = planMoveOrder(world, unit, destination.x, destination.y);
+    if (planned) {
+      commitMoveOrder(unit, planned, true);
       issued = true;
     }
   }
@@ -1802,8 +1829,9 @@ export function issueGroupMoveOrder(world: WorldState, unitIds: string[], x: num
   let issued = false;
   movableUnits.forEach((unit) => {
     const destination = destinations.get(unit.id) ?? { x, y };
-    if (canIssueMoveAt(world, unit, destination.x, destination.y)) {
-      issueMoveOrder(world, unit.id, destination.x, destination.y);
+    const planned = planMoveOrder(world, unit, destination.x, destination.y);
+    if (planned) {
+      commitMoveOrder(unit, planned, true);
       issued = true;
     }
   });
@@ -9861,12 +9889,28 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
     return;
   }
   if (unit.order.path.length === 0) {
+    if (unit.order.kind === "move") {
+      const planned = planMoveOrder(world, unit, unit.order.targetX, unit.order.targetY);
+      if (!planned) {
+        stopUnusablePathOrder(world, unit);
+        return;
+      }
+      commitMoveOrder(unit, planned, false);
+    } else {
+      return;
+    }
+  }
+  if (!unit.order || !("path" in unit.order) || unit.order.path.length === 0) {
     return;
   }
   const movement = movementKindForUnit(unit);
   const waypoint = unit.order.path[unit.order.pathIndex] ?? unit.order.path[unit.order.path.length - 1];
   const waypointTile = worldToTile(world, waypoint.x, waypoint.y);
   if (!isUnitFootprintPassable(world, waypointTile.x, waypointTile.y, unit, movement, false)) {
+    if (unit.order.kind === "move") {
+      retryBlockedMoveOrder(world, unit);
+      return;
+    }
     const path = sourceOrderTargetPath(world, unit);
     unit.order.path = path;
     unit.order.pathIndex = path.length > 1 ? 1 : 0;
@@ -9901,6 +9945,10 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   const nextY = unit.y + (dy / distance) * step;
   const nextTile = worldToTile(world, nextX, nextY);
   if (!isUnitFootprintPassable(world, nextTile.x, nextTile.y, unit, movement, false)) {
+    if (unit.order.kind === "move") {
+      retryBlockedMoveOrder(world, unit);
+      return;
+    }
     const path = sourceOrderTargetPath(world, unit);
     unit.order.path = path;
     unit.order.pathIndex = path.length > 1 ? 1 : 0;
@@ -9911,6 +9959,18 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   }
   unit.x = nextX;
   unit.y = nextY;
+}
+
+function retryBlockedMoveOrder(world: WorldState, unit: WorldUnit): void {
+  if (unit.order?.kind !== "move" || world.tick % sourceOrderRetryTicks(world, 10) !== 0) {
+    return;
+  }
+  const planned = planMoveOrder(world, unit, unit.order.targetX, unit.order.targetY);
+  if (planned) {
+    commitMoveOrder(unit, planned, false);
+  } else {
+    stopUnusablePathOrder(world, unit);
+  }
 }
 
 function isUsableReplacementPath(world: WorldState, unit: WorldUnit, path: Array<{ x: number; y: number }>): boolean {
@@ -9966,8 +10026,21 @@ function resolveStackedMovableUnit(world: WorldState, unit: WorldUnit): void {
   unit.x = escape.x * world.tileSize + world.tileSize / 2;
   unit.y = escape.y * world.tileSize + world.tileSize / 2;
   if (unit.order && "path" in unit.order) {
-    unit.order.path = [];
-    unit.order.pathIndex = 0;
+    if (unit.order.kind === "move") {
+      const planned = planMoveOrder(world, unit, unit.order.targetX, unit.order.targetY);
+      if (planned) {
+        commitMoveOrder(unit, planned, false);
+      } else {
+        stopUnusablePathOrder(world, unit);
+      }
+      return;
+    }
+    const path = sourceOrderTargetPath(world, unit);
+    unit.order.path = path;
+    unit.order.pathIndex = path.length > 1 ? 1 : 0;
+    if (!isUsableReplacementPath(world, unit, path)) {
+      stopUnusablePathOrder(world, unit);
+    }
   }
 }
 
