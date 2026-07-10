@@ -5,8 +5,9 @@ import { spawn } from "node:child_process";
 
 const PORT = 5211;
 const DEBUG_PORT = 9235;
-const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
+const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=construction-lifecycle`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
+const CONSTRUCTION_ONLY = process.env.WARGUS_CONSTRUCTION_LIFECYCLE_ONLY === "1";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
 const EXPECTED_GENERIC_DISABLED_HARVEST_TYPES = new Set([
@@ -179,6 +180,9 @@ try {
   await verifySourceCancelCommands();
   await verifyConstructionLifecycle();
 
+  if (CONSTRUCTION_ONLY) {
+    console.log("Exact-seed construction lifecycle fixture passed.");
+  } else {
   const rallyStart = await selectFixtureUnitType("unit-human-barracks");
   const movePending = await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('move')");
   if (movePending.pendingWorldCommandKind !== "move") {
@@ -259,6 +263,7 @@ try {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
   console.log(`Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`);
+  }
 } finally {
   client?.close();
   await stopProcess(chrome);
@@ -384,6 +389,11 @@ async function verifySourceCancelCommands() {
 }
 
 async function verifyConstructionLifecycle() {
+  const saveSlotKey = "wargus-ts-save-slot-v1-9";
+  const previousSaveSlot = await evalValue(client, `localStorage.getItem(${JSON.stringify(saveSlotKey)})`);
+  const saveSlotSentinel = "construction-lifecycle-slot-sentinel";
+  await evalValue(client, `localStorage.setItem(${JSON.stringify(saveSlotKey)}, ${JSON.stringify(saveSlotSentinel)})`);
+  try {
   const expectedRetaskOrder = new Map([
     ["move", "move"],
     ["stop", null],
@@ -431,6 +441,13 @@ async function verifyConstructionLifecycle() {
   ) {
     throw new Error(`Pending construction must round-trip through the real save loader: ${JSON.stringify(result)}`);
   }
+  if (
+    result.planned.unitIdOrder?.join("|") !== result.before.unitIdOrder?.join("|")
+    || result.pending.unitIdOrder?.join("|") !== result.planned.unitIdOrder?.join("|")
+    || result.pendingRoundtrip?.unitIdOrder?.join("|") !== result.pending.unitIdOrder?.join("|")
+  ) {
+    throw new Error(`Pending construction plan/replan must preserve unit id order: ${JSON.stringify(result)}`);
+  }
   const expectedArrivalGold = result.before.resources.gold - (result.costs.gold ?? 0);
   const expectedArrivalWood = result.before.resources.wood - (result.costs.wood ?? 0);
   if (
@@ -460,6 +477,13 @@ async function verifyConstructionLifecycle() {
   ) {
     throw new Error(`Legacy target-only build orders must migrate to a live paid inside-builder foundation: ${JSON.stringify(result)}`);
   }
+  if (
+    result.invalidPhaseRoundtrip?.builderOrder !== null
+    || result.emptyBuilderRoundtrip?.builderOrder !== null
+    || result.otherBuilderRoundtrip?.builderOrder !== null
+  ) {
+    throw new Error(`Invalid build phases and mismatched paid-foundation builders must be rejected: ${JSON.stringify(result)}`);
+  }
   const expectedCancelGold = expectedArrivalGold + Math.floor((result.costs.gold ?? 0) * 0.75);
   const expectedCancelWood = expectedArrivalWood + Math.floor((result.costs.wood ?? 0) * 0.75);
   if (
@@ -472,7 +496,18 @@ async function verifyConstructionLifecycle() {
   ) {
     throw new Error(`Paid construction cancel must release the builder and refund 75%: ${JSON.stringify(result)}`);
   }
+  const saveSlotAfter = await evalValue(client, `localStorage.getItem(${JSON.stringify(saveSlotKey)})`);
+  if (saveSlotAfter !== saveSlotSentinel) {
+    throw new Error(`Construction fixture must not overwrite persistent save slot 9: before=${JSON.stringify(saveSlotSentinel)}, after=${JSON.stringify(saveSlotAfter)}`);
+  }
   console.log("Construction lifecycle checked unpaid Move/Stop/Harvest/Repair/Attack/Build retasks, paid arrival, and 75% cancel.");
+  } finally {
+    if (previousSaveSlot === null) {
+      await evalValue(client, `localStorage.removeItem(${JSON.stringify(saveSlotKey)})`);
+    } else {
+      await evalValue(client, `localStorage.setItem(${JSON.stringify(saveSlotKey)}, ${JSON.stringify(previousSaveSlot)})`);
+    }
+  }
 }
 
 function expectUnpaidPendingConstruction(label, result) {

@@ -5,7 +5,7 @@ import { chooseInitialMap, filteredMapPickerMatches as findMapPickerMatches, loa
 import { loadMapSetup } from "./wargus/mapSetup";
 import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID, fixedBrowserDemoInitialSelection, isFixedBrowserDemoMap } from "./wargus/demoScenario";
 import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
-import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, type LoadedSavedGame } from "./wargus/saveGame";
+import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, loadSavedGameJson, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
 import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
@@ -585,7 +585,8 @@ function clearBrowserSmokeFixtures(): void {
 function findConstructionLifecyclePlacement(loadedWorld: WorldState, builder: WorldUnit, buildingTypeId: string, excludedPoint: BrowserSmokeOrderTarget | null = null): BrowserSmokeOrderTarget | null {
   const builderTileX = Math.floor(builder.x / loadedWorld.tileSize);
   const builderTileY = Math.floor(builder.y / loadedWorld.tileSize);
-  for (let radius = 6; radius <= 14; radius += 1) {
+  const maxRadius = Math.max(14, Math.min(40, Math.max(loadedWorld.map.width, loadedWorld.map.height)));
+  for (let radius = 6; radius <= maxRadius; radius += 1) {
     for (let tileY = builderTileY - radius; tileY <= builderTileY + radius; tileY += 1) {
       for (let tileX = builderTileX - radius; tileX <= builderTileX + radius; tileX += 1) {
         if (tileX !== builderTileX - radius && tileX !== builderTileX + radius && tileY !== builderTileY - radius && tileY !== builderTileY + radius) {
@@ -1485,6 +1486,7 @@ if (browserSmokeStateEnabled) {
     if (!world || !manifest) {
       return { ok: false, error: "missing world" };
     }
+    const activeManifest = manifest;
     const fixtureWorld = structuredClone(world) as WorldState;
     fixtureWorld.aiStates.forEach((state) => { state.enabled = false; });
     const player = fixtureWorld.players.find((candidate) => candidate.id === fixtureWorld.visibilityPlayer);
@@ -1508,9 +1510,12 @@ if (browserSmokeStateEnabled) {
       mineDefinition.id,
       enemyDefinition.id
     ])];
+    const existingBuilder = fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === builderDefinition.id && unit.hitPoints > 0);
     fixtureWorld.units = fixtureWorld.units.filter((unit) => unit.player !== player.id);
-    const baseTileX = Math.max(10, Math.min(fixtureWorld.map.width - 12, Math.floor(player.startX / fixtureWorld.tileSize) + 3));
-    const baseTileY = Math.max(10, Math.min(fixtureWorld.map.height - 12, Math.floor(player.startY / fixtureWorld.tileSize) + 3));
+    const anchorX = existingBuilder?.x ?? player.startX;
+    const anchorY = existingBuilder?.y ?? player.startY;
+    const baseTileX = Math.max(1, Math.min(fixtureWorld.map.width - 2, Math.floor(anchorX / fixtureWorld.tileSize)));
+    const baseTileY = Math.max(1, Math.min(fixtureWorld.map.height - 2, Math.floor(anchorY / fixtureWorld.tileSize)));
     const builder = createWorldUnit({
       unit: builderDefinition,
       id: `__smoke-fixture-${builderDefinition.id}-${fixtureWorld.nextUnitSerial++}`,
@@ -1576,6 +1581,7 @@ if (browserSmokeStateEnabled) {
       orderTargetId: builder.order?.kind === "build" ? builder.order.targetId : null,
       orderTileX: builder.order?.kind === "build" ? builder.order.tileX : null,
       orderTileY: builder.order?.kind === "build" ? builder.order.tileY : null,
+      unitIdOrder: fixtureWorld.units.map((unit) => unit.id),
       paidFoundationCount: fixtureWorld.units.filter((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && Boolean(unit.construction)).length,
       foundationHitPoints: fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction)?.hitPoints ?? null,
       foundationMaxHitPoints: fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction)?.maxHitPoints ?? null,
@@ -1583,10 +1589,15 @@ if (browserSmokeStateEnabled) {
     });
     const before = snapshot();
     const issued = issueBuildAtOrder(fixtureWorld, builder.id, buildingDefinition.id, placement.x, placement.y, fixtureWorld.unitDefinitions);
-    const pending = snapshot();
     if (!issued) {
-      return { ok: false, error: "unable to issue pending construction", before, pending };
+      return { ok: false, error: "unable to issue pending construction", before, pending: snapshot() };
     }
+    const planned = snapshot();
+    if (builder.order?.kind === "build" && builder.order.phase === "to-site") {
+      builder.order.path = [];
+    }
+    simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+    const pending = snapshot();
     if (mode !== "arrival") {
       let retaskIssued = false;
       if (mode === "move") {
@@ -1604,17 +1615,26 @@ if (browserSmokeStateEnabled) {
         const secondPlacement = findConstructionLifecyclePlacement(fixtureWorld, builder, buildingDefinition.id, placement);
         retaskIssued = Boolean(secondPlacement && issueBuildAtOrder(fixtureWorld, builder.id, buildingDefinition.id, secondPlacement.x, secondPlacement.y, fixtureWorld.unitDefinitions));
       }
-      return { ok: retaskIssued, costs, placement, before, pending, retask: snapshot() };
+      return { ok: retaskIssued, costs, placement, before, planned, pending, retask: snapshot() };
     }
     const pendingSaveJson = exportSavedGame(fixtureWorld, { x: 0, y: 0, zoom: 1 });
-    const pendingImported = importSavedGameJson(pendingSaveJson, 9);
-    const pendingLoaded = pendingImported ? loadSavedGame(manifest, 9) : null;
+    const pendingLoaded = loadSavedGameJson(activeManifest, pendingSaveJson);
     const loadedPendingBuilder = pendingLoaded?.world.units.find((unit) => unit.id === builder.id);
     const pendingRoundtrip = {
       orderKind: loadedPendingBuilder?.order?.kind ?? null,
       orderPhase: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.phase : null,
       orderTargetId: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.targetId : null,
-      buildingTypeId: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.buildingTypeId : null
+      buildingTypeId: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.buildingTypeId : null,
+      unitIdOrder: pendingLoaded?.world.units.map((unit) => unit.id) ?? []
+    };
+    const invalidPhaseSave = JSON.parse(pendingSaveJson) as { world?: { units?: Array<Record<string, unknown>> } };
+    const invalidPhaseBuilder = invalidPhaseSave.world?.units?.find((unit) => unit.id === builder.id);
+    if (invalidPhaseBuilder?.order && typeof invalidPhaseBuilder.order === "object") {
+      (invalidPhaseBuilder.order as Record<string, unknown>).phase = "invalid";
+    }
+    const invalidPhaseLoaded = loadSavedGameJson(activeManifest, JSON.stringify(invalidPhaseSave));
+    const invalidPhaseRoundtrip = {
+      builderOrder: invalidPhaseLoaded?.world.units.find((unit) => unit.id === builder.id)?.order?.kind ?? null
     };
     let foundation = fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction);
     for (let ticks = 0; !foundation && ticks < 3000; ticks += 1) {
@@ -1626,8 +1646,7 @@ if (browserSmokeStateEnabled) {
     }
     const arrival = snapshot();
     const foundationSaveJson = exportSavedGame(fixtureWorld, { x: 0, y: 0, zoom: 1 });
-    const foundationImported = importSavedGameJson(foundationSaveJson, 9);
-    const foundationLoaded = foundationImported ? loadSavedGame(manifest, 9) : null;
+    const foundationLoaded = loadSavedGameJson(activeManifest, foundationSaveJson);
     const loadedFoundation = foundationLoaded?.world.units.find((unit) => unit.id === foundation.id);
     const loadedFoundationBuilder = foundationLoaded?.world.units.find((unit) => unit.id === builder.id);
     const foundationRoundtrip = {
@@ -1649,8 +1668,7 @@ if (browserSmokeStateEnabled) {
         pathIndex: 0
       };
     }
-    const legacyImported = importSavedGameJson(JSON.stringify(legacySave), 9);
-    const legacyLoaded = legacyImported ? loadSavedGame(manifest, 9) : null;
+    const legacyLoaded = loadSavedGameJson(activeManifest, JSON.stringify(legacySave));
     const legacyLoadedFoundation = legacyLoaded?.world.units.find((unit) => unit.id === foundation.id);
     const legacyLoadedBuilder = legacyLoaded?.world.units.find((unit) => unit.id === builder.id);
     const legacyFoundationRoundtrip = {
@@ -1659,9 +1677,22 @@ if (browserSmokeStateEnabled) {
       builderOrder: legacyLoadedBuilder?.order?.kind ?? null,
       foundationTypeId: legacyLoadedFoundation?.typeId ?? null
     };
+    const mismatchedBuilderRoundtrip = (builderId: string) => {
+      const invalidSave = JSON.parse(JSON.stringify(legacySave)) as { world?: { units?: Array<Record<string, unknown>> } };
+      const invalidFoundation = invalidSave.world?.units?.find((unit) => unit.id === foundation.id);
+      if (invalidFoundation?.construction && typeof invalidFoundation.construction === "object") {
+        (invalidFoundation.construction as Record<string, unknown>).builderId = builderId;
+      }
+      const loaded = loadSavedGameJson(activeManifest, JSON.stringify(invalidSave));
+      return {
+        builderOrder: loaded?.world.units.find((unit) => unit.id === builder.id)?.order?.kind ?? null
+      };
+    };
+    const emptyBuilderRoundtrip = mismatchedBuilderRoundtrip("");
+    const otherBuilderRoundtrip = mismatchedBuilderRoundtrip(enemy.id);
     const cancelled = issueCancelConstructionOrder(fixtureWorld, foundation.id);
     const cancel = snapshot();
-    return { ok: cancelled, costs, placement, before, pending, pendingRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, cancel };
+    return { ok: cancelled, costs, placement, before, planned, pending, pendingRoundtrip, invalidPhaseRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, emptyBuilderRoundtrip, otherBuilderRoundtrip, cancel };
   };
   window.__WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__ = (casterTypeId, spellId) => {
     if (!world || !manifest) {

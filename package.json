@@ -23,6 +23,7 @@
     "verify:playtest-telemetry": "node scripts/verify-playtest-telemetry.mjs",
     "verify:fixed-demo-unit-portrait": "node scripts/verify-fixed-demo-unit-portrait-panel.mjs",
     "verify:browser-command-card-session": "node scripts/verify-browser-command-card-session.mjs",
+    "verify:browser-construction-lifecycle": "WARGUS_CONSTRUCTION_LIFECYCLE_ONLY=1 node scripts/verify-browser-command-card-session.mjs",
     "verify:browser-map-loads": "node scripts/verify-browser-map-loads.mjs",
     "verify:browser-map-loads:all": "WARGUS_BROWSER_MAP_LOADS=all node scripts/verify-browser-map-loads.mjs",
     "verify:browser-production-map-loads": "npm run build && WARGUS_BROWSER_MAP_SERVER=preview node scripts/verify-browser-map-loads.mjs",

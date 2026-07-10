@@ -280,6 +280,10 @@ export function loadSavedGame(manifest: WargusManifest, slot = 1): LoadedSavedGa
   return loadSavedGameFromRaw(manifest, raw);
 }
 
+export function loadSavedGameJson(manifest: WargusManifest, json: string): LoadedSavedGame | null {
+  return loadSavedGameFromRaw(manifest, json);
+}
+
 export function loadAutosave(manifest: WargusManifest): LoadedSavedGame | null {
   return loadSavedGameFromRaw(manifest, safeStorageGet(AUTOSAVE_KEY));
 }
@@ -2043,7 +2047,7 @@ function hasInvalidLoadedBuildOrder(world: WorldState, unit: WorldState["units"]
     || !target.construction
     || target.player !== unit.player
     || target.typeId !== order.buildingTypeId
-    || Boolean(target.construction.builderId && target.construction.builderId !== unit.id);
+    || target.construction.builderId !== unit.id;
 }
 
 function hasInvalidLoadedBuildOilPlatformOrder(world: WorldState, unit: WorldState["units"][number]): boolean {
@@ -3752,6 +3756,9 @@ function normalizeLoadedOrder(world: WorldState, order: unknown, unit: WorldStat
         path,
         pathIndex
       };
+    }
+    if (record.phase !== undefined && record.phase !== "constructing") {
+      return null;
     }
     const targetId = typeof record.targetId === "string" ? record.targetId : "";
     if (!targetId) {

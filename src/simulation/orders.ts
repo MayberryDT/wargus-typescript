@@ -8660,7 +8660,7 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
     const buildingDefinition = world.unitDefinitions.find((definition) => definition.id === order.buildingTypeId);
     const player = world.players.find((candidate) => candidate.id === unit.player);
     if (!buildingDefinition || !player) {
-      failPendingBuildAtArrival(world, unit);
+      failPendingConstructionAtArrival(world, unit);
       return;
     }
     const approach = inspectBuildSiteApproach(world, unit, buildingDefinition, order.tileX, order.tileY);
@@ -8670,14 +8670,14 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
         unit.order.pathIndex = approach.path.length > 1 ? 1 : 0;
       }
       if (unit.order.path.length === 0) {
-        failPendingBuildAtArrival(world, unit);
+        failPendingConstructionAtArrival(world, unit);
         return;
       }
       stepMoveOrder(world, unit, tickSeconds);
       return;
     }
     if (!canStartBuildingPlacement(world, unit, buildingDefinition) || !canPlaceReachableBuilding(world, unit, buildingDefinition, order.tileX, order.tileY)) {
-      failPendingBuildAtArrival(world, unit);
+      failPendingConstructionAtArrival(world, unit);
       return;
     }
     const building = startBuildingFoundation(world, unit, player, buildingDefinition, order.tileX, order.tileY);
@@ -8723,7 +8723,7 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
   }
 }
 
-function failPendingBuildAtArrival(world: WorldState, builder: WorldUnit): void {
+function failPendingConstructionAtArrival(world: WorldState, builder: WorldUnit): void {
   emitSoundEvent(world, "placement-error", builder.player, builder.x, builder.y);
   builder.order = null;
   startNextQueuedMove(world, builder);
@@ -8766,7 +8766,7 @@ function stepBuildOilPlatformOrder(world: WorldState, unit: WorldUnit, tickSecon
   const player = world.players.find((candidate) => candidate.id === unit.player);
   const platformDefinition = player ? oilPlatformDefinitionForBuilder(world, unit, player, world.unitDefinitions) : undefined;
   if (!oilPatch || !player || !platformDefinition || !canGatherResource(unit, "oil") || !isOilPatch(oilPatch) || oilPatch.resourcesHeld <= 0 || !isUnitTypeAllowed(world, platformDefinition.id, unit.player)) {
-    unit.order = null;
+    failPendingConstructionAtArrival(world, unit);
     return;
   }
   unit.order.targetX = oilPatch.x;
@@ -8776,14 +8776,21 @@ function stepBuildOilPlatformOrder(world: WorldState, unit: WorldUnit, tickSecon
       unit.order.path = sourceUnitInteractionPath(world, unit, oilPatch, sourceTouchRange(world, unit));
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
+    if (unit.order.path.length === 0) {
+      failPendingConstructionAtArrival(world, unit);
+      return;
+    }
     stepMoveOrder(world, unit, tickSeconds);
     return;
   }
-  if (!canAfford(player.resources, platformDefinition.costs)) {
-    unit.order = null;
+  const preserveQueue = unit.order.preserveQueue === true;
+  if (!canIssueBuildOilPlatformAt(world, unit, oilPatch, world.unitDefinitions)) {
+    failPendingConstructionAtArrival(world, unit);
     return;
   }
-  startOilPlatformConstruction(world, unit, oilPatch, player, platformDefinition, { clearQueue: unit.order.preserveQueue !== true });
+  if (!startOilPlatformConstruction(world, unit, oilPatch, player, platformDefinition, { clearQueue: !preserveQueue })) {
+    failPendingConstructionAtArrival(world, unit);
+  }
 }
 
 function stepRepairOrder(world: WorldState, unit: WorldUnit, tickSeconds: number): void {
@@ -17671,10 +17678,8 @@ export function canPlaceReachableBuilding(world: WorldState, builder: WorldUnit,
     return false;
   }
   const replacedUnits = sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY);
-  if (replacedUnits.length > 0) {
-    const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
-    world.units = world.units.filter((unit) => !replacedUnitIds.has(unit.id));
-  }
+  const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
+  const originalUnits = world.units;
   const building = createWorldUnit({
     unit: buildingDefinition,
     id: "build-reach-probe",
@@ -17685,13 +17690,12 @@ export function canPlaceReachableBuilding(world: WorldState, builder: WorldUnit,
   });
   building.hitPoints = Math.max(1, Math.floor(building.maxHitPoints * 0.1));
   building.construction = { builderId: builder.id, remainingSeconds: 1, totalSeconds: 1 };
-  world.units.push(building);
-  const reachable = sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder)).length > 0 || isInTouchRange(builder, building, world);
-  world.units = world.units.filter((unit) => unit.id !== building.id);
-  if (replacedUnits.length > 0) {
-    world.units.push(...replacedUnits);
+  world.units = [...originalUnits.filter((unit) => !replacedUnitIds.has(unit.id)), building];
+  try {
+    return sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder)).length > 0 || isInTouchRange(builder, building, world);
+  } finally {
+    world.units = originalUnits;
   }
-  return reachable;
 }
 
 function buildSiteWorldPoint(world: WorldState, buildingDefinition: WargusUnit, tileX: number, tileY: number): { x: number; y: number } {
@@ -17708,10 +17712,8 @@ function buildSiteWorldPoint(world: WorldState, buildingDefinition: WargusUnit, 
 
 function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): { path: WorldPathPoint[]; inTouchRange: boolean } {
   const replacedUnits = sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY);
-  if (replacedUnits.length > 0) {
-    const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
-    world.units = world.units.filter((unit) => !replacedUnitIds.has(unit.id));
-  }
+  const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
+  const originalUnits = world.units;
   const probe = createWorldUnit({
     unit: buildingDefinition,
     id: "build-site-path-probe",
@@ -17720,14 +17722,15 @@ function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildin
     tileY,
     tileset: world.map.setup?.tileset ?? null
   });
-  world.units.push(probe);
-  const path = sourceUnitInteractionPath(world, builder, probe, sourceTouchRange(world, builder));
-  const inTouchRange = isInTouchRange(builder, probe, world);
-  world.units = world.units.filter((unit) => unit.id !== probe.id);
-  if (replacedUnits.length > 0) {
-    world.units.push(...replacedUnits);
+  world.units = [...originalUnits.filter((unit) => !replacedUnitIds.has(unit.id)), probe];
+  try {
+    return {
+      path: sourceUnitInteractionPath(world, builder, probe, sourceTouchRange(world, builder)),
+      inTouchRange: isInTouchRange(builder, probe, world)
+    };
+  } finally {
+    world.units = originalUnits;
   }
-  return { path, inTouchRange };
 }
 
 function sourceBuildSitePath(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): WorldPathPoint[] {
