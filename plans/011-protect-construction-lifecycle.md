@@ -175,8 +175,10 @@ Expected: both exit 0. If either is already red for an unrelated reason, STOP.
 - [ ] If arrival validation fails, clear the pending build and emit existing
   failure feedback without spending. Never leave a live build order with no
   target/path decision.
-- [ ] Keep `build-oil-platform` travel interruptible and unpaid. Its existing
-  arrival helper should produce the same `constructing` build-order shape.
+- [ ] Keep `build-oil-platform` travel interruptible and unpaid. Its arrival
+  helper should produce the same `constructing` build-order shape and remove
+  the tanker inside the paid platform, because source platforms do not declare
+  `BuilderOutside`.
 - [ ] Update queued builds and repair-to-finish construction to populate the
   appropriate phase and metadata.
 
@@ -269,8 +271,8 @@ Expected observable behavior:
   the unpaid travel order with no foundation or resource delta.
 - [ ] Arrival revalidates, deducts once, creates one 10% foundation, and hides
   an inside-builder exactly as installed Wargus does.
-- [ ] Pre-foundation oil-platform travel remains interruptible and uses the same
-  arrival payment boundary.
+- [ ] Pre-foundation oil-platform travel remains interruptible; arrival uses the
+  same payment boundary and removes the tanker inside the paid platform.
 - [ ] Old active-foundation saves and new pending-build saves round-trip.
 - [ ] AI never selects a busy worker as a construction fallback.
 - [ ] Explicit construction cancellation still refunds 75% and releases the worker.

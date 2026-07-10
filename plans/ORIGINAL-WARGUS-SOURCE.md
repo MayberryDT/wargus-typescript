@@ -55,4 +55,6 @@ Confirmed construction lifecycle at the installed Stratagus commit:
   flushes the unpaid travel order safely.
 - Inside-builders are removed into the paid foundation; cancelling that
   foundation releases the builder and returns 75%.
-- Oil-platform travel follows the same unpaid/interruptible phase boundary.
+- Oil-platform travel follows the same unpaid/interruptible phase boundary;
+  source platform definitions omit `BuilderOutside`, so arrival removes the
+  tanker inside the paid foundation until completion or cancellation.
