@@ -1,7 +1,7 @@
 import { isUnitHiddenInConstruction, isUnitInsideResourceSource, type WorldState, type WorldUnit } from "./world";
 
 export type MovementKind = "land" | "naval" | "fly";
-type PassabilityBlockers = "all" | "path-planning" | "none";
+type PassabilityBlockers = "all" | "path-planning" | "static" | "none";
 
 export function movementKindForUnit(unit: WorldUnit): MovementKind {
   if (unit.kind === "fly") {
@@ -56,9 +56,21 @@ export function unitFootprintPathPlanningCost(world: WorldState, centerTileX: nu
   return unitFootprintPassabilityCost(world, centerTileX, centerTileY, unit, movement, "path-planning");
 }
 
+export function unitFootprintStaticPlanningCost(world: WorldState, centerTileX: number, centerTileY: number, unit: WorldUnit, movement: MovementKind = movementKindForUnit(unit)): number {
+  return unitFootprintPassabilityCost(world, centerTileX, centerTileY, unit, movement, "static");
+}
+
 export function hasPathPlanningOccupancy(world: WorldState, movingUnit: WorldUnit): boolean {
   const movement = movementKindForUnit(movingUnit);
   return world.units.some((unit) => isRelevantSolidOccupant(unit, movingUnit.id, movement));
+}
+
+export function hasMobilePathPlanningOccupancy(world: WorldState, movingUnit: WorldUnit): boolean {
+  const movement = movementKindForUnit(movingUnit);
+  return world.units.some((unit) => (
+    isRelevantSolidOccupant(unit, movingUnit.id, movement)
+    && !isPermanentlyStationaryOccupant(unit)
+  ));
 }
 
 function unitFootprintPassabilityCost(world: WorldState, centerTileX: number, centerTileY: number, unit: Pick<WorldUnit, "id" | "tileWidth" | "tileHeight" | "kind">, movement: MovementKind, blockers: PassabilityBlockers): number {
@@ -117,7 +129,11 @@ function blockerCrossingCost(world: WorldState, tileX: number, tileY: number, mo
     ) {
       continue;
     }
-    if (blockers === "all" || !isActivelyMovingOccupant(unit)) {
+    if (
+      blockers === "all"
+      || (blockers === "path-planning" && !isActivelyMovingOccupant(unit))
+      || (blockers === "static" && isPermanentlyStationaryOccupant(unit))
+    ) {
       return Number.POSITIVE_INFINITY;
     }
     crossesMovingOccupant = true;
@@ -132,6 +148,10 @@ function isRelevantSolidOccupant(unit: WorldUnit, movingUnitId: string | undefin
     && !isUnitInsideResourceSource(unit)
     && !unit.nonSolid
     && movementKindForUnit(unit) === movement;
+}
+
+function isPermanentlyStationaryOccupant(unit: WorldUnit): boolean {
+  return unit.kind === "building" || unit.speed <= 0;
 }
 
 // The TypeScript world has no Stratagus `Moving` flag. A live solid occupant is

@@ -233,6 +233,18 @@ try {
   ) {
     throw new Error(`Attack-mode object right-clicks should follow friendly mobile units or issue ordinary common-point Moves to friendly static units without formation Attack-Move fallback: ${JSON.stringify(routeSemantics.m04?.attackModeObjectOrders)}`);
   }
+  if (
+    routeSemantics.m04?.crowdedBlockedSlot?.issued !== true
+    || routeSemantics.m04.crowdedBlockedSlot.firstImmediateOrderKind !== "move"
+    || !(routeSemantics.m04.crowdedBlockedSlot.firstImmediatePathLength > 1)
+    || routeSemantics.m04.crowdedBlockedSlot.movedCount !== 5
+    || routeSemantics.m04.crowdedBlockedSlot.settledCount !== 5
+    || routeSemantics.m04.crowdedBlockedSlot.firstMoved !== true
+    || routeSemantics.m04.crowdedBlockedSlot.prematureOrderDrops !== 0
+    || routeSemantics.m04.crowdedBlockedSlot.overlapTicks !== 0
+  ) {
+    throw new Error(`A source-relative slot blocked by a building must not make a temporarily surrounded group member accept its own source tile and silently drop the first command: ${JSON.stringify(routeSemantics.m04?.crowdedBlockedSlot)}`);
+  }
   const loadedState = await readSmokeState(client);
   const loadedCounts = loadedState.ownedUnitCounts ?? {};
   const loadedResources = loadedState.visibilityPlayerResources ?? {};

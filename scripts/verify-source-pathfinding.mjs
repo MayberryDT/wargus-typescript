@@ -67,7 +67,7 @@ expectIncludes("Stratagus action_move.cpp", sourceMove, [
 ]);
 
 expectIncludes("browser passability", passabilitySource, [
-  "type PassabilityBlockers = \"all\" | \"path-planning\" | \"none\"",
+  "type PassabilityBlockers = \"all\" | \"path-planning\" | \"static\" | \"none\"",
   "export function isTilePassable",
   "export function isUnitFootprintPassable",
   "ignoreBlockers ? \"none\" : \"all\"",
@@ -79,15 +79,19 @@ expectIncludes("browser passability", passabilitySource, [
   "for (let y = top; y < top + height; y += 1)",
   "for (let x = left; x < left + width; x += 1)",
   "export function unitFootprintPathPlanningCost",
+  "export function unitFootprintStaticPlanningCost",
   "export function hasPathPlanningOccupancy",
+  "export function hasMobilePathPlanningOccupancy",
   "function blockerCrossingCost",
-  "blockers === \"all\" || !isActivelyMovingOccupant(unit)",
+  "blockers === \"path-planning\" && !isActivelyMovingOccupant(unit)",
+  "blockers === \"static\" && isPermanentlyStationaryOccupant(unit)",
   "return crossesMovingOccupant ? 5 : 1",
   "function isRelevantSolidOccupant",
   "movementKindForUnit(unit) === movement",
   "function unitFootprintContainsTile",
   "function isActivelyMovingOccupant",
-  "unit.order && \"path\" in unit.order && unit.order.pathIndex < unit.order.path.length"
+  "unit.order && \"path\" in unit.order && unit.order.pathIndex < unit.order.path.length",
+  "function isPermanentlyStationaryOccupant"
 ]);
 
 expectIncludes("browser pathfinding", pathfindingSource, [
@@ -103,10 +107,12 @@ expectIncludes("browser pathfinding", pathfindingSource, [
   "{ x: 1, y: -1 }",
   "{ x: -1, y: -1 }",
   "searchReachable(world, unit, start, target, \"path-planning\", true)",
-  "targetPlanningPassable",
-  "hasPathPlanningOccupancy(world, unit)",
-  "return { status: \"temporarily-blocked\", path: terrainPath }",
-  "return search.nearestPath",
+  "hasMobilePathPlanningOccupancy(world, unit)",
+  "searchReachable(world, unit, start, target, \"static\", true, \"path-planning\")",
+  "planningRange > staticRange",
+  "{ status: \"temporarily-blocked\", path: staticPath }",
+  "goalBlockers: SearchBlockers = blockers",
+  "const validGoal = Number.isFinite(footprintSearchCost",
   "{ status: \"unreachable\", path: [] }",
   "function searchReachable",
   "const openHeap: NodeRecord[] = []",
@@ -130,6 +136,7 @@ expectIncludes("browser pathfinding", pathfindingSource, [
   "function footprintSearchCost",
   "isUnitFootprintPassable(world, tileX, tileY, unit, movement, true)",
   "isUnitFootprintPassable(world, tileX, tileY, unit, movement)",
+  "unitFootprintStaticPlanningCost(world, tileX, tileY, unit, movement)",
   "return simplifyPath(reversed.reverse())"
 ]);
 

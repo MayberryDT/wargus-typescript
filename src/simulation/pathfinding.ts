@@ -1,5 +1,5 @@
 import type { WorldState, WorldUnit } from "./world";
-import { hasPathPlanningOccupancy, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, unitFootprintPathPlanningCost, worldToTile } from "./passability";
+import { hasMobilePathPlanningOccupancy, hasPathPlanningOccupancy, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, unitFootprintPathPlanningCost, unitFootprintStaticPlanningCost, worldToTile } from "./passability";
 
 export interface PathPoint {
   x: number;
@@ -11,7 +11,7 @@ export interface PathSearchResult {
   path: PathPoint[];
 }
 
-type SearchBlockers = "all" | "path-planning" | "none";
+type SearchBlockers = "all" | "path-planning" | "static" | "none";
 
 interface NodeRecord {
   x: number;
@@ -63,25 +63,32 @@ export function findPath(world: WorldState, unit: WorldUnit, targetX: number, ta
 export function findPathResult(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathSearchResult {
   const start = worldToTile(world, unit.x, unit.y);
   const target = worldToTile(world, targetX, targetY);
-  const targetTerrainPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "none"));
-  const targetPlanningPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "path-planning"));
   const search = searchReachable(world, unit, start, target, "path-planning", true);
   if (search.exactPath) {
     return { status: "ready", path: search.exactPath };
   }
-  if (
-    targetTerrainPassable
-    && targetPlanningPassable
-    && hasPathPlanningOccupancy(world, unit)
-  ) {
-    const terrainPath = searchExactPath(world, unit, start, target, "none");
-    if (terrainPath) {
-      return { status: "temporarily-blocked", path: terrainPath };
-    }
+  if (!hasMobilePathPlanningOccupancy(world, unit)) {
+    return search.nearestPath
+      ? { status: "ready", path: search.nearestPath }
+      : { status: "unreachable", path: [] };
   }
-  return search.nearestPath
-    ? { status: "ready", path: search.nearestPath }
-    : { status: "unreachable", path: [] };
+
+  const staticSearch = searchReachable(world, unit, start, target, "static", true, "path-planning");
+  const staticPath = staticSearch.exactPath ?? staticSearch.nearestPath;
+  if (!staticPath) {
+    return { status: "unreachable", path: [] };
+  }
+  const planningPath = search.nearestPath;
+  if (!planningPath) {
+    return { status: "temporarily-blocked", path: staticPath };
+  }
+  const staticEndpoint = worldToTile(world, staticPath[staticPath.length - 1].x, staticPath[staticPath.length - 1].y);
+  const planningEndpoint = worldToTile(world, planningPath[planningPath.length - 1].x, planningPath[planningPath.length - 1].y);
+  const staticRange = sourceGoalRange(staticEndpoint.x, staticEndpoint.y, target.x, target.y);
+  const planningRange = sourceGoalRange(planningEndpoint.x, planningEndpoint.y, target.x, target.y);
+  return planningRange > staticRange
+    ? { status: "temporarily-blocked", path: staticPath }
+    : { status: "ready", path: planningPath };
 }
 
 function searchExactPath(
@@ -100,7 +107,8 @@ function searchReachable(
   start: { x: number; y: number },
   target: { x: number; y: number },
   blockers: SearchBlockers,
-  trackNearest: boolean
+  trackNearest: boolean,
+  goalBlockers: SearchBlockers = blockers
 ): ReachableSearchResult {
   const startKey = key(start.x, start.y);
   const targetKey = key(target.x, target.y);
@@ -126,10 +134,11 @@ function searchReachable(
     openByKey.delete(currentKey);
     closed.add(currentKey);
     records.set(currentKey, current);
-    if (currentKey === targetKey) {
+    const validGoal = Number.isFinite(footprintSearchCost(world, unit, current.x, current.y, goalBlockers));
+    if (currentKey === targetKey && validGoal) {
       return { exactPath: reconstruct(world, current, records), nearestPath: null };
     }
-    if (trackNearest) {
+    if (trackNearest && validGoal) {
       const range = sourceGoalRange(current.x, current.y, target.x, target.y);
       if (
         !nearest
@@ -206,6 +215,9 @@ function footprintSearchCost(
   }
   if (blockers === "all") {
     return isUnitFootprintPassable(world, tileX, tileY, unit, movement) ? 1 : Number.POSITIVE_INFINITY;
+  }
+  if (blockers === "static") {
+    return unitFootprintStaticPlanningCost(world, tileX, tileY, unit, movement);
   }
   return unitFootprintPathPlanningCost(world, tileX, tileY, unit, movement);
 }

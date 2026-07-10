@@ -2178,6 +2178,87 @@ if (browserSmokeStateEnabled) {
         staticObject.fixtureWorld.visibilityPlayer
       );
 
+      const crowdedBlockedSlot = (() => {
+        const crowdedWorld = createFixtureWorld(20, 14, [], 0);
+        crowdedWorld.accumulator = 0;
+        crowdedWorld.elapsed = 0;
+        crowdedWorld.tick = 0;
+        crowdedWorld.matchState.status = "playing";
+        crowdedWorld.engineSettings.formationMovementDefault = true;
+        crowdedWorld.engineSettings.rightButtonAction = "move";
+        crowdedWorld.tiles[5 * crowdedWorld.map.width + 7] = 0x080;
+        const crowdedSources = [
+          { id: "__smoke-fixture-m04-crowded-east", x: 6, y: 5 },
+          { id: "__smoke-fixture-m04-crowded-west", x: 5, y: 5 },
+          { id: "__smoke-fixture-m04-crowded-north", x: 6, y: 4 },
+          { id: "__smoke-fixture-m04-crowded-south", x: 6, y: 6 },
+          { id: "__smoke-fixture-m04-crowded-far-west", x: 4, y: 5 }
+        ];
+        const crowdedUnits = crowdedSources.map((entry) => unitAt(crowdedWorld, entry.id, entry.x, entry.y));
+        const blockedFarm = createWorldUnit({
+          unit: farmDefinition,
+          id: "__smoke-fixture-m04-crowded-farm",
+          player: crowdedWorld.visibilityPlayer,
+          tileX: 13,
+          tileY: 5,
+          tileset: null
+        });
+        crowdedWorld.units = [
+          ...crowdedUnits,
+          blockedFarm,
+          inertOpponentAt(crowdedWorld, "__smoke-fixture-m04-crowded-opponent", 19, 13)
+        ];
+        const crowdedClick = tilePoint(12, 5);
+        const crowdedIssued = issueSourceRightButtonOrder(
+          crowdedWorld,
+          crowdedUnits.map((unit) => unit.id),
+          crowdedClick.x,
+          crowdedClick.y,
+          false,
+          crowdedWorld.visibilityPlayer
+        );
+        const firstUnit = crowdedUnits[0];
+        const firstImmediateOrderKind = firstUnit.order?.kind ?? null;
+        const firstImmediatePathLength = firstUnit.order && "path" in firstUnit.order ? firstUnit.order.path.length : 0;
+        const movedIds = new Set<string>();
+        const settledIds = new Set<string>();
+        const droppedIds = new Set<string>();
+        let overlapTicks = 0;
+        for (let ticks = 0; ticks < 2400 && settledIds.size < crowdedUnits.length; ticks += 1) {
+          simulateFixtureTick(crowdedWorld);
+          for (let leftIndex = 0; leftIndex < crowdedUnits.length; leftIndex += 1) {
+            for (let rightIndex = leftIndex + 1; rightIndex < crowdedUnits.length; rightIndex += 1) {
+              if (unitFootprintsOverlap(crowdedWorld, crowdedUnits[leftIndex], crowdedUnits[rightIndex])) {
+                overlapTicks += 1;
+              }
+            }
+          }
+          crowdedUnits.forEach((unit, index) => {
+            const source = crowdedSources[index];
+            const tile = unitTile(crowdedWorld, unit);
+            if (tile.x !== source.x || tile.y !== source.y) {
+              movedIds.add(unit.id);
+              if (!unit.order) {
+                settledIds.add(unit.id);
+              }
+            } else if (!unit.order) {
+              droppedIds.add(unit.id);
+            }
+          });
+        }
+        return {
+          issued: crowdedIssued,
+          firstImmediateOrderKind,
+          firstImmediatePathLength,
+          movedCount: movedIds.size,
+          settledCount: settledIds.size,
+          firstMoved: movedIds.has(firstUnit.id),
+          prematureOrderDrops: droppedIds.size,
+          overlapTicks,
+          finalTiles: crowdedUnits.map((unit) => ({ id: unit.id, ...unitTile(crowdedWorld, unit) }))
+        };
+      })();
+
       return {
         issued,
         sourceTiles,
@@ -2204,6 +2285,7 @@ if (browserSmokeStateEnabled) {
             orders: summarizeObjectOrders(staticObject.units)
           }
         },
+        crowdedBlockedSlot,
         issueDurationMs,
         maximumUpdateMs,
         averageUpdateMs: updateCount > 0 ? totalUpdateMs / updateCount : 0
@@ -2224,7 +2306,8 @@ if (browserSmokeStateEnabled) {
       overlapTicks: result.overlapTicks,
       completed: result.completed,
       commandCardTargets: result.commandCardTargets,
-      attackModeObjectOrders: result.attackModeObjectOrders
+      attackModeObjectOrders: result.attackModeObjectOrders,
+      crowdedBlockedSlot: result.crowdedBlockedSlot
     });
     const liveFootprintApproach = (direction: "west" | "up") => {
       const fixtureWorld = createFixtureWorld(12, 12, [], 0);
