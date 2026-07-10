@@ -75,6 +75,24 @@ first pass the hard gates: unchanged one-Peasant/high-resource
 premise, M01–M12 regression replay, no per-unit pace mutation, deterministic
 replay, and shared performance budgets.
 
+Verified projected representative pairs from the current BNE setup and
+`${seed}:pair` hash (recompute after Plan 016; any drift is a STOP):
+
+| Candidate / sample | Seed | Human -> enemy | Distance |
+|---|---|---:|---:|
+| A minimum | `plan017-a-min-3` | 3 -> 4 | 63.071 |
+| A target | `plan017-a-target-43` | 1 -> 3 | 80.623 |
+| A maximum | `plan017-a-max-16` | 0 -> 7 | 93.134 |
+| B minimum | `plan017-b-min-10` | 6 -> 5 | 70.000 |
+| B target | `plan017-b-target-21` | 0 -> 7 | 93.134 |
+| B maximum | `plan017-b-max-0` | 5 -> 7 | 109.490 |
+| C minimum | `plan017-c-min-38` | 1 -> 3 | 80.623 |
+| C target | `plan017-c-target-30` | 1 -> 7 | 101.592 |
+| C maximum | `plan017-c-max-18` | 6 -> 0 | 115.802 |
+
+The live setup has 42 eligible ordered pairs; band counts are A=11, B=13,
+C=17. “Minimum/maximum” means nearest available pair to that boundary.
+
 Score passing candidates out of 100:
 
 - Hall unavailable time: 25 points when the median is 25–40s; otherwise subtract 2 points per second outside the interval, floor 0.
@@ -149,8 +167,14 @@ Expected: all exit 0 before tuning. STOP if a correctness dependency is incomple
   nearest the band minimum, target, and maximum. Find and record one `demoSeed`
   that selects each pair under the proposed pair algorithm, plus player ids,
   enemy AI type, and exact distance.
+- [ ] Reproduce the projected table above from live setup data before using it;
+  do not preserve a seed label whose projected pair changed.
 - [ ] Run both the economy-first and pressure-first action sequence for each candidate's three pairs. Use visible speed controls to set the candidate pace; use a temporary isolated checkpoint for candidate pair filtering, never stack candidates in one diff.
 - [ ] Record Hall completion, first human combat unit, first AI attack activation, first visible hostile contact, update/render timing, and M01–M12 replay result in `plans/evidence/017.md`.
+- [ ] Repeat every candidate/seed/opening action sequence from fresh state.
+  Pair, enemy AI, milestone ordering/simulation ticks, launch ids, and final
+  unit/resource counts must match exactly; record wall-time differences in a
+  compact repeat-delta table rather than scoring them as extra runs.
 - [ ] Score candidates with the frozen formula above. Select the winner only if it passes every hard gate and scores at least 80; apply the lower-speed tie-break exactly.
 
 **Verify**: the evidence packet contains 18 measured land-AI runs (3 candidates
@@ -198,6 +222,8 @@ chosen pair must have land AI and lie inside the band when eligible pairs exist.
 - [ ] Set `world.engineSettings.sourceGameSpeedDefault = FIXED_DEMO_SOURCE_GAME_SPEED` in `applyFixedBrowserDemoWorldPresentation`.
 - [ ] Keep `gameSpeed = sourceGameSpeedMultiplier(world)` after map creation/load; it must equal the selected candidate's displayed multiplier without a second fixed-demo override.
 - [ ] Preserve the visible slower/faster controls and the 15–75 source speed bounds.
+- [ ] Apply the presentation default to new fixed-demo worlds only. Loading a
+  save preserves its persisted source speed rather than silently overwriting it.
 
 **Verify**: browser smoke state reports the selected candidate's exact source speed and multiplier.
 
@@ -232,6 +258,11 @@ chosen pair must have land AI and lie inside the band when eligible pairs exist.
   - first human combat unit completion;
   - first AI attack order activation;
   - first visible hostile contact.
+- [ ] Define Hall unavailable time from accepted Hall build order to completed
+  Hall (including builder travel), first combat from run start, AI activation
+  from a detached Plan 014 launch with real attack/attack-move orders, and
+  contact from the first visible living launched id—not the starting Peon,
+  neutral, building, or unrelated scout.
 - [ ] Use the three representative seeds from the winning candidate's bakeoff.
 - [ ] Assert and record `wc2-land-attack` for every selected enemy source slot;
   a strategy mismatch invalidates the timing run.
@@ -269,6 +300,8 @@ Expected observable behavior:
 - [ ] Run `npm run verify:fixed-demo-random-ai`.
 - [ ] Run `npm run verify:playtest-telemetry`.
 - [ ] Run `npm run verify:browser-demo-session`.
+- [ ] Run `npm run verify:runtime-determinism`.
+- [ ] Run `npm run verify:wargus-assets`.
 - [ ] Replay M01–M13 and write `plans/evidence/017.md`; obtain a READY review decision for the integrated roadmap.
 - [ ] Run `git diff --check` and confirm only in-scope files changed.
 - [ ] Update plan 017 to `DONE` in `plans/README.md`.
