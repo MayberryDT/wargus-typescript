@@ -1569,8 +1569,7 @@ if (browserSmokeStateEnabled) {
       }
       const converted = fixtureWorld.units.find((unit) => unit.id === conversionSourceId);
       const afterResearchCanTrain = canTrainUnitAt(fixtureWorld, barracks.id, types.upgradedCavalry, fixtureWorld.unitDefinitions);
-      const researchResourcesStable = JSON.stringify(researchResourcesAfterIssue) === JSON.stringify(player.resources)
-        && JSON.stringify(researchResourcesBefore) !== JSON.stringify(researchResourcesAfterIssue);
+      const researchResourcesAfterCompletion = { ...player.resources };
       if (!afterResearchCanTrain) {
         throw new Error(`post-research ${types.upgradedCavalry} blocked: ${JSON.stringify({
           matchStatus: fixtureWorld.matchState.status,
@@ -1584,74 +1583,80 @@ if (browserSmokeStateEnabled) {
       }
 
       const supplyBefore = getPlayerSupply(fixtureWorld, player.id);
-      const outputTypeIds = [types.upgradedCavalry, types.caster, types.siege, types.flyer, types.specialist];
-      const outputCountsBefore = Object.fromEntries(outputTypeIds.map((typeId) => [
-        typeId,
-        fixtureWorld.units.filter((unit) => unit.typeId === typeId).length
-      ]));
-      const firstWave = [
-        [barracks, types.upgradedCavalry],
-        [casterProducer, types.caster],
-        [specialistProducer, types.flyer]
-      ] as const;
-      const firstWaveResourcesBefore = { ...player.resources };
-      for (const [producer, outputTypeId] of firstWave) {
-        if (!issueTrainUnitOrder(fixtureWorld, producer.id, outputTypeId, fixtureWorld.unitDefinitions)) {
-          throw new Error(`unable to train ${outputTypeId}`);
+      const resourceDelta = (before: Record<string, number>, after: Record<string, number>) => ({
+        gold: (before.gold ?? 0) - (after.gold ?? 0),
+        wood: (before.wood ?? 0) - (after.wood ?? 0),
+        oil: (before.oil ?? 0) - (after.oil ?? 0)
+      });
+      const unitResourceCosts = (typeId: string) => {
+        const definition = fixtureWorld.unitDefinitions.find((candidate) => candidate.id === typeId);
+        if (!definition) {
+          throw new Error(`missing training definition ${typeId}`);
         }
-      }
-      const firstWaveResourcesAfterIssue = { ...player.resources };
-      const specialistResourcesBefore = { ...player.resources };
-      const firstRemaining = firstWave.map(([producer]) => producer.productionQueue[0]?.remainingSeconds ?? null);
-      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
-      const firstWaveProgressed = firstWave.every(([producer], index) => (
-        Number.isFinite(firstRemaining[index])
-        && (producer.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < firstRemaining[index]!
-      ));
-      for (let ticks = 0; firstWave.some(([producer]) => producer.productionQueue.length > 0) && ticks < 5000; ticks += 1) {
+        const costs = { gold: 0, wood: 0, oil: 0 };
+        for (let index = 0; index < definition.costs.length - 1; index += 2) {
+          const resource = definition.costs[index] as keyof typeof costs;
+          if (resource in costs) {
+            costs[resource] += Number(definition.costs[index + 1]);
+          }
+        }
+        return costs;
+      };
+      const trainAndObserve = (producer: WorldUnit, typeId: string) => {
+        const beforeIds = new Set(fixtureWorld.units.filter((unit) => unit.typeId === typeId).map((unit) => unit.id));
+        const resourcesBefore = { ...player.resources };
+        if (!issueTrainUnitOrder(fixtureWorld, producer.id, typeId, fixtureWorld.unitDefinitions)) {
+          throw new Error(`unable to train ${typeId}`);
+        }
+        const resourcesAfterIssue = { ...player.resources };
+        const remainingBeforeStep = producer.productionQueue[0]?.remainingSeconds ?? null;
         simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
-      }
-      if (!issueTrainUnitOrder(fixtureWorld, specialistProducer.id, types.specialist, fixtureWorld.unitDefinitions)) {
-        throw new Error(`unable to train ${types.specialist}`);
-      }
-      const specialistResourcesAfterIssue = { ...player.resources };
-      const specialistRemaining = specialistProducer.productionQueue[0]?.remainingSeconds ?? null;
-      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
-      const specialistProgressed = Number.isFinite(specialistRemaining)
-        && (specialistProducer.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < specialistRemaining!;
-      for (let ticks = 0; specialistProducer.productionQueue.length > 0 && ticks < 7000; ticks += 1) {
-        simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
-      }
-      const siegeResourcesBefore = { ...player.resources };
-      if (!issueTrainUnitOrder(fixtureWorld, barracks.id, types.siege, fixtureWorld.unitDefinitions)) {
-        throw new Error(`unable to train ${types.siege}`);
-      }
-      const siegeResourcesAfterIssue = { ...player.resources };
-      const siegeRemaining = barracks.productionQueue[0]?.remainingSeconds ?? null;
-      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
-      const siegeProgressed = Number.isFinite(siegeRemaining)
-        && (barracks.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < siegeRemaining!;
-      for (let ticks = 0; barracks.productionQueue.length > 0 && ticks < 9000; ticks += 1) {
-        simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
-      }
-      const outputsCompleted = outputTypeIds.every((typeId) => fixtureWorld.units.some((unit) => unit.typeId === typeId));
-      const trainingResourcesStable = JSON.stringify(firstWaveResourcesBefore) !== JSON.stringify(firstWaveResourcesAfterIssue)
-        && JSON.stringify(firstWaveResourcesAfterIssue) === JSON.stringify(specialistResourcesBefore)
-        && JSON.stringify(specialistResourcesBefore) !== JSON.stringify(specialistResourcesAfterIssue)
-        && JSON.stringify(specialistResourcesAfterIssue) === JSON.stringify(siegeResourcesBefore)
-        && JSON.stringify(siegeResourcesBefore) !== JSON.stringify(siegeResourcesAfterIssue)
-        && JSON.stringify(siegeResourcesAfterIssue) === JSON.stringify(player.resources);
+        const queueProgressed = Number.isFinite(remainingBeforeStep)
+          && (producer.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < remainingBeforeStep!;
+        for (let ticks = 0; producer.productionQueue.length > 0 && ticks < 9000; ticks += 1) {
+          simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+        }
+        const spawned = fixtureWorld.units.filter((unit) => unit.typeId === typeId && !beforeIds.has(unit.id));
+        return {
+          typeId,
+          producerId: producer.id,
+          expectedCosts: unitResourceCosts(typeId),
+          resourceDelta: resourceDelta(resourcesBefore, resourcesAfterIssue),
+          resourcesStableAfterIssue: JSON.stringify(resourcesAfterIssue) === JSON.stringify(player.resources),
+          queueProgressed,
+          countDelta: spawned.length,
+          spawnedId: spawned.length === 1 ? spawned[0].id : null
+        };
+      };
+      const training = [
+        trainAndObserve(barracks, types.upgradedCavalry),
+        trainAndObserve(casterProducer, types.caster),
+        trainAndObserve(barracks, types.siege),
+        trainAndObserve(specialistProducer, types.flyer),
+        trainAndObserve(specialistProducer, types.specialist)
+      ];
+      const outputTypeIds = training.map((observation) => observation.typeId);
+      const researchUpgrade = fixtureWorld.upgradeDefinitions.find((upgrade) => upgrade.id === types.upgrade);
+      const researchExpectedCosts = {
+        gold: researchUpgrade?.costs.gold ?? 0,
+        wood: researchUpgrade?.costs.wood ?? 0,
+        oil: researchUpgrade?.costs.oil ?? 0
+      };
+      const researchChargedOnce = JSON.stringify(resourceDelta(researchResourcesBefore, researchResourcesAfterIssue)) === JSON.stringify(researchExpectedCosts)
+        && JSON.stringify(researchResourcesAfterIssue) === JSON.stringify(researchResourcesAfterCompletion);
       return {
         conversion: `${types.baseCavalry}->${types.upgradedCavalry}`,
         conversionComplete: !beforeResearchCanTrain && afterResearchCanTrain && converted?.id === conversionSourceId && converted.typeId === types.upgradedCavalry,
         outputs: outputTypeIds,
-        outputsCompleted,
-        resourcesChargedOnce: researchResourcesStable && trainingResourcesStable,
-        queueProgressed: researchProgressed && firstWaveProgressed && specialistProgressed && siegeProgressed,
+        outputsCompleted: training.every((observation) => observation.countDelta === 1),
+        resourcesChargedOnce: researchChargedOnce && training.every((observation) => (
+          JSON.stringify(observation.resourceDelta) === JSON.stringify(observation.expectedCosts)
+          && observation.resourcesStableAfterIssue
+        )),
+        queueProgressed: researchProgressed && training.every((observation) => observation.queueProgressed),
         stableIdsAndCounts: converted?.id === conversionSourceId
-          && outputTypeIds.every((typeId) => (
-            fixtureWorld.units.filter((unit) => unit.typeId === typeId).length === outputCountsBefore[typeId] + 1
-          )),
+          && training.every((observation) => observation.countDelta === 1 && Boolean(observation.spawnedId)),
+        training,
         supply: { before: supplyBefore, after: getPlayerSupply(fixtureWorld, player.id) }
       };
     };
@@ -1665,10 +1670,18 @@ if (browserSmokeStateEnabled) {
         human.outputs[3], human.outputs[4],
         orc.outputs[3], orc.outputs[4]
       ];
+      const training = [
+        human.training[0], orc.training[0],
+        human.training[1], orc.training[1],
+        human.training[2], orc.training[2],
+        human.training[3], human.training[4],
+        orc.training[3], orc.training[4]
+      ];
       return {
         ok: human.conversionComplete && orc.conversionComplete && human.outputsCompleted && orc.outputsCompleted,
         conversions: [human.conversion, orc.conversion],
         outputs,
+        training,
         resourcesChargedOnce: human.resourcesChargedOnce && orc.resourcesChargedOnce,
         queueProgressed: human.queueProgressed && orc.queueProgressed,
         stableIdsAndCounts: human.stableIdsAndCounts && orc.stableIdsAndCounts,

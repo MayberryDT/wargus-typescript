@@ -54,39 +54,9 @@ try {
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
   await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_TRAIN__ === \"function\" && typeof window.__WARGUS_TS_SELECT_FIXTURE_UNIT_TYPE__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
 
-  if (ADVANCED_TECH_ONLY) {
-    await waitForExpression(client, "typeof window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__ === \"function\"", 5_000);
-    const result = await evalValue(client, "window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__()");
-    if (!result?.ok) {
-      throw new Error(`advanced tech-path fixture failed: ${JSON.stringify(result)}`);
-    }
-    const expectedConversions = [
-      "unit-knight->unit-paladin",
-      "unit-ogre->unit-ogre-mage"
-    ];
-    const expectedOutputs = [
-      "unit-paladin",
-      "unit-ogre-mage",
-      "unit-mage",
-      "unit-death-knight",
-      "unit-ballista",
-      "unit-catapult",
-      "unit-balloon",
-      "unit-dwarves",
-      "unit-zeppelin",
-      "unit-goblin-sappers"
-    ];
-    if (JSON.stringify(result.conversions) !== JSON.stringify(expectedConversions)) {
-      throw new Error(`advanced conversion results differed: ${JSON.stringify(result)}`);
-    }
-    if (JSON.stringify(result.outputs) !== JSON.stringify(expectedOutputs)) {
-      throw new Error(`advanced training results differed: ${JSON.stringify(result)}`);
-    }
-    if (!result.resourcesChargedOnce || !result.queueProgressed || !result.stableIdsAndCounts) {
-      throw new Error(`advanced lifecycle checks failed: ${JSON.stringify(result)}`);
-    }
-    console.log(`Advanced tech paths verified (${result.outputs.length} trained outputs, ${result.conversions.length} in-place conversions).`);
-  } else {
+  const advanced = await verifyAdvancedTechPaths(client);
+  console.log(`Advanced tech paths verified (${advanced.outputs.length} trained outputs, ${advanced.conversions.length} in-place conversions, deterministic ids).`);
+  if (!ADVANCED_TECH_ONLY) {
     const failures = [];
     let verified = false;
     for (const mapPath of CANDIDATE_MAPS) {
@@ -112,6 +82,45 @@ try {
   await stopProcess(server);
   cleanupDedicatedProcesses();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+}
+
+async function verifyAdvancedTechPaths(client) {
+  await waitForExpression(client, "typeof window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__ === \"function\"", 5_000);
+  const first = await evalValue(client, "window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__()");
+  const repeat = await evalValue(client, "window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__()");
+  if (!first?.ok || !repeat?.ok) {
+    throw new Error(`advanced tech-path fixture failed: first=${JSON.stringify(first)} repeat=${JSON.stringify(repeat)}`);
+  }
+  const expectedConversions = ["unit-knight->unit-paladin", "unit-ogre->unit-ogre-mage"];
+  const expectedOutputs = [
+    "unit-paladin", "unit-ogre-mage", "unit-mage", "unit-death-knight", "unit-ballista",
+    "unit-catapult", "unit-balloon", "unit-dwarves", "unit-zeppelin", "unit-goblin-sappers"
+  ];
+  if (JSON.stringify(first.conversions) !== JSON.stringify(expectedConversions)
+    || JSON.stringify(first.outputs) !== JSON.stringify(expectedOutputs)) {
+    throw new Error(`advanced roster results differed: ${JSON.stringify(first)}`);
+  }
+  if (!Array.isArray(first.training) || first.training.length !== expectedOutputs.length) {
+    throw new Error(`advanced per-output observations missing: ${JSON.stringify(first)}`);
+  }
+  for (const [index, typeId] of expectedOutputs.entries()) {
+    const observation = first.training[index];
+    if (observation?.typeId !== typeId
+      || JSON.stringify(observation.resourceDelta) !== JSON.stringify(observation.expectedCosts)
+      || observation.resourcesStableAfterIssue !== true
+      || observation.queueProgressed !== true
+      || observation.countDelta !== 1
+      || typeof observation.spawnedId !== "string"
+      || observation.spawnedId.length === 0) {
+      throw new Error(`advanced ${typeId} lifecycle observation failed: ${JSON.stringify(observation)}`);
+    }
+  }
+  const firstIds = first.training.map((observation) => observation.spawnedId);
+  const repeatIds = repeat.training?.map((observation) => observation.spawnedId);
+  if (JSON.stringify(firstIds) !== JSON.stringify(repeatIds)) {
+    throw new Error(`advanced trained ids were not deterministic: first=${JSON.stringify(firstIds)} repeat=${JSON.stringify(repeatIds)}`);
+  }
+  return first;
 }
 
 async function verifyTrainMap(client, mapPath) {

@@ -73,8 +73,12 @@ try {
   chrome = spawn(CHROME, [
     "--headless=new",
     "--disable-gpu",
+    "--disable-background-networking",
+    "--disable-extensions",
     "--no-sandbox",
+    "--no-first-run",
     "--disable-dev-shm-usage",
+    "--renderer-process-limit=1",
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
@@ -265,8 +269,9 @@ try {
   console.log(formatDisabledSkipClassification("Source command disabled hotkey skips classified", disabledHotkeyClassification));
   console.log(formatSkipSummary("Source command no-key hotkey skips", sourceHotkeys.noKeySkips));
   console.log(formatSkipSummary("Source command duplicate hotkey skips", sourceHotkeys.duplicateSkips));
+  await verifyAdvancedProducerBuildCommands();
 
-  completionMessage = `Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`;
+  completionMessage = `Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, advancedProducers=6, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`;
   }
   }
   if (pageErrors.length > 0) {
