@@ -11,12 +11,13 @@
 congestion, expand the acceptable goal around an unreachable click, recover
 orders after stack repair, and preserve small-group relative formation offsets.
 
-**Architecture:** Treat currently moving occupants as costly A* crossings and
-stationary occupants as planning blockers, while live movement still forbids
-overlap. Distinguish a terrain-reachable route hidden by temporary occupancy
+**Architecture:** Treat currently moving occupants on the same movement layer
+as costly A* crossings and same-layer stationary occupants as planning
+blockers, while live movement still forbids same-layer overlap. Distinguish a terrain-reachable route hidden by temporary occupancy
 from a statically unreachable goal, expand the latter to the minimum reachable
-goal range without a fixed 12-tile cap, replan after stack recovery, and commit
-one source-relative path per unit.
+goal range with one bounded reachability traversal rather than repeated
+per-ring A*, replan after stack recovery, and commit one source-relative path
+per unit.
 
 **Tech Stack:** TypeScript 6 simulation, deterministic A* pathfinding, PixiJS 8 runtime, repo-native browser/CDP verifier scripts.
 
@@ -25,6 +26,8 @@ one source-relative path per unit.
 - Read `plans/MECHANICS-ACCEPTANCE.md` and `plans/EXECUTION-GATES.md` fully before editing; both are mandatory contracts.
 - Preserve deterministic tie-breaking; do not introduce random sidesteps.
 - Preserve terrain, forest, rock, wall, land/naval/fly, large-footprint, and diagonal-corner rules.
+- Filter occupancy by movement layer as source does: land blocks land, naval
+  blocks naval, fly blocks fly, and different layers do not block one another.
 - Do not add crowd pushing, unit phasing, or collision damage.
 - Do not redesign attack acquisition; plan 013 owns combat response.
 - Playability in crowded base exits and chokes is the primary acceptance criterion.
@@ -77,7 +80,7 @@ export function unitFootprintPathPlanningCost(
   centerTileY: number,
   unit: WorldUnit,
   movement?: MovementKind
-): number; // Infinity for stationary occupancy, 5 for moving occupancy, 1 clear
+): number; // Infinity for same-layer stationary occupancy, 5 for same-layer moving occupancy, 1 clear/cross-layer
 ```
 
 Because the TypeScript world has no Stratagus `Moving` flag, define the port
@@ -110,9 +113,10 @@ the maximum range is derived from map dimensions rather than a constant.
 - **Rejected:** fixed 12-tile candidate rings and 1.25-tile reservation spacing;
   neither is an original Wargus rule.
 - **Chosen:** reproduce the visible source contract with cost 5 for currently
-  moving occupancy, blocking stationary occupancy, live no-overlap, persistent
-  retries for temporary blockage, minimum-range goal expansion, and preserved
-  source-relative offsets for groups under 12.
+  moving same-layer occupancy, blocking stationary same-layer occupancy, live
+  same-layer no-overlap, cross-layer nonblocking, persistent retries for
+  temporary blockage, one-traversal minimum-range goal expansion, and
+  preserved source-relative offsets for groups under 12.
 - **Rollback trigger:** a unit paths through a speed-zero building/wall, update time exceeds the shared 20ms budget, or M02 oscillates without progress after the front unit clears. Revert the current checkpoint; do not add random sidesteps.
 
 ## Scope
@@ -178,6 +182,9 @@ Expected: all exit 0. STOP on a pre-existing red baseline.
 - [ ] Add `unitFootprintPathPlanningCost`: clear footprint `1`, footprint
   occupied only by actively moving units `5`, any stationary solid occupancy
   `Infinity`.
+- [ ] Filter occupant checks by the moving unit's land/naval/fly layer. A solid
+  flyer must block another flyer during live movement, while a flyer must not
+  block a land or naval route.
 - [ ] Hidden builders, resource-contained workers, dead units, and `nonSolid`
   units remain ignored exactly as today.
 - [ ] Use the returned cost in A* `g`, including deterministic handling when
@@ -204,6 +211,10 @@ Expected: all exit 0. STOP on a pre-existing red baseline.
   footprint-valid goal tiles by increasing Chebyshev range around the original
   click. Choose the smallest range that contains a reachable result, then use
   normal A* cost and existing deterministic node ordering within that range.
+- [ ] Discover the minimum reachable range with one bounded reachability
+  traversal (a heap-backed open set is acceptable). Do not run a full A* once
+  per candidate ring or linearly scan the complete open set; a realistic
+  64×64 isolated-goal search must stay within the shared 20ms budget.
 - [ ] Derive the maximum useful range from map dimensions. Do not restore a
   fixed radius 12 cap.
 - [ ] Preserve diagonal corner guards, footprint rules, heuristic focus on the
@@ -261,6 +272,10 @@ the previous `0.92` rescale, without requiring a new spacing multiplier.
   2. A blocked clicked tile whose first ring candidate is isolated: the unit reaches a different valid ring tile.
   3. A five-unit open-ground formation: issued destinations preserve all five
      source-relative tile offsets and every unit eventually reaches its slot.
+- [ ] Keep route-semantic fixtures for same-layer blocking/cross-layer
+  nonblocking across land/naval/fly, a stationary occupied exact goal versus a
+  stationary blocker along the route, legacy-caller isolation, and 48×48 plus
+  64×64 isolated-goal timing.
 - [ ] Include a stack-recovery assertion: a displaced unit either resumes its order or cleanly becomes idle; it never keeps a live order with an empty path.
 
 **Verify**: `npm run verify:browser-fixed-demo-input` -> exits 0 and reports all movement reliability scenarios.
@@ -293,7 +308,9 @@ Expected observable behavior:
 
 - [ ] Temporary mobile congestion never permanently cancels a valid move-family order.
 - [ ] A blocked or globally unreachable click expands to the minimum reachable
-  goal range without a fixed 12-tile cap.
+  goal range without a fixed 12-tile cap or repeated per-ring A*.
+- [ ] Same-layer units obey moving/stationary planning costs and live
+  no-overlap; different movement layers do not block each other.
 - [ ] Stack recovery never leaves a live empty-path order.
 - [ ] Under-12 empty-ground right-click preserves integer source-relative
   formation offsets; no invented spacing/reservation rule is added.

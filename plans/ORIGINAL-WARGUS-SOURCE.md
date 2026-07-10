@@ -62,8 +62,10 @@ Confirmed construction lifecycle at the installed Stratagus commit:
 Confirmed movement and combat contracts at the installed Stratagus commit:
 
 - A* treats currently moving occupants as cost-5 crossings and stationary
-  occupants as blockers; live movement still forbids overlap. Ordinary Move
-  waits/retries and expands acceptable goal range after an unreachable search.
+  occupants as blockers on the same movement layer; land, naval, and flying
+  occupancy are filtered separately. Live movement still forbids same-layer
+  overlap. Ordinary Move waits/retries and expands acceptable goal range after
+  an unreachable search.
 - Empty-ground right-click for groups under 12 preserves integer source-tile
   offsets around the selection center; it does not rescale or reserve slots.
 - Attack-move drops unreachable automatic aggro and resumes its original point.
