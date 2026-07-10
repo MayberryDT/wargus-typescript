@@ -49,6 +49,7 @@ expectIncludes("Stratagus astar.cpp", sourceAstar, [
   "AStarMovingUnitCrossingCost",
   "AStarMaxSearchIterations",
   "AStarUnknownTerrainCost",
+  "const CUnitTypeFinder unit_finder(unit.Type->MoveType)",
   "int AStarFindPath",
   "int tilesizex",
   "int tilesizey",
@@ -78,10 +79,12 @@ expectIncludes("browser passability", passabilitySource, [
   "for (let y = top; y < top + height; y += 1)",
   "for (let x = left; x < left + width; x += 1)",
   "export function unitFootprintPathPlanningCost",
-  "blockers === \"all\" || occupants.some((occupant) => !isActivelyMovingOccupant(occupant))",
-  "return 5",
-  "function blockingOccupantsAt",
-  "unit.hitPoints <= 0 || isUnitHiddenInConstruction(unit) || isUnitInsideResourceSource(unit) || unit.nonSolid",
+  "export function hasPathPlanningOccupancy",
+  "function blockerCrossingCost",
+  "blockers === \"all\" || !isActivelyMovingOccupant(unit)",
+  "return crossesMovingOccupant ? 5 : 1",
+  "function isRelevantSolidOccupant",
+  "movementKindForUnit(unit) === movement",
   "function unitFootprintContainsTile",
   "function isActivelyMovingOccupant",
   "unit.order && \"path\" in unit.order && unit.order.pathIndex < unit.order.path.length"
@@ -90,19 +93,29 @@ expectIncludes("browser passability", passabilitySource, [
 expectIncludes("browser pathfinding", pathfindingSource, [
   "unitFootprintPathPlanningCost",
   "export function findPath",
-  "return result.status === \"ready\" ? result.path : []",
+  "searchReachable(world, unit, start, target, \"all\", true)",
+  "targetLegacyPassable",
+  "return search.nearestPath ?? []",
   "export function findPathResult",
   "status: \"ready\" | \"temporarily-blocked\" | \"unreachable\"",
   "const sourceDirections = [",
   "{ x: 0, y: -1 }",
   "{ x: 1, y: -1 }",
   "{ x: -1, y: -1 }",
-  "searchPath(world, unit, start, exactGoals, target, \"path-planning\")",
-  "searchPath(world, unit, start, exactGoals, target, \"none\")",
-  "return { status: \"temporarily-blocked\", path: terrainPath, goalRange: 0 }",
-  "const maxGoalRange = Math.max(world.map.width, world.map.height) - 1",
-  "reachableGoalKeysAtRange(world, unit, target, goalRange)",
-  "return { status: \"unreachable\", path: [], goalRange: null }",
+  "searchReachable(world, unit, start, target, \"path-planning\", true)",
+  "targetPlanningPassable",
+  "hasPathPlanningOccupancy(world, unit)",
+  "return { status: \"temporarily-blocked\", path: terrainPath }",
+  "return search.nearestPath",
+  "{ status: \"unreachable\", path: [] }",
+  "function searchReachable",
+  "const openHeap: NodeRecord[] = []",
+  "pushOpenNode(openHeap, startNode)",
+  "const current = popOpenNode(openHeap)",
+  "const range = sourceGoalRange(current.x, current.y, target.x, target.y)",
+  "function sourceGoalRange",
+  "function nearestGoalNodeComesBefore",
+  "return openNodeComesBefore(left, right)",
   "g: 1",
   "startCostToGoal = startDistance << 3",
   "const parent = current.parent ? records.get(current.parent) : null",
@@ -115,8 +128,8 @@ expectIncludes("browser pathfinding", pathfindingSource, [
   "sourceAStarNodeComesBefore",
   "function sourceAStarManhattanDistance",
   "function footprintSearchCost",
-  "function reachableGoalKeysAtRange",
-  "isUnitFootprintPassable(world, x, y, unit, movement, true)",
+  "isUnitFootprintPassable(world, tileX, tileY, unit, movement, true)",
+  "isUnitFootprintPassable(world, tileX, tileY, unit, movement)",
   "return simplifyPath(reversed.reverse())"
 ]);
 
@@ -124,8 +137,17 @@ const movingOccupantHelper = passabilitySource.match(/function isActivelyMovingO
 if (movingOccupantHelper.includes(".speed")) {
   errors.push("browser passability must not use unit speed as current-motion state");
 }
-if (pathfindingSource.includes("findNearestPassableTarget") || pathfindingSource.includes("radius <= 12")) {
-  errors.push("browser pathfinding must not keep the first-local-candidate or fixed-radius-12 goal search");
+if (
+  pathfindingSource.includes("findNearestPassableTarget")
+  || pathfindingSource.includes("radius <= 12")
+  || pathfindingSource.includes("reachableGoalKeysAtRange")
+  || pathfindingSource.includes("for (let goalRange")
+) {
+  errors.push("browser pathfinding must use one bounded reachability traversal rather than first-local, fixed-radius, or per-ring searches");
+}
+const pathSearchResult = pathfindingSource.match(/export interface PathSearchResult[\s\S]*?\n}/)?.[0] ?? "";
+if (pathSearchResult.includes("goalRange")) {
+  errors.push("PathSearchResult must not expose unused goalRange metadata");
 }
 
 expectIncludes("orders path use", ordersSource, [

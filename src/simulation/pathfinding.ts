@@ -1,5 +1,5 @@
 import type { WorldState, WorldUnit } from "./world";
-import { isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, unitFootprintPathPlanningCost, worldToTile } from "./passability";
+import { hasPathPlanningOccupancy, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, unitFootprintPathPlanningCost, worldToTile } from "./passability";
 
 export interface PathPoint {
   x: number;
@@ -9,8 +9,9 @@ export interface PathPoint {
 export interface PathSearchResult {
   status: "ready" | "temporarily-blocked" | "unreachable";
   path: PathPoint[];
-  goalRange: number | null;
 }
+
+type SearchBlockers = "all" | "path-planning" | "none";
 
 interface NodeRecord {
   x: number;
@@ -20,6 +21,12 @@ interface NodeRecord {
   distanceToGoal: number;
   f: number;
   parent: string | null;
+  sequence: number;
+}
+
+interface ReachableSearchResult {
+  exactPath: PathPoint[] | null;
+  nearestPath: PathPoint[] | null;
 }
 
 const sourceDirections = [
@@ -34,71 +41,105 @@ const sourceDirections = [
 ];
 
 export function findPath(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathPoint[] {
-  const result = findPathResult(world, unit, targetX, targetY);
-  return result.status === "ready" ? result.path : [];
+  const start = worldToTile(world, unit.x, unit.y);
+  const target = worldToTile(world, targetX, targetY);
+  const targetTerrainPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "none"));
+  const targetLegacyPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "all"));
+  const search = searchReachable(world, unit, start, target, "all", true);
+  if (search.exactPath) {
+    return search.exactPath;
+  }
+  if (
+    targetTerrainPassable
+    && targetLegacyPassable
+    && hasPathPlanningOccupancy(world, unit)
+    && searchExactPath(world, unit, start, target, "none")
+  ) {
+    return [];
+  }
+  return search.nearestPath ?? [];
 }
 
 export function findPathResult(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathSearchResult {
   const start = worldToTile(world, unit.x, unit.y);
   const target = worldToTile(world, targetX, targetY);
-  const movement = movementKindForUnit(unit);
-  if (isUnitFootprintPassable(world, target.x, target.y, unit, movement, true)) {
-    const exactGoals = new Set([key(target.x, target.y)]);
-    const exactPath = searchPath(world, unit, start, exactGoals, target, "path-planning");
-    if (exactPath) {
-      return { status: "ready", path: exactPath, goalRange: 0 };
-    }
-    const terrainPath = searchPath(world, unit, start, exactGoals, target, "none");
+  const targetTerrainPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "none"));
+  const targetPlanningPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "path-planning"));
+  const search = searchReachable(world, unit, start, target, "path-planning", true);
+  if (search.exactPath) {
+    return { status: "ready", path: search.exactPath };
+  }
+  if (
+    targetTerrainPassable
+    && targetPlanningPassable
+    && hasPathPlanningOccupancy(world, unit)
+  ) {
+    const terrainPath = searchExactPath(world, unit, start, target, "none");
     if (terrainPath) {
-      return { status: "temporarily-blocked", path: terrainPath, goalRange: 0 };
+      return { status: "temporarily-blocked", path: terrainPath };
     }
   }
-
-  const maxGoalRange = Math.max(world.map.width, world.map.height) - 1;
-  for (let goalRange = 1; goalRange <= maxGoalRange; goalRange += 1) {
-    const goals = reachableGoalKeysAtRange(world, unit, target, goalRange);
-    if (goals.size === 0) {
-      continue;
-    }
-    const path = searchPath(world, unit, start, goals, target, "path-planning");
-    if (path) {
-      return { status: "ready", path, goalRange };
-    }
-  }
-  return { status: "unreachable", path: [], goalRange: null };
+  return search.nearestPath
+    ? { status: "ready", path: search.nearestPath }
+    : { status: "unreachable", path: [] };
 }
 
-function searchPath(
+function searchExactPath(
   world: WorldState,
   unit: WorldUnit,
   start: { x: number; y: number },
-  goalKeys: Set<string>,
-  heuristicTarget: { x: number; y: number },
-  blockers: "path-planning" | "none"
+  target: { x: number; y: number },
+  blockers: SearchBlockers
 ): PathPoint[] | null {
-  if (goalKeys.size === 0) {
-    return null;
-  }
+  return searchReachable(world, unit, start, target, blockers, false).exactPath;
+}
 
+function searchReachable(
+  world: WorldState,
+  unit: WorldUnit,
+  start: { x: number; y: number },
+  target: { x: number; y: number },
+  blockers: SearchBlockers,
+  trackNearest: boolean
+): ReachableSearchResult {
   const startKey = key(start.x, start.y);
-  const open = new Map<string, NodeRecord>();
+  const targetKey = key(target.x, target.y);
+  const openByKey = new Map<string, NodeRecord>();
+  const openHeap: NodeRecord[] = [];
   const closed = new Set<string>();
   const records = new Map<string, NodeRecord>();
-  const startDistance = sourceAStarManhattanDistance(start.x, start.y, heuristicTarget.x, heuristicTarget.y);
+  let nextSequence = 1;
+  let nearest: NodeRecord | null = null;
+  let nearestRange = Number.POSITIVE_INFINITY;
+  const startDistance = sourceAStarManhattanDistance(start.x, start.y, target.x, target.y);
   const startCostToGoal = startDistance << 3;
-  open.set(startKey, { x: start.x, y: start.y, g: 1, h: startCostToGoal, distanceToGoal: startDistance, f: 1 + startCostToGoal, parent: null });
+  const startNode: NodeRecord = { x: start.x, y: start.y, g: 1, h: startCostToGoal, distanceToGoal: startDistance, f: 1 + startCostToGoal, parent: null, sequence: 0 };
+  openByKey.set(startKey, startNode);
+  pushOpenNode(openHeap, startNode);
 
-  while (open.size > 0) {
-    const current = getBest(open);
+  while (openHeap.length > 0) {
+    const current = popOpenNode(openHeap);
     const currentKey = key(current.x, current.y);
-    if (goalKeys.has(currentKey)) {
-      records.set(currentKey, current);
-      return reconstruct(world, current, records);
+    if (openByKey.get(currentKey) !== current || closed.has(currentKey)) {
+      continue;
     }
-
-    open.delete(currentKey);
+    openByKey.delete(currentKey);
     closed.add(currentKey);
     records.set(currentKey, current);
+    if (currentKey === targetKey) {
+      return { exactPath: reconstruct(world, current, records), nearestPath: null };
+    }
+    if (trackNearest) {
+      const range = sourceGoalRange(current.x, current.y, target.x, target.y);
+      if (
+        !nearest
+        || range < nearestRange
+        || (range === nearestRange && nearestGoalNodeComesBefore(current, nearest))
+      ) {
+        nearest = current;
+        nearestRange = range;
+      }
+    }
 
     const parent = current.parent ? records.get(current.parent) : null;
     for (const direction of sourceDirections) {
@@ -108,8 +149,11 @@ function searchPath(
       if (parent && nx === parent.x && ny === parent.y) {
         continue;
       }
+      if (closed.has(nextKey)) {
+        continue;
+      }
       const moveCost = footprintSearchCost(world, unit, nx, ny, blockers);
-      if (closed.has(nextKey) || !Number.isFinite(moveCost)) {
+      if (!Number.isFinite(moveCost)) {
         continue;
       }
       if (direction.x !== 0 && direction.y !== 0) {
@@ -122,25 +166,31 @@ function searchPath(
       }
 
       const g = current.g + moveCost;
-      const distanceToGoal = sourceAStarManhattanDistance(nx, ny, heuristicTarget.x, heuristicTarget.y);
+      const distanceToGoal = sourceAStarManhattanDistance(nx, ny, target.x, target.y);
       const costToGoal = distanceToGoal << 3;
-      const existing = open.get(nextKey);
+      const existing = openByKey.get(nextKey);
       if (existing && g >= existing.g) {
         continue;
       }
-      open.set(nextKey, {
+      const node: NodeRecord = {
         x: nx,
         y: ny,
         g,
         h: costToGoal,
         distanceToGoal,
         f: g + costToGoal,
-        parent: currentKey
-      });
+        parent: currentKey,
+        sequence: existing?.sequence ?? nextSequence++
+      };
+      openByKey.set(nextKey, node);
+      pushOpenNode(openHeap, node);
     }
   }
 
-  return null;
+  return {
+    exactPath: null,
+    nearestPath: nearest ? reconstruct(world, nearest, records) : null
+  };
 }
 
 function footprintSearchCost(
@@ -148,42 +198,72 @@ function footprintSearchCost(
   unit: WorldUnit,
   tileX: number,
   tileY: number,
-  blockers: "path-planning" | "none"
+  blockers: SearchBlockers
 ): number {
   const movement = movementKindForUnit(unit);
   if (blockers === "none") {
     return isUnitFootprintPassable(world, tileX, tileY, unit, movement, true) ? 1 : Number.POSITIVE_INFINITY;
   }
+  if (blockers === "all") {
+    return isUnitFootprintPassable(world, tileX, tileY, unit, movement) ? 1 : Number.POSITIVE_INFINITY;
+  }
   return unitFootprintPathPlanningCost(world, tileX, tileY, unit, movement);
 }
 
-function reachableGoalKeysAtRange(world: WorldState, unit: WorldUnit, target: { x: number; y: number }, goalRange: number): Set<string> {
-  const movement = movementKindForUnit(unit);
-  const goals = new Set<string>();
-  for (let y = target.y - goalRange; y <= target.y + goalRange; y += 1) {
-    for (let x = target.x - goalRange; x <= target.x + goalRange; x += 1) {
-      if (Math.abs(x - target.x) !== goalRange && Math.abs(y - target.y) !== goalRange) {
-        continue;
-      }
-      if (isUnitFootprintPassable(world, x, y, unit, movement, true)) {
-        goals.add(key(x, y));
-      }
-    }
-  }
-  return goals;
+function sourceGoalRange(x: number, y: number, targetX: number, targetY: number): number {
+  return Math.max(Math.abs(x - targetX), Math.abs(y - targetY));
 }
 
-function getBest(open: Map<string, NodeRecord>): NodeRecord {
-  let best: NodeRecord | null = null;
-  for (const node of open.values()) {
-    if (!best || sourceAStarNodeComesBefore(node, best)) {
-      best = node;
+function nearestGoalNodeComesBefore(left: NodeRecord, right: NodeRecord): boolean {
+  return openNodeComesBefore(left, right);
+}
+
+function pushOpenNode(heap: NodeRecord[], node: NodeRecord): void {
+  heap.push(node);
+  let index = heap.length - 1;
+  while (index > 0) {
+    const parentIndex = Math.floor((index - 1) / 2);
+    if (!openNodeComesBefore(heap[index], heap[parentIndex])) {
+      break;
     }
+    [heap[parentIndex], heap[index]] = [heap[index], heap[parentIndex]];
+    index = parentIndex;
   }
-  if (!best) {
+}
+
+function popOpenNode(heap: NodeRecord[]): NodeRecord {
+  const best = heap[0];
+  const last = heap.pop();
+  if (!best || !last) {
     throw new Error("Pathfinding open set unexpectedly empty");
   }
+  if (heap.length === 0) {
+    return best;
+  }
+  heap[0] = last;
+  let index = 0;
+  while (true) {
+    const leftIndex = index * 2 + 1;
+    const rightIndex = leftIndex + 1;
+    let nextIndex = index;
+    if (leftIndex < heap.length && openNodeComesBefore(heap[leftIndex], heap[nextIndex])) {
+      nextIndex = leftIndex;
+    }
+    if (rightIndex < heap.length && openNodeComesBefore(heap[rightIndex], heap[nextIndex])) {
+      nextIndex = rightIndex;
+    }
+    if (nextIndex === index) {
+      break;
+    }
+    [heap[index], heap[nextIndex]] = [heap[nextIndex], heap[index]];
+    index = nextIndex;
+  }
   return best;
+}
+
+function openNodeComesBefore(left: NodeRecord, right: NodeRecord): boolean {
+  return sourceAStarNodeComesBefore(left, right)
+    || (!sourceAStarNodeComesBefore(right, left) && left.sequence < right.sequence);
 }
 
 function reconstruct(world: WorldState, end: NodeRecord, records: Map<string, NodeRecord>): PathPoint[] {

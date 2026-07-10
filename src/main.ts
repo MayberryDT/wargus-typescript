@@ -44,7 +44,8 @@ import { executeMapCommandForRuntime } from "./view/mapCommands";
 import { handleMinimapCommand } from "./view/minimapInput";
 import { handleWorldPointerDown } from "./view/worldPointerInput";
 import { loadCompleteWorldViewAssets, loadCoreWorldViewAssets } from "./view/worldViewAssets";
-import { isSourceHarvestableWoodTile } from "./simulation/passability";
+import { isSourceHarvestableWoodTile, isTilePassable } from "./simulation/passability";
+import { findPath, findPathResult } from "./simulation/pathfinding";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 if (!root) {
@@ -1719,13 +1720,13 @@ if (browserSmokeStateEnabled) {
     if (!definition) {
       return { ok: false, error: "missing footman definition" };
     }
-    const createFixtureWorld = (width: number, height: number, landTiles: Array<{ x: number; y: number }>): WorldState => {
+    const createFixtureWorld = (width: number, height: number, landTiles: Array<{ x: number; y: number }>, initialTile = 0x080): WorldState => {
       const fixtureWorld = structuredClone(world) as WorldState;
       fixtureWorld.map.width = width;
       fixtureWorld.map.height = height;
       fixtureWorld.tileSize = 32;
       fixtureWorld.tilesetTerrain = null;
-      fixtureWorld.tiles = Array.from({ length: width * height }, () => 0x080);
+      fixtureWorld.tiles = Array.from({ length: width * height }, () => initialTile);
       for (const tile of landTiles) {
         fixtureWorld.tiles[tile.y * width + tile.x] = 0;
       }
@@ -1741,6 +1742,11 @@ if (browserSmokeStateEnabled) {
       tileY,
       tileset: null
     });
+    const unitAtKind = (fixtureWorld: WorldState, id: string, tileX: number, tileY: number, kind: WorldUnit["kind"]): WorldUnit => {
+      const unit = unitAt(fixtureWorld, id, tileX, tileY);
+      unit.kind = kind;
+      return unit;
+    };
     const tilePoint = (tileX: number, tileY: number): BrowserSmokeOrderTarget => ({
       x: tileX * 32 + 16,
       y: tileY * 32 + 16
@@ -1752,6 +1758,7 @@ if (browserSmokeStateEnabled) {
     const stationaryBlocker = unitAt(blockedWorld, "__smoke-fixture-m02-blocker", 2, 1);
     blockedWorld.units.push(rear, stationaryBlocker);
     const corridorTarget = tilePoint(5, 1);
+    const blockedSearch = findPathResult(blockedWorld, rear, corridorTarget.x, corridorTarget.y);
     const blockedStartedAt = performance.now();
     issueMoveOrder(blockedWorld, rear.id, corridorTarget.x, corridorTarget.y);
     const blockedPathfindingMs = performance.now() - blockedStartedAt;
@@ -1768,6 +1775,7 @@ if (browserSmokeStateEnabled) {
       pathIndex: 1
     };
     movingWorld.units.push(movingRear, movingBlocker);
+    const legacyMovingBlockerPath = findPath(movingWorld, movingRear, corridorTarget.x, corridorTarget.y);
     issueMoveOrder(movingWorld, movingRear.id, corridorTarget.x, corridorTarget.y);
     const movingOrder = movingRear.order?.kind === "move" ? movingRear.order : null;
 
@@ -1796,15 +1804,83 @@ if (browserSmokeStateEnabled) {
       ? Math.max(Math.abs(selectedTile.x - requestedTile.x), Math.abs(selectedTile.y - requestedTile.y))
       : null;
 
+    const exactGoalWorld = createFixtureWorld(7, 7, [], 0);
+    const exactGoalMover = unitAt(exactGoalWorld, "__smoke-fixture-exact-goal-mover", 1, 3);
+    const exactGoalBlocker = unitAt(exactGoalWorld, "__smoke-fixture-exact-goal-blocker", 5, 3);
+    exactGoalWorld.units.push(exactGoalMover, exactGoalBlocker);
+    const exactGoalSearch = findPathResult(exactGoalWorld, exactGoalMover, corridorTarget.x, tilePoint(5, 3).y);
+    const exactGoalPoint = exactGoalSearch.path.at(-1) ?? null;
+    const exactGoalSelectedTile = exactGoalPoint ? {
+      x: Math.floor(exactGoalPoint.x / exactGoalWorld.tileSize),
+      y: Math.floor(exactGoalPoint.y / exactGoalWorld.tileSize)
+    } : null;
+    const exactGoalRange = exactGoalSelectedTile
+      ? Math.max(Math.abs(exactGoalSelectedTile.x - 5), Math.abs(exactGoalSelectedTile.y - 3))
+      : null;
+
+    const layerPassable = (movement: "land" | "naval" | "fly", occupantKind: WorldUnit["kind"]): boolean => {
+      const layerWorld = createFixtureWorld(1, 1, [], movement === "naval" ? 0x010 : 0);
+      layerWorld.units.push(unitAtKind(layerWorld, `__smoke-fixture-layer-${movement}-${occupantKind}`, 0, 0, occupantKind));
+      return isTilePassable(layerWorld, 0, 0, movement, "__smoke-fixture-layer-mover");
+    };
+    const layerMatrix = {
+      land: {
+        land: layerPassable("land", "land"),
+        naval: layerPassable("land", "naval"),
+        fly: layerPassable("land", "fly")
+      },
+      naval: {
+        land: layerPassable("naval", "land"),
+        naval: layerPassable("naval", "naval"),
+        fly: layerPassable("naval", "fly")
+      },
+      fly: {
+        land: layerPassable("fly", "land"),
+        naval: layerPassable("fly", "naval"),
+        fly: layerPassable("fly", "fly")
+      }
+    };
+    const isolatedGoalPerformance = (size: number) => {
+      const performanceWorld = createFixtureWorld(size, size, [], 0);
+      const targetTile = { x: size - 3, y: size - 3 };
+      for (let y = targetTile.y - 1; y <= targetTile.y + 1; y += 1) {
+        for (let x = targetTile.x - 1; x <= targetTile.x + 1; x += 1) {
+          if (x !== targetTile.x || y !== targetTile.y) {
+            performanceWorld.tiles[y * size + x] = 0x080;
+          }
+        }
+      }
+      const mover = unitAt(performanceWorld, `__smoke-fixture-isolated-${size}`, 2, 2);
+      performanceWorld.units.push(mover);
+      const startedAt = performance.now();
+      const result = findPathResult(performanceWorld, mover, tilePoint(targetTile.x, targetTile.y).x, tilePoint(targetTile.x, targetTile.y).y);
+      const elapsedMs = performance.now() - startedAt;
+      const finalPoint = result.path.at(-1) ?? null;
+      const finalTile = finalPoint ? {
+        x: Math.floor(finalPoint.x / performanceWorld.tileSize),
+        y: Math.floor(finalPoint.y / performanceWorld.tileSize)
+      } : null;
+      return {
+        size,
+        status: result.status,
+        elapsedMs,
+        pathLength: result.path.length,
+        goalRange: finalTile ? Math.max(Math.abs(finalTile.x - targetTile.x), Math.abs(finalTile.y - targetTile.y)) : null
+      };
+    };
+    const isolatedPerformance = [isolatedGoalPerformance(48), isolatedGoalPerformance(64)];
+
     return {
       ok: true,
       m02: {
         requestedTile: { x: 5, y: 1 },
+        blockedStatus: blockedSearch.status,
         retainedOrder: Boolean(blockedOrder),
         retainedExactTarget: blockedOrder?.targetX === corridorTarget.x && blockedOrder.targetY === corridorTarget.y,
         pathLength: blockedOrder?.path.length ?? 0,
         movingBlockerReady: Boolean(movingOrder),
-        movingBlockerPathLength: movingOrder?.path.length ?? 0
+        movingBlockerPathLength: movingOrder?.path.length ?? 0,
+        legacyMovingBlockerPathLength: legacyMovingBlockerPath.length
       },
       m03: {
         requestedTile,
@@ -1813,6 +1889,14 @@ if (browserSmokeStateEnabled) {
         goalRange,
         pathLength: expansionOrder?.path.length ?? 0
       },
+      exactGoal: {
+        status: exactGoalSearch.status,
+        requestedTile: { x: 5, y: 3 },
+        selectedTile: exactGoalSelectedTile,
+        goalRange: exactGoalRange
+      },
+      layerMatrix,
+      isolatedPerformance,
       performance: {
         blockedPathfindingMs,
         expansionPathfindingMs,

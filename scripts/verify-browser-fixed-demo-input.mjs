@@ -79,11 +79,43 @@ try {
   const routeSemantics = await evalValue(client, "window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__()") ?? {};
   if (
     routeSemantics.ok !== true
+    || routeSemantics.m02?.blockedStatus !== "temporarily-blocked"
     || routeSemantics.m02?.retainedOrder !== true
     || routeSemantics.m02?.retainedExactTarget !== true
     || routeSemantics.m02?.movingBlockerReady !== true
+    || routeSemantics.m02?.legacyMovingBlockerPathLength !== 0
   ) {
     throw new Error(`M02 route semantics should retain the exact move through stationary congestion and plan a costlier crossing through a moving blocker: ${JSON.stringify(routeSemantics)}`);
+  }
+  if (
+    routeSemantics.exactGoal?.status !== "ready"
+    || routeSemantics.exactGoal?.goalRange !== 1
+    || (
+      routeSemantics.exactGoal?.selectedTile?.x === routeSemantics.exactGoal?.requestedTile?.x
+      && routeSemantics.exactGoal?.selectedTile?.y === routeSemantics.exactGoal?.requestedTile?.y
+    )
+  ) {
+    throw new Error(`Stationary exact-goal occupancy should expand to the minimum reachable ring while stationary route occupancy stays temporary: ${JSON.stringify(routeSemantics)}`);
+  }
+  const expectedLayerMatrix = {
+    land: { land: false, naval: true, fly: true },
+    naval: { land: true, naval: false, fly: true },
+    fly: { land: true, naval: true, fly: false }
+  };
+  if (JSON.stringify(routeSemantics.layerMatrix) !== JSON.stringify(expectedLayerMatrix)) {
+    throw new Error(`Movement layers should block only their own layer, including flying live occupancy: ${JSON.stringify(routeSemantics.layerMatrix)}`);
+  }
+  if (
+    !Array.isArray(routeSemantics.isolatedPerformance)
+    || routeSemantics.isolatedPerformance.length !== 2
+    || routeSemantics.isolatedPerformance.some((sample) => (
+      sample.status !== "ready"
+      || sample.goalRange !== 2
+      || !(sample.pathLength > 0)
+      || !(sample.elapsedMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    ))
+  ) {
+    throw new Error(`Realistic isolated-goal searches should resolve in one bounded traversal under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.isolatedPerformance)}`);
   }
   if (
     routeSemantics.m03?.selectedTile?.x !== 4
@@ -163,7 +195,8 @@ try {
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
-  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
+  const isolatedTiming = routeSemantics.isolatedPerformance.map((sample) => `${sample.size}=${formatTiming(sample.elapsedMs)}ms`).join("/");
+  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);
