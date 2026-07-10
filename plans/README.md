@@ -119,7 +119,7 @@ gameplay quality.
 | AI barriers/force detachment are wrong; Need/Set producer semantics collapse | 014 | M08 |
 | Difficulty writes 75/120/150 as factors and fails to reset; AI uses human exploration history | 014 | M09 |
 | Advanced units lack producers; Inventor/Alchemist roster is absent | 015 | M10 |
-| Icon path fails; 1/0 supply, disabled reasons, paid queues, spawn blocks, time/stats, and source hint text are unclear | 016 | M11 |
+| Icon path fails; 1/0 supply, disabled reasons, paid queues, queued-food timing, completion blocks, spawn egress, time/stats, and source hint text are unclear or wrong | 016 | M11 |
 | Shift-drag mixing and stale pointer-world coordinates corrupt input state | 016 | M12 |
 | Start distance/AI strategy vary and hidden movement-only 1.3x distorts pacing | 017 | M13 |
 
@@ -145,7 +145,7 @@ gameplay quality.
 ### Gameplay audit baseline for plans 011-017
 
 - Planned at commit `6af2eeb` with a clean worktree.
-- Live fixed-demo play confirmed `Food 1/0 -> 1/1 -> 1/5`, builder-inside removal during Hall/Farm construction, correct queued-supply reservation, and correct queue cancellation refund.
+- Live fixed-demo play confirmed `Food 1/0 -> 1/1 -> 1/5`, builder-inside removal during Hall/Farm construction, the port's queued-supply reservation defect, and queue cancellation resource refund.
 - Live AI state advanced to the 16-unit target without delivering the intended 1- and 4-unit pressure stages.
 - Live console reproduced the invalid icon-atlas request using `scripts/tilesets/summer.lua`.
 - Source inspection confirmed construction retask, transient-blocker order cancellation, unreachable substitute goals, empty-path stack recovery, formation slot collapse, fog-cancelled committed damage, missing AI barriers/counts, mis-scaled AI difficulty factors, hidden queue state, and unreachable producer chains.

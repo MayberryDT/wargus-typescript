@@ -99,3 +99,28 @@ Confirmed fixed-demo/source boundary:
 - Garden of War BNE source starts 1 and 6 use `wc2-air-attack`; the others use
   `wc2-land-attack`. Distance-only pairing therefore mixes incomparable contact
   strategies unless the fixed demo filters or stratifies AI type.
+
+Confirmed command, production, and selection contracts at the installed
+Wargus/Stratagus commits:
+
+- Source usually omits unavailable command buttons; always-visible grayscale
+  commands and English disabled reasons are TypeScript usability enhancements.
+  Dependency alternatives use the first declared invalid alternative and
+  report all of its missing requirements. Resource feedback reports every
+  missing resource.
+- Production queues accept up to 127 orders while the source HUD exposes six
+  slots. Paying a queued order subtracts resources but does not reserve food;
+  the head rechecks supply and limits at completion and waits if blocked.
+  Indexed cancellation refunds that order's resources only.
+- `DropOutOnSide` expands outward until it finds a legal egress tile. A bounded
+  whole-map `no-egress` result is a TypeScript safety divergence; immediate-ring
+  obstruction is not a terminal spawn block.
+- Source selection caps at 18. Building/mobile classification uses the actual
+  unit-definition Building flag, so large mobile siege/ships stay mobile.
+  Additive selection admits eligible local/teamed mobiles together but never
+  mixes a building with mobiles; building-first admits only the same type.
+  Plain rectangle selection prefers eligible owned/team mobiles, then same-type
+  buildings, then one static, neutral, or enemy object.
+- Source command status text omits duration. `Time Ns`, explicit `Build Hall`,
+  `Provides N Food`, and the exact imported `ZTOP` display correction are
+  deliberate TypeScript clarity enhancements, not original UI behavior.
