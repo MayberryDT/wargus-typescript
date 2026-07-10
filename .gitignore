@@ -3,6 +3,7 @@ dist/
 .agents/
 .codex/
 .git-local/
+.worktrees/
 *.log
 
 # Local Netlify folder
