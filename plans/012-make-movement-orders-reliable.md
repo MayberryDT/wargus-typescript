@@ -7,9 +7,16 @@
 > **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/pathfinding.ts src/simulation/passability.ts src/simulation/orders.ts src/main.ts scripts/verify-source-pathfinding.mjs scripts/verify-source-formation-movement.mjs scripts/verify-browser-fixed-demo-input.mjs plans/evidence/012.md plans/012-make-movement-orders-reliable.md plans/README.md`
 > If the cited pathfinding, formation, or movement-order shapes changed, STOP and reconcile before editing.
 
-**Goal:** Ensure a valid move command remains active through temporary unit congestion, chooses a reachable nearby destination when the clicked tile is blocked, preserves orders after stack recovery, and assigns distinct formation destinations.
+**Goal:** Restore source-like move persistence: wait through temporary unit
+congestion, expand the acceptable goal around an unreachable click, recover
+orders after stack repair, and preserve small-group relative formation offsets.
 
-**Architecture:** Separate static path-planning blockers from momentary mobile occupancy. Search all acceptable blocked-click destinations in one A* run, replan after stack recovery, reserve formation tiles, and commit one precomputed path per unit.
+**Architecture:** Treat currently moving occupants as costly A* crossings and
+stationary occupants as planning blockers, while live movement still forbids
+overlap. Distinguish a terrain-reachable route hidden by temporary occupancy
+from a statically unreachable goal, expand the latter to the minimum reachable
+goal range without a fixed 12-tile cap, replan after stack recovery, and commit
+one source-relative path per unit.
 
 **Tech Stack:** TypeScript 6 simulation, deterministic A* pathfinding, PixiJS 8 runtime, repo-native browser/CDP verifier scripts.
 
@@ -37,7 +44,9 @@
 
 - Assigned scenarios: M02–M04; replay M01.
 - Before: formations lose members at chokes, blocked clicks can reject reachable destinations, and stack recovery can leave a permanent empty-path order.
-- After: the whole selected group retains intent through congestion and settles on distinct reachable tiles.
+- After: temporary occupancy never erases intent, unreachable clicks expand to
+  the nearest reachable source-style range, and small groups preserve their
+  relative offsets through open ground and chokes.
 - Required handoff: `plans/evidence/012.md`, with path/order timelines and update-time measurements.
 
 ## Current state
@@ -56,39 +65,54 @@ Introduce these focused concepts; names may differ only if all callers and verif
 
 Keep the existing public `isTilePassable(..., ignoreBlockers?: boolean)` and
 `isUnitFootprintPassable(..., ignoreBlockers?: boolean)` signatures so render
-and diagnostic callers do not change. Add path-planning-specific wrappers over
-one private policy-aware implementation:
+and diagnostic callers do not change. Add path-planning-specific occupancy and
+cost helpers over one private policy-aware implementation:
 
 ```ts
-type PassabilityBlockers = "all" | "static-only" | "none";
+type PassabilityBlockers = "all" | "path-planning" | "none";
 
-export function isUnitFootprintPathPlanningPassable(
+export function unitFootprintPathPlanningCost(
   world: WorldState,
   centerTileX: number,
   centerTileY: number,
   unit: WorldUnit,
   movement?: MovementKind
-): boolean;
+): number; // Infinity for stationary occupancy, 5 for moving occupancy, 1 clear
 ```
+
+Because the TypeScript world has no Stratagus `Moving` flag, define the port
+equivalent narrowly as a live solid unit with a path-bearing order and a
+remaining waypoint. Document this approximation beside the helper. It must not
+use unit-type `speed > 0` as a proxy for current motion.
 
 ```ts
 export interface PlannedMoveOrder {
   targetX: number;
   targetY: number;
   path: PathPoint[];
+  status: "ready" | "temporarily-blocked";
 }
 
 function planMoveOrder(world: WorldState, unit: WorldUnit, x: number, y: number): PlannedMoveOrder | null;
 function commitMoveOrder(unit: WorldUnit, planned: PlannedMoveOrder, clearQueue: boolean): void;
 ```
 
-`findPath` keeps its public signature. Internally it builds acceptable goal tiles and runs one A* search whose completion condition is membership in that goal set.
+`findPath` keeps its public signature for existing callers. An internal search
+result distinguishes `ready`, `temporarily-blocked`, and statically
+`unreachable`. For an unreachable exact goal, choose the reachable tile with
+the smallest range from the original click, then normal A* cost/tie-breaking;
+the maximum range is derived from map dimensions rather than a constant.
 
 ## Design decision and rollback
 
-- **Rejected:** make all units non-solid during planning and movement; it fixes congestion by allowing illegal overlap.
-- **Rejected:** assign arbitrary extra crossing costs without a cost-calibration model; that can still report no route or create unstable detours.
-- **Chosen:** ignore only mobile occupancy during planning, enforce all occupancy during movement, and preserve/retry the order. This separates temporary congestion from static impossibility.
+- **Rejected:** make all move-capable unit types non-blocking during planning;
+  original Stratagus distinguishes current motion, not `speed > 0`.
+- **Rejected:** fixed 12-tile candidate rings and 1.25-tile reservation spacing;
+  neither is an original Wargus rule.
+- **Chosen:** reproduce the visible source contract with cost 5 for currently
+  moving occupancy, blocking stationary occupancy, live no-overlap, persistent
+  retries for temporary blockage, minimum-range goal expansion, and preserved
+  source-relative offsets for groups under 12.
 - **Rollback trigger:** a unit paths through a speed-zero building/wall, update time exceeds the shared 20ms budget, or M02 oscillates without progress after the front unit clears. Revert the current checkpoint; do not add random sidesteps.
 
 ## Scope
@@ -124,9 +148,9 @@ function commitMoveOrder(unit: WorldUnit, planned: PlannedMoveOrder, clearQueue:
 
 | Checkpoint | Tasks | Allowed result | Acceptance before continuing |
 |---|---|---|---|
-| 012-A — route semantics | 2–3 | Path planning distinguishes static impossibility from mobile congestion and selects a reachable substitute goal. | M02 setup retains intent while blocked; M03 reaches a non-isolated substitute; pathfinding verifier and 20ms update budget pass. |
+| 012-A — route semantics | 2–3 | Path planning distinguishes stationary/currently-moving occupancy from terrain impossibility and expands to the minimum reachable goal range. | M02 setup retains intent while blocked; M03 reaches a non-isolated substitute; pathfinding verifier and 20ms update budget pass. |
 | 012-B — order commitment | 4–5 | Move-family orders recover after blockage/stack displacement and each unit commits one precomputed route. | No live empty-path order; M02 completes after clearance; diff is limited to order planning/commit seams. |
-| 012-C — group settlement | 6–8 | Formation endpoints are unique and the crowded-base play session has no lost orders or visible hitch. | M04 plus M01 replay pass; five assigned/final tiles and timing sample are recorded. |
+| 012-C — group settlement | 6–8 | Small-group right-click preserves source-relative formation offsets and the crowded-base play session has no lost orders or visible hitch. | M04 plus M01 replay pass; five source/assigned/final tiles and timing sample are recorded. |
 
 If a checkpoint fails twice, revert only that checkpoint and keep the last READY
 commit. Do not compensate in a later checkpoint.
@@ -143,57 +167,61 @@ commit. Do not compensate in a later checkpoint.
 
 Expected: all exit 0. STOP on a pre-existing red baseline.
 
-### Task 2: Separate static and mobile blockers
+### Task 2: Model source-like stationary and moving occupancy
 
-- [ ] Preserve the existing public boolean signatures, but route them through one private helper that accepts the explicit blocker policy above (`false -> "all"`, `true -> "none"`).
-- [ ] Add `isUnitFootprintPathPlanningPassable`, which calls the same private helper with `"static-only"`.
-- [ ] Define static blockers as solid live units that cannot move (`speed <= 0`) or are under construction. Hidden builders, resource-contained workers, dead units, and `nonSolid` units remain ignored exactly as today.
-- [ ] Use `isUnitFootprintPathPlanningPassable` from A* expansion and goal-candidate checks.
-- [ ] Keep `"all"` in the live movement step so two units never occupy a tile merely because a path planned through it.
-- [ ] Keep `"none"` only for existing diagnostics that intentionally ignore all unit occupancy.
-
-Target classifier:
-
-```ts
-function unitBlocksPathPlanning(unit: WorldUnit): boolean {
-  return unit.construction !== null || unit.speed <= 0;
-}
-```
-
-If `construction` is optional rather than nullable in live code, use `Boolean(unit.construction)`.
+- [ ] Preserve the existing public boolean signatures, but route them through
+  one private helper accepting `"all"`, `"path-planning"`, or `"none"`
+  (`false -> "all"`, `true -> "none"`).
+- [ ] Add a documented port-equivalent `isActivelyMovingOccupant`: a live solid
+  unit whose current path-bearing order has a remaining waypoint. Do not use
+  the unit type's speed as current-motion state.
+- [ ] Add `unitFootprintPathPlanningCost`: clear footprint `1`, footprint
+  occupied only by actively moving units `5`, any stationary solid occupancy
+  `Infinity`.
+- [ ] Hidden builders, resource-contained workers, dead units, and `nonSolid`
+  units remain ignored exactly as today.
+- [ ] Use the returned cost in A* `g`, including deterministic handling when
+  multiple occupants overlap a footprint after stack repair.
+- [ ] Keep `"all"` in the live movement step so planned crossings never allow
+  two solid units to occupy one tile.
+- [ ] Keep `"none"` only for existing diagnostics and the terrain-only probe
+  that diagnoses temporary occupancy.
 
 **Verify**: `./node_modules/.bin/tsc --noEmit` -> exit 0.
 
 **Verify**: `npm run verify:source-pathfinding` -> exits 0 after its expected fragments are updated to the explicit policy.
 
-### Task 3: Search all acceptable blocked-click goals in one A* run
+### Task 3: Distinguish temporary blockage and expand unreachable goal range
 
-- [ ] Replace `findNearestPassableTarget` with `findPassableTargetCandidates`.
-- [ ] Return the requested tile when statically passable; otherwise collect statically passable ring tiles for radii 1 through 12 in deterministic ring traversal order.
-- [ ] Build a `Set` of candidate keys. Continue using the originally requested tile for the heuristic, but finish when the current node key belongs to the goal set.
-- [ ] Preserve existing node ordering, diagonal corner guards, footprint checks, and path simplification.
-- [ ] Return `[]` only when A* exhausts the reachable search space without reaching any candidate.
-
-Target loop shape:
-
-```ts
-const goals = findPassableTargetCandidates(world, requestedTarget, unit, movement);
-const goalKeys = new Set(goals.map((goal) => key(goal.x, goal.y)));
-// ...normal A*...
-if (goalKeys.has(currentKey)) {
-  records.set(currentKey, current);
-  return reconstruct(world, current, records);
-}
-```
+- [ ] Replace `findNearestPassableTarget`; do not choose the first locally
+  passable ring tile before checking reachability.
+- [ ] Search the exact requested goal with path-planning occupancy first.
+- [ ] If that fails, probe the exact goal with unit occupancy ignored. When the
+  terrain-only probe succeeds, return `temporarily-blocked`; the move order must
+  stay live and retry rather than silently choosing the mover's own side of a
+  friendly choke.
+- [ ] When the exact goal is statically blocked or terrain-unreachable, consider
+  footprint-valid goal tiles by increasing Chebyshev range around the original
+  click. Choose the smallest range that contains a reachable result, then use
+  normal A* cost and existing deterministic node ordering within that range.
+- [ ] Derive the maximum useful range from map dimensions. Do not restore a
+  fixed radius 12 cap.
+- [ ] Preserve diagonal corner guards, footprint rules, heuristic focus on the
+  original click, and path simplification.
+- [ ] Return statically `unreachable` only when no reachable goal exists in the
+  map-derived range.
 
 **Verify**: `rg -n 'findNearestPassableTarget' src/simulation/pathfinding.ts` -> no matches.
 
 **Verify**: `npm run verify:source-pathfinding` -> exits 0.
 
-### Task 4: Preserve orders during congestion and stack recovery
+### Task 4: Wait and preserve orders during congestion and stack recovery
 
-- [ ] In `stepMoveOrder`, when a live mobile unit blocks the next waypoint, retain the current order and retry; do not call `stopUnusablePathOrder` merely because a momentary blocker occupies the route.
-- [ ] Continue clearing an order when no statically reachable route exists.
+- [ ] In `stepMoveOrder`, when the next waypoint is occupied or replanning
+  returns `temporarily-blocked`, retain the current order and retry on the
+  existing deterministic cadence. Do not add a finite abandonment counter.
+- [ ] Continue clearing an order only when the map-derived goal-range search is
+  statically unreachable.
 - [ ] In `resolveStackedMovableUnit`, after relocation call `sourceOrderTargetPath(world, unit)` for orders that contain a path, then set `pathIndex` consistently.
 - [ ] If replanning after stack recovery produces no statically reachable path, use the existing `stopUnusablePathOrder` behavior rather than leaving an empty-path live order.
 
@@ -208,26 +236,20 @@ if (goalKeys.has(currentKey)) {
 
 **Verify**: code review of `issueGroupMoveOrder` shows one `findPath`-producing call per unit, not a can/issue/can chain.
 
-### Task 6: Make formation endpoints distinct
+### Task 6: Preserve original small-group formation offsets
 
-- [ ] Increase formation spacing to at least `1.25 * world.tileSize`.
-- [ ] Resolve each proposed slot to a tile coordinate before command issuance.
-- [ ] Keep a deterministic `reservedTiles` set per movement group. If a slot is already reserved or statically blocked, search adjacent rings for the nearest unreserved statically passable tile.
-- [ ] Return the chosen tile center as the unit's destination.
-- [ ] Preserve existing movement-kind grouping and the `< 12 units` source formation preference gate.
+- [ ] For empty-ground right-click with fewer than 12 selected units, compute
+  the integer source-tile center of the selected group.
+- [ ] Give each unit `clickedTile + (unitSourceTile - sourceCenter)`, then clamp
+  only to map bounds before normal per-unit planning.
+- [ ] Preserve the existing size/selection gate. Do not add spacing rescale,
+  passability pre-resolution, or a destination reservation set.
+- [ ] Keep explicit command-card Move behavior unchanged if it intentionally
+  sends the identical target to every selected unit.
 
-Target helper contract:
-
-```ts
-function reserveFormationDestination(
-  world: WorldState,
-  unit: WorldUnit,
-  proposed: { x: number; y: number },
-  reservedTiles: Set<string>
-): { x: number; y: number };
-```
-
-**Verify**: update `scripts/verify-source-formation-movement.mjs` to require spacing `>= 1.25` and deterministic unique tile reservation without locking exact formatting.
+**Verify**: update `scripts/verify-source-formation-movement.mjs` to require
+integer source-relative offsets for the under-12 right-click path and to reject
+the previous `0.92` rescale, without requiring a new spacing multiplier.
 
 ### Task 7: Add browser-level movement scenarios
 
@@ -237,7 +259,8 @@ function reserveFormationDestination(
 - [ ] Extend `scripts/verify-browser-fixed-demo-input.mjs` with three actual simulation scenarios using existing smoke hooks or narrowly scoped new fixture hooks:
   1. Two friendly units in a one-tile choke: the rear unit retains its move order while blocked and completes it after the front unit moves.
   2. A blocked clicked tile whose first ring candidate is isolated: the unit reaches a different valid ring tile.
-  3. A five-unit formation: all issued final destination tiles are distinct and every unit eventually stops within one tile of its assigned slot.
+  3. A five-unit open-ground formation: issued destinations preserve all five
+     source-relative tile offsets and every unit eventually reaches its slot.
 - [ ] Include a stack-recovery assertion: a displaced unit either resumes its order or cleanly becomes idle; it never keeps a live order with an empty path.
 
 **Verify**: `npm run verify:browser-fixed-demo-input` -> exits 0 and reports all movement reliability scenarios.
@@ -251,7 +274,8 @@ Expected observable behavior:
 
 - No selected unit silently drops the order at the choke.
 - Clicking a building/occupied tile sends the group to reachable nearby tiles.
-- Units settle into distinct positions rather than repeatedly stacking and jumping.
+- Small groups preserve their relative shape rather than collapsing to one
+  target; at chokes they wait and resume without repeatedly stacking/jumping.
 - Repeated group move clicks do not create a visible frame hitch at the demo selection cap.
 
 ### Task 9: Close out
@@ -268,9 +292,11 @@ Expected observable behavior:
 ## Done criteria
 
 - [ ] Temporary mobile congestion never permanently cancels a valid move-family order.
-- [ ] A blocked click reaches one of the reachable nearby candidate tiles when one exists.
+- [ ] A blocked or globally unreachable click expands to the minimum reachable
+  goal range without a fixed 12-tile cap.
 - [ ] Stack recovery never leaves a live empty-path order.
-- [ ] Formation destinations are unique at tile resolution.
+- [ ] Under-12 empty-ground right-click preserves integer source-relative
+  formation offsets; no invented spacing/reservation rule is added.
 - [ ] Group command issuance does not recompute the same path through nested can/issue calls.
 - [ ] The focused browser movement scenarios and manual crowded-base play session pass.
 - [ ] M01–M04 evidence is recorded and plan 012 has a READY review decision.
@@ -278,13 +304,21 @@ Expected observable behavior:
 ## STOP conditions
 
 - Plan 011 is not complete or its M01 replay is not READY.
-- Static/mobile blocker separation allows units to path through buildings, walls, forests, rocks, or coast restrictions.
-- The acceptable-goal A* change requires replacing the entire existing node ordering or heuristic system.
-- Unique formation assignment requires global reservation state outside one command issuance.
+- Path-planning occupancy allows live movement to overlap or treats every
+  `speed > 0` unit as currently moving.
+- Goal-range expansion requires replacing the entire existing node ordering or
+  heuristic system.
+- Formation fidelity requires a spacing multiplier or reservation state rather
+  than source-relative offsets.
 - Fixing congestion requires allowing two solid units to share a tile during ordinary movement.
 - Save schema must change even though order shapes remain the same.
 - Any focused verification fails twice after a reasonable correction.
 
 ## Maintenance notes
 
-Reviewers should stress narrow chokes, large footprints, mixed land/fly selections, and map edges. Future flow-field or cooperative-pathfinding work should replace this incrementally; it must preserve the distinction between a statically impossible route and a temporarily occupied one.
+Reviewers should stress narrow chokes, large footprints, mixed land/fly
+selections, and map edges. The TypeScript port approximates Stratagus `Moving`
+from an active remaining path; keep that approximation explicit. Future
+flow-field or cooperative-pathfinding work must preserve the distinction
+between statically impossible terrain, stationary occupancy, and currently
+moving occupancy.

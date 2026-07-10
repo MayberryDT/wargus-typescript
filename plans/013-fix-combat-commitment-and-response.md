@@ -7,18 +7,29 @@
 > **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/worldEventFeedback.ts src/main.ts scripts/verify-browser-combat-session.mjs scripts/verify-source-attack-action.mjs scripts/verify-source-fov-fog.mjs scripts/verify-source-event-audio-pan.mjs plans/evidence/013.md plans/013-fix-combat-commitment-and-response.md plans/README.md`
 > If attack orders, projectile impact, area damage, or world-event feedback changed semantically, STOP and reconcile the plan.
 
-**Goal:** Make attacks that were legal when launched resolve consistently through fog, prevent attack-move from freezing on unreachable aggro, and make idle mobile defenders engage nearby enemies with a bounded chase.
+**Goal:** Make attacks that were legal when launched resolve consistently
+through fog, prevent attack-move from freezing on unreachable aggro, and make
+idle mobile defenders engage nearby enemies then resume a saved return order.
 
-**Architecture:** Visibility gates target acquisition, not already-committed damage. Projectiles continue toward their validated target after launch, while idle automatic attacks reuse the existing attack order with explicit origin/leash metadata.
+**Architecture:** Visibility gates acquisition, not already-committed damage.
+Preserve each missile class's fixed or tracking trajectory, restore Wargus's
+actual ownership rules at impact, and let idle automatic attacks reuse the
+existing attack order with a saved return origin instead of an invented radius
+leash.
 
 **Tech Stack:** TypeScript 6 deterministic simulation, PixiJS 8 runtime/audio feedback, JSON save normalization, repo-native browser combat verifier.
 
 ## Global constraints
 
 - Read `plans/MECHANICS-ACCEPTANCE.md` and `plans/EXECUTION-GATES.md` fully before editing; both are mandatory contracts.
-- Preserve damage formulas, armor, piercing damage, cooldowns, missile speed, splash falloff, friendly-fire metadata, and spell condition rules.
+- Preserve damage formulas, armor, piercing damage, cooldowns, missile speed,
+  splash falloff, and imported missile metadata. Correct the port's
+  interpretation of Wargus `FriendlyFire`; spell/autocast conditions remain
+  pre-cast selection rules, not impact-victim filters.
 - Do not make units acquire targets through fog.
-- Do not make idle units chase indefinitely.
+- Automatic combat must restore its saved return order when the target dies,
+  disappears, becomes invalid/unreachable, or leaves current reaction range
+  without attacking the defender.
 - Hold Position must remain stationary.
 - Visible enemy combat should be audible; fully hidden combat should not reveal map information through sound.
 
@@ -37,8 +48,12 @@
 
 - Assigned scenarios: M05–M07; replay M02 and M04.
 - Before: attack-move can freeze, idle defenders can sleep beside enemies, and fog can erase launched damage.
-- After: attack-move continues, automatic pursuit is bounded, Hold Position stays put, and committed attacks resolve once.
-- Required handoff: `plans/evidence/013.md`, including HP, target-id, leash-distance, visibility, and sound timelines.
+- After: attack-move continues, automatic defenders resume their saved origin,
+  Hold Position stays put, and committed attacks resolve once with original
+  Wargus area-friendly-fire behavior.
+- Required handoff: `plans/evidence/013.md`, including HP, target-id,
+  saved-return/current-reaction distance, visibility, area-ownership, and sound
+  timelines.
 
 ## Current state
 
@@ -47,30 +62,29 @@
 - `src/simulation/orders.ts:9341-9410` uses `canProjectileTrackTarget` for both tracking and whether normal direct impact exists; that helper requires current visibility.
 - `src/simulation/orders.ts:14089-14110` and `14888-14906` filter splash/area victims by current caster visibility.
 - `src/view/worldEventFeedback.ts:50-73` plays death and sound events only when `event.player` is the local player, even when an enemy event is currently visible.
-- `WorldOrder` attack orders have no automatic-chase origin/leash metadata.
+- `WorldOrder` attack orders have no automatic saved-return metadata.
 
 ## Interfaces
 
 Extend only the existing attack order:
 
 ```ts
-type AttackLeash = {
-  originX: number;
-  originY: number;
-  radius: number;
-};
+type AutomaticAttackReturn = { x: number; y: number };
 
 // Fields added to the existing attack order member.
-autoLeash: AttackLeash | null;
+autoReturn: AutomaticAttackReturn | null;
 ```
 
-Every explicit player/AI attack sets `autoLeash: null`. Only `stepDefensiveAutoAttack` creates a non-null leash. Save normalization must default missing data to `null` for backward compatibility.
+Every explicit player/AI attack sets `autoReturn: null`. Only
+`stepDefensiveAutoAttack` captures the unit's exact current position. Save
+normalization defaults missing data to `null` for backward compatibility.
 
-Split projectile predicates by responsibility:
+Split projectile predicates by responsibility and preserve missile class:
 
 ```ts
-function canProjectileContinueToTarget(...): target is WorldUnit; // no visibility check
-function canAcquireOrRevealTarget(...): boolean;                  // visibility remains here
+function canCommittedProjectileHitStoredTarget(...): target is WorldUnit; // no visibility check
+function sourceProjectileTracksTarget(projectile: WorldProjectile): boolean;
+function canAcquireOrRevealTarget(...): boolean; // visibility remains here
 ```
 
 Add a feedback predicate:
@@ -82,9 +96,17 @@ function isWorldEventAudibleToLocalPlayer(world: WorldState, event: { player: nu
 ## Design decision and rollback
 
 - **Rejected:** re-check visibility at impact; that is the bug and makes legal attacks nondeterministically disappear.
-- **Rejected:** convert auto-response into a new top-level order kind; it duplicates the existing attack state machine and broadens save compatibility.
-- **Chosen:** let validated projectiles track their committed target and add optional leash metadata to ordinary attack orders. Acquisition remains visibility-gated.
-- **Rollback trigger:** M06 damages a target that was never legal at launch, M07 leaks auto-leash behavior into explicit player attacks, or hidden enemy audio increments playback. Restore the last isolated checkpoint and retain the other accepted combat slices.
+- **Rejected:** an origin-radius auto leash. Installed Stratagus saves an
+  attack-move return order and retains targets by reaction range around the
+  moving defender; it has no anchor-distance cutoff.
+- **Rejected:** make every projectile track a moving target. Ordinary Wargus
+  arrows/axes snapshot their destination; only tracer-class missiles update it.
+- **Chosen:** use optional saved-return metadata on ordinary attacks, preserve
+  missile trajectory class, remove visibility from committed impact, and
+  reproduce source ownership rules for area damage.
+- **Rollback trigger:** M06 damages a target that was never legal at launch,
+  area victims contradict the source matrix, M07 leaks auto-return behavior
+  into explicit attacks, or hidden enemy audio increments playback.
 
 ## Scope
 
@@ -149,26 +171,40 @@ if (path.length === 0 && !isInAttackRange(unit, target, world)) {
 
 **Verify**: `./node_modules/.bin/tsc --noEmit` -> exit 0.
 
-### Task 3: Add bounded idle auto-chase
+### Task 3: Add source-like idle auto-chase and saved return
 
-- [ ] Add `autoLeash` to the attack member of `WorldOrder` in `src/simulation/world.ts`.
-- [ ] Update every explicit attack-order constructor to set `autoLeash: null`.
-- [ ] In `stepDefensiveAutoAttack`, when a mobile unit finds an enemy inside reaction range but outside weapon range, create an attack order whose leash origin is the unit's current point and whose radius is `sourceReactionRangeForUnit(world, unit)`.
-- [ ] In `stepAttackOrder`, when `autoLeash` is non-null, abandon the target if the unit or target moves beyond the leash radius from the origin. Issue a normal move back to the origin; after arrival the unit becomes idle.
-- [ ] Use the same return-to-origin helper when an auto-leashed target dies,
-  disappears, or otherwise becomes invalid. A successful defensive kill must
-  not leave the defender idle at the fight location.
-- [ ] Keep defensive buildings firing only at weapon range and keep Hold Position unchanged.
-- [ ] Throttle reacquisition with the existing `nextAutoActionTick`; do not scan every frame.
+- [ ] Add `autoReturn` to the attack member of `WorldOrder` in
+  `src/simulation/world.ts`.
+- [ ] Update every explicit player/AI attack constructor to set
+  `autoReturn: null`.
+- [ ] In `stepDefensiveAutoAttack`, when an idle aggressive mobile unit finds a
+  reachable enemy inside reaction range, capture the unit's exact current point
+  and issue an automatic attack with that saved return.
+- [ ] While automatic combat is active, retain a valid target when it is inside
+  reaction range of the defender's current position or is attacking the
+  defender from its own weapon range. Do not compare target/defender distance
+  with the saved origin.
+- [ ] When the target dies, disappears, becomes invalid/unreachable, or leaves
+  current reaction range without the attacked-by-target exception, issue an
+  attack-move back to `autoReturn`. This return may acquire another enemy; once
+  it reaches the saved point the unit becomes idle.
+- [ ] Keep defensive buildings firing only at weapon range and keep Hold
+  Position stationary.
+- [ ] Throttle acquisition with the existing `nextAutoActionTick`; do not scan
+  every frame.
 
-**Verify**: `npm run verify:source-attack-action` -> exits 0 after it asserts the leash shape and explicit attacks' `null` leash.
+**Verify**: `npm run verify:source-attack-action` -> exits 0 after it asserts
+saved-return shape, current-position reaction retention, explicit attacks'
+`null` return, and Hold Position's no-move rule.
 
-### Task 4: Preserve the leash across save/load
+### Task 4: Preserve the automatic return across save/load
 
-- [ ] In `normalizeLoadedOrder`, normalize attack `autoLeash` when it is a finite object inside map bounds; otherwise use `null`.
-- [ ] Clamp the radius to `0..64 * tileSize`.
+- [ ] In `normalizeLoadedOrder`, normalize attack `autoReturn` when it is a
+  finite world point inside map bounds; otherwise use `null`.
 - [ ] Old saves without the field must load as explicit ordinary attacks.
-- [ ] Ensure `hasInvalidLoadedAttackOrder` validates the target/path as before and does not reject a valid leash solely because the target is temporarily outside current visibility.
+- [ ] Ensure `hasInvalidLoadedAttackOrder` validates target/path as before and
+  does not reject a valid return solely because the target is temporarily
+  outside current visibility.
 
 Target normalization shape:
 
@@ -178,7 +214,7 @@ return targetId ? {
   targetId,
   targetX,
   targetY,
-  autoLeash: normalizeLoadedAttackLeash(world, record.autoLeash),
+  autoReturn: normalizeWorldPointOrNull(world, record.autoReturn),
   path,
   pathIndex
 } : null;
@@ -186,21 +222,40 @@ return targetId ? {
 
 **Verify**: `npm run verify:save-schema` -> exits 0.
 
-### Task 5: Separate projectile commitment from visibility
+### Task 5: Separate projectile commitment from visibility and trajectory
 
-- [ ] Replace `canProjectileTrackTarget` with `canProjectileContinueToTarget` that checks only live target, ownership/friendly-fire legality, and target land/sea/air compatibility.
-- [ ] Continue updating projectile target coordinates while that predicate is true, even after the target leaves vision.
-- [ ] On impact, apply direct/splash damage when the committed target remains valid. If it died or transformed into an invalid target kind, retain the existing ground-impact behavior for siege/cannon/bounce projectiles and discard ordinary projectiles.
-- [ ] Do not call target acquisition from the projectile step.
+- [ ] Replace `canProjectileTrackTarget` with a committed-target validity
+  predicate that does not read current visibility and never acquires a new
+  target.
+- [ ] Preserve trajectory class: ordinary point-to-point arrows/axes keep their
+  launch-time impact coordinates; only tracer-class projectiles update target
+  coordinates in flight.
+- [ ] On impact, apply direct damage once when the stored target is still alive
+  and compatible. If it died or transformed into an invalid target kind,
+  retain existing ground-impact behavior for siege/cannon/area projectiles and
+  discard ordinary direct projectiles.
+- [ ] Do not re-run acquisition, fog visibility, or pre-launch selection rules
+  from the projectile step.
 
 **Verify**: `rg -n 'isUnitVisibleToPlayer\(world, target, projectile.player\)' src/simulation/orders.ts` -> no match inside projectile continuation/impact logic.
 
-### Task 6: Remove visibility from already-cast area damage
+### Task 6: Restore already-cast area damage and source ownership rules
 
 - [ ] In `applySplashDamage`, `tickAreaDamageSpell`, and
-  `tickWhirlwindSpell`, remove only the current-visibility filter.
-- [ ] Preserve source spell condition checks, ownership/friendly-fire checks, radius, unit liveness, and unit-kind rules.
-- [ ] Do not change spell target selection before casting.
+  `tickWhirlwindSpell`, remove current-visibility filtering.
+- [ ] Reproduce the installed source matrix rather than the TypeScript
+  interpretation of the flag name:
+  - Demolish damages every alive non-flying unit in range, including caster,
+    owner, allies, enemies, and neutrals.
+  - Wargus Blizzard, Death and Decay, Whirlwind, and default splash missiles
+    have `friendlyFire: false`, which in Stratagus means no ownership filter;
+    `canHitOwner: false` excludes only the actual caster/source unit.
+  - When a missile explicitly sets `friendlyFire: true`, exclude the source
+    player's units as Stratagus does; allied players are still targetable.
+- [ ] Preserve radius, liveness, target-kind/CanTarget rules, damage/falloff,
+  and caster exclusion metadata. Do not reapply autocast/location-selection
+  conditions to impact victims.
+- [ ] Do not change target selection before casting.
 
 **Verify**: `npm run verify:source-fov-fog` -> exits 0 after its expectations distinguish acquisition visibility from committed damage.
 
@@ -223,8 +278,12 @@ return targetId ? {
   1. Launch an arrow, remove target visibility before impact, confirm HP still decreases once.
   2. Start Blizzard/Death and Decay, move sight away during pulses, confirm valid units inside the area continue taking damage.
   3. Put an unreachable enemy inside attack-move reaction range, confirm the attacker resumes the original destination.
-  4. Put an enemy just outside melee range but inside reaction range, confirm the idle defender chases, attacks, and returns within one tile of its origin.
+  4. Put an enemy just outside melee range but inside reaction range, confirm
+     the idle defender chases, attacks, and attack-moves back within one tile of
+     its saved origin after combat ends.
   5. Confirm Hold Position does not chase.
+- [ ] Add ownership fixtures for Demolish and one default area spell: own unit,
+  allied unit, enemy, neutral, caster/source. Assert the source matrix above.
 - [ ] Record at least one visible-enemy combat audio start and confirm a hidden enemy event does not increment playback.
 
 **Verify**: `npm run verify:browser-combat-session` -> exits 0 and reports all five scenarios.
@@ -237,7 +296,8 @@ return targetId ? {
 Expected observable behavior:
 
 - Attack-move does not freeze on the inaccessible unit.
-- Idle Footmen step forward to engage and return rather than sleeping or chasing forever.
+- Idle Footmen step forward to engage and return after automatic combat ends;
+  Hold Position never moves.
 - Launched missiles still land when sight changes.
 - Visible enemy attacks and deaths have positional sound.
 
@@ -256,11 +316,12 @@ Expected observable behavior:
 ## Done criteria
 
 - [ ] Attack-move resumes after rejecting an unreachable aggro target.
-- [ ] Idle mobile attackers chase within reaction range and return within a bounded leash.
+- [ ] Idle mobile attackers retain automatic targets by current reaction rules
+  and resume an attack-move to their saved origin when combat ends.
 - [ ] Hold Position and defensive buildings retain their intended behavior.
 - [ ] Legal launched projectiles and active area effects are not cancelled by fog.
 - [ ] Visible enemy combat is audible without leaking fully hidden combat.
-- [ ] Old saves load attack orders with `autoLeash: null`.
+- [ ] Old saves load attack orders with `autoReturn: null`.
 - [ ] Browser combat scenarios and manual fog-boundary skirmish pass.
 - [ ] M02 and M04–M07 evidence is recorded and plan 013 has a READY review decision.
 
@@ -269,10 +330,14 @@ Expected observable behavior:
 - The fix requires changing damage, armor, cooldown, or missile-speed values.
 - A committed projectile starts acquiring a new target after launch.
 - Enemy audio cannot be visibility-gated without exposing hidden-unit information.
-- Auto-chase requires a new top-level order kind rather than the optional leash metadata.
+- Auto-response requires a new top-level order kind rather than optional saved
+  return metadata on the existing attack order.
 - Plan 012's movement behavior is not complete or attack-move still drops orders due transient blockers.
 - Any focused verification fails twice after a reasonable correction.
 
 ## Maintenance notes
 
-Reviewers should distinguish acquisition, continuation, and impact; visibility belongs only in acquisition. Future stances should reuse `autoLeash` semantics rather than adding another independent chase implementation.
+Reviewers should distinguish acquisition, trajectory, and impact; visibility
+belongs only in acquisition. Ordinary point-to-point missiles are committed
+without becoming tracers. Future stances should reuse saved-return semantics
+rather than adding an independent radius leash.

@@ -58,3 +58,19 @@ Confirmed construction lifecycle at the installed Stratagus commit:
 - Oil-platform travel follows the same unpaid/interruptible phase boundary;
   source platform definitions omit `BuilderOutside`, so arrival removes the
   tanker inside the paid foundation until completion or cancellation.
+
+Confirmed movement and combat contracts at the installed Stratagus commit:
+
+- A* treats currently moving occupants as cost-5 crossings and stationary
+  occupants as blockers; live movement still forbids overlap. Ordinary Move
+  waits/retries and expands acceptable goal range after an unreachable search.
+- Empty-ground right-click for groups under 12 preserves integer source-tile
+  offsets around the selection center; it does not rescale or reserve slots.
+- Attack-move drops unreachable automatic aggro and resumes its original point.
+  Idle auto-response saves an attack-move back to the defender's current point;
+  it has no origin-radius leash.
+- Ordinary point-to-point arrows/axes snapshot their impact point; only tracer
+  missiles track. Already-launched impact is not cancelled by fog.
+- Demolish damages all alive non-flying units in range. Default Wargus area
+  missiles damage owner/allies/enemies/neutrals while excluding only their
+  source caster when `CanHitOwner` is false.

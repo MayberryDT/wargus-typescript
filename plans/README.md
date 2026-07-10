@@ -60,7 +60,8 @@ Each plan was optimized against this 100-point rubric:
 - 009 depends on 007 because the shared browser verifier harness must inherit the corrected process cleanup behavior.
 - 010 depends on 008 because the modern HUD layout verifier should be part of the full gate before it becomes the primary speed-control contract.
 - 012 depends on 011 because both modify `orders.ts`; construction retask ownership must land and replay as M01 before movement-order recovery takes the hotspot.
-- 013 depends on 012 because attack-move recovery and bounded auto-chase need movement orders that survive transient congestion.
+- 013 depends on 012 because attack-move recovery and automatic return orders
+  need movement intent that survives transient congestion.
 - 014 depends on 011-013 because AI timing cannot be judged while its builder,
   movement, or combat orders can silently fail, and on 015 so AI execution is
   evaluated against the completed source-faithful producer graph.
