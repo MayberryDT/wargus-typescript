@@ -88,8 +88,9 @@ try {
   await client.send("Page.enable");
   await client.send("Runtime.enable");
   await client.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  const loadEvent = client.waitFor("Page.loadEventFired", 20_000);
   await client.send("Page.navigate", { url: URL });
-  await client.waitFor("Page.loadEventFired", 20_000);
+  await loadEvent;
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
   await waitForExpression(client, [
     "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\"",
@@ -180,8 +181,9 @@ try {
   await verifySourceCancelCommands();
   await verifyConstructionLifecycle();
 
+  let completionMessage = "";
   if (CONSTRUCTION_ONLY) {
-    console.log("Exact-seed construction lifecycle fixture passed.");
+    completionMessage = "Exact-seed construction lifecycle fixture passed.";
   } else {
   const rallyStart = await selectFixtureUnitType("unit-human-barracks");
   const movePending = await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('move')");
@@ -259,11 +261,12 @@ try {
   console.log(formatSkipSummary("Source command no-key hotkey skips", sourceHotkeys.noKeySkips));
   console.log(formatSkipSummary("Source command duplicate hotkey skips", sourceHotkeys.duplicateSkips));
 
+  completionMessage = `Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`;
+  }
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
-  console.log(`Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`);
-  }
+  console.log(completionMessage);
 } finally {
   client?.close();
   await stopProcess(chrome);
@@ -478,7 +481,8 @@ async function verifyConstructionLifecycle() {
     throw new Error(`Legacy target-only build orders must migrate to a live paid inside-builder foundation: ${JSON.stringify(result)}`);
   }
   if (
-    result.invalidPhaseRoundtrip?.builderOrder !== null
+    result.validExplicitConstructingRoundtrip?.builderOrder !== "build"
+    || result.invalidPhaseRoundtrip?.builderOrder !== null
     || result.emptyBuilderRoundtrip?.builderOrder !== null
     || result.otherBuilderRoundtrip?.builderOrder !== null
   ) {

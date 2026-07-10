@@ -1627,15 +1627,6 @@ if (browserSmokeStateEnabled) {
       buildingTypeId: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.buildingTypeId : null,
       unitIdOrder: pendingLoaded?.world.units.map((unit) => unit.id) ?? []
     };
-    const invalidPhaseSave = JSON.parse(pendingSaveJson) as { world?: { units?: Array<Record<string, unknown>> } };
-    const invalidPhaseBuilder = invalidPhaseSave.world?.units?.find((unit) => unit.id === builder.id);
-    if (invalidPhaseBuilder?.order && typeof invalidPhaseBuilder.order === "object") {
-      (invalidPhaseBuilder.order as Record<string, unknown>).phase = "invalid";
-    }
-    const invalidPhaseLoaded = loadSavedGameJson(activeManifest, JSON.stringify(invalidPhaseSave));
-    const invalidPhaseRoundtrip = {
-      builderOrder: invalidPhaseLoaded?.world.units.find((unit) => unit.id === builder.id)?.order?.kind ?? null
-    };
     let foundation = fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction);
     for (let ticks = 0; !foundation && ticks < 3000; ticks += 1) {
       simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
@@ -1677,6 +1668,31 @@ if (browserSmokeStateEnabled) {
       builderOrder: legacyLoadedBuilder?.order?.kind ?? null,
       foundationTypeId: legacyLoadedFoundation?.typeId ?? null
     };
+    const explicitConstructingSave = JSON.parse(JSON.stringify(legacySave)) as { world?: { units?: Array<Record<string, unknown>> } };
+    const explicitConstructingBuilder = explicitConstructingSave.world?.units?.find((unit) => unit.id === builder.id);
+    const explicitConstructingFoundation = explicitConstructingSave.world?.units?.find((unit) => unit.id === foundation.id);
+    if (explicitConstructingBuilder?.order && typeof explicitConstructingBuilder.order === "object") {
+      (explicitConstructingBuilder.order as Record<string, unknown>).phase = "constructing";
+    }
+    if (explicitConstructingFoundation) {
+      explicitConstructingFoundation.typeId = "unit-dark-portal";
+      if (explicitConstructingFoundation.construction && typeof explicitConstructingFoundation.construction === "object") {
+        (explicitConstructingFoundation.construction as Record<string, unknown>).builderInside = false;
+      }
+    }
+    const validExplicitConstructingLoaded = loadSavedGameJson(activeManifest, JSON.stringify(explicitConstructingSave));
+    const validExplicitConstructingRoundtrip = {
+      builderOrder: validExplicitConstructingLoaded?.world.units.find((unit) => unit.id === builder.id)?.order?.kind ?? null
+    };
+    const invalidPhaseSave = JSON.parse(JSON.stringify(explicitConstructingSave)) as { world?: { units?: Array<Record<string, unknown>> } };
+    const invalidPhaseBuilder = invalidPhaseSave.world?.units?.find((unit) => unit.id === builder.id);
+    if (invalidPhaseBuilder?.order && typeof invalidPhaseBuilder.order === "object") {
+      (invalidPhaseBuilder.order as Record<string, unknown>).phase = "invalid";
+    }
+    const invalidPhaseLoaded = loadSavedGameJson(activeManifest, JSON.stringify(invalidPhaseSave));
+    const invalidPhaseRoundtrip = {
+      builderOrder: invalidPhaseLoaded?.world.units.find((unit) => unit.id === builder.id)?.order?.kind ?? null
+    };
     const mismatchedBuilderRoundtrip = (builderId: string) => {
       const invalidSave = JSON.parse(JSON.stringify(legacySave)) as { world?: { units?: Array<Record<string, unknown>> } };
       const invalidFoundation = invalidSave.world?.units?.find((unit) => unit.id === foundation.id);
@@ -1692,7 +1708,7 @@ if (browserSmokeStateEnabled) {
     const otherBuilderRoundtrip = mismatchedBuilderRoundtrip(enemy.id);
     const cancelled = issueCancelConstructionOrder(fixtureWorld, foundation.id);
     const cancel = snapshot();
-    return { ok: cancelled, costs, placement, before, planned, pending, pendingRoundtrip, invalidPhaseRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, emptyBuilderRoundtrip, otherBuilderRoundtrip, cancel };
+    return { ok: cancelled, costs, placement, before, planned, pending, pendingRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, validExplicitConstructingRoundtrip, invalidPhaseRoundtrip, emptyBuilderRoundtrip, otherBuilderRoundtrip, cancel };
   };
   window.__WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__ = (casterTypeId, spellId) => {
     if (!world || !manifest) {
