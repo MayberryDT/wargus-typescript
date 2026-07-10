@@ -1,4 +1,4 @@
-# Plan 015: Make Every Advertised Demo Unit Reachable — Implementation Plan
+# Plan 015: Complete And Extend The Fixed-Demo Advanced Tech Paths — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
@@ -7,7 +7,9 @@
 > **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/wargus/demoScenario.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-browser-command-card-session.mjs scripts/verify-browser-train-session.mjs plans/evidence/015.md plans/015-complete-demo-tech-paths.md plans/README.md`
 > If the fixed-demo allowed-unit list or advanced build-page behavior changed, STOP and reconcile.
 
-**Goal:** Ensure every advanced unit already advertised by the fixed demo has a complete player-buildable producer and prerequisite path from the one-Peasant opening.
+**Goal:** Close the missing producer paths for the fixed demo's current advanced
+roster, then deliberately add the four source-faithful Inventor/Alchemist units
+with complete player-buildable paths from the one-Peasant opening.
 
 **Architecture:** Use the existing manifest buttons, dependency rules, build mappings, production functions, and unrestricted demo upgrade list. Add only the scenario allow-list producer links missing from the existing reachability graph.
 
@@ -45,10 +47,11 @@
 
 ## Current state
 
-`src/wargus/demoScenario.ts:127-174` allows these advanced combat units:
+`src/wargus/demoScenario.ts:127-174` currently allows these advanced combat
+units:
 
-- Human: Knight, Paladin, Ballista, Mage, Gryphon Rider, Flying Machine, Dwarves.
-- Orc: Ogre, Ogre Mage, Catapult, Death Knight, Dragon, Zeppelin, Goblin Sappers.
+- Human: Knight, Paladin, Ballista, Mage, Gryphon Rider.
+- Orc: Ogre, Ogre Mage, Catapult, Death Knight, Dragon.
 
 It already allows Stables/Ogre Mound and Gryphon Aviary/Dragon Roost, but omits:
 
@@ -58,6 +61,11 @@ It already allows Stables/Ogre Mound and Gryphon Aviary/Dragon Roost, but omits:
 - `unit-temple-of-the-damned`
 - `unit-inventor`
 - `unit-alchemist`
+
+Flying Machine, Dwarves, Zeppelin, and Goblin Sappers are not currently
+advertised by the scenario. Adding Inventor/Alchemist therefore also requires
+an explicit, source-faithful four-unit roster expansion; otherwise those new
+producer buildings would have no usable demo output.
 
 The runtime already knows how to build them:
 
@@ -71,9 +79,12 @@ The runtime already knows how to build them:
 
 ## Design decision and rollback
 
-- **Rejected:** remove Paladin/Mage/Death Knight/siege units from the advertised roster; that narrows the game instead of finishing the existing mechanics.
+- **Rejected:** remove Paladin/Mage/Death Knight from the advertised roster;
+  that narrows the game instead of finishing the existing mechanics.
 - **Rejected:** bypass prerequisites or pre-place producers; both contradict the one-Peasant base-building premise.
-- **Chosen:** allow the six missing producers and leave the manifest dependency graph authoritative.
+- **Chosen:** allow the six missing producers, explicitly add the four normal
+  Inventor/Alchemist outputs, and leave the manifest dependency graph
+  authoritative.
 - **Rollback trigger:** any producer lacks complete manifest art/buttons/production data, or M10 requires a source dependency bypass. Remove only the unsupported producer addition and report the exact broken graph edge.
 
 ## Scope
@@ -162,15 +173,20 @@ Target additions:
 ### Task 5: Exercise production and conversion paths
 
 - [ ] Extend `scripts/verify-browser-train-session.mjs` with data-driven fixtures using the existing fixture hooks:
-  - Church converts/trains the path needed for Paladin availability and exposes Paladin research.
-  - Altar exposes Ogre Mage conversion research.
+  - Church researches Paladin. Completion converts existing Knights to
+    Paladins and unlocks direct Paladin training at the Barracks.
+  - Altar researches Ogre Mage. Completion converts existing Ogres to Ogre
+    Mages and unlocks direct Ogre Mage training at the Barracks.
   - Mage Tower trains Mage.
   - Temple trains Death Knight.
   - Human Barracks trains Ballista.
   - Orc Barracks trains Catapult.
   - Inventor trains Flying Machine and Dwarves.
   - Alchemist trains Zeppelin and Goblin Sappers.
-- [ ] For conversion-based units, verify the prerequisite base unit and research path instead of expecting direct training if the manifest says conversion.
+- [ ] For Paladin/Ogre Mage, verify both halves of the source mechanic:
+  research completion converts an existing Knight/Ogre, and the upgraded unit
+  becomes directly trainable from the Barracks afterward. Do not expect a
+  Church/Altar production queue.
 - [ ] For each directly trained unit, verify resource deduction, queue progress, completion, spawn, and supply reservation/release using the existing train-session conventions.
 
 **Verify**: `npm run verify:browser-train-session` -> exits 0 and reports all
@@ -187,7 +203,8 @@ ten source-faithful advanced paths.
 
 Expected observable behavior:
 
-- Every advertised unit has a visible, comprehensible producer path.
+- Every current advertised advanced unit has a visible, comprehensible path,
+  and the four deliberate Inventor/Alchemist additions are likewise usable.
 - No advanced button remains permanently disabled once its true prerequisites are completed.
 - Advanced units enter the normal production queue and spawn like existing units.
 
