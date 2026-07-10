@@ -1811,6 +1811,12 @@ export function issueSourceRightButtonOrder(world: WorldState, unitIds: string[]
       ? issueGroupQueueSmartOrderWithDestinations(world, unitIds, movableUnits, x, y, playerId, destinations)
       : issueGroupSmartOrderWithDestinations(world, unitIds, movableUnits, x, y, playerId, destinations);
   }
+  const objectClick = isSmartOrderObjectClick(world, x, y, playerId);
+  if (objectClick) {
+    return queue
+      ? issueGroupQueueSmartOrder(world, unitIds, x, y, playerId)
+      : issueGroupSmartOrRallyOrder(world, unitIds, x, y, playerId);
+  }
   const targetIssued = queue
     ? issueGroupQueueAttackTargetAtOrder(world, unitIds, x, y, playerId)
     : issueGroupAttackTargetAtOrder(world, unitIds, x, y, playerId);

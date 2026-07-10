@@ -1718,7 +1718,8 @@ if (browserSmokeStateEnabled) {
     }
     const definition = world.unitDefinitions.find((candidate) => candidate.id === "unit-footman");
     const tankerDefinition = world.unitDefinitions.find((candidate) => candidate.id === "unit-human-oil-tanker");
-    if (!definition || !tankerDefinition) {
+    const farmDefinition = world.unitDefinitions.find((candidate) => candidate.id === "unit-farm");
+    if (!definition || !tankerDefinition || !farmDefinition) {
       return { ok: false, error: "missing movement fixture definition" };
     }
     const createFixtureWorld = (width: number, height: number, landTiles: Array<{ x: number; y: number }>, initialTile = 0x080): WorldState => {
@@ -2138,6 +2139,44 @@ if (browserSmokeStateEnabled) {
           y: order && "targetY" in order ? Math.floor(order.targetY / commandCard.fixtureWorld.tileSize) : -1
         };
       });
+      const summarizeObjectOrders = (objectUnits: WorldUnit[]) => objectUnits.map((unit) => ({
+        id: unit.id,
+        kind: unit.order?.kind ?? null,
+        targetId: unit.order && "targetId" in unit.order ? unit.order.targetId : null
+      }));
+
+      const mobileObject = prepareWorld();
+      mobileObject.fixtureWorld.engineSettings.rightButtonAction = "attack";
+      const mobileTarget = unitAt(mobileObject.fixtureWorld, "__smoke-fixture-m04-mobile-target", 10, 7);
+      mobileObject.fixtureWorld.units.push(mobileTarget);
+      const mobileObjectIssued = issueSourceRightButtonOrder(
+        mobileObject.fixtureWorld,
+        mobileObject.units.map((unit) => unit.id),
+        mobileTarget.x,
+        mobileTarget.y,
+        false,
+        mobileObject.fixtureWorld.visibilityPlayer
+      );
+
+      const staticObject = prepareWorld();
+      staticObject.fixtureWorld.engineSettings.rightButtonAction = "attack";
+      const staticTarget = createWorldUnit({
+        unit: farmDefinition,
+        id: "__smoke-fixture-m04-static-target",
+        player: staticObject.fixtureWorld.visibilityPlayer,
+        tileX: 10,
+        tileY: 7,
+        tileset: null
+      });
+      staticObject.fixtureWorld.units.push(staticTarget);
+      const staticObjectIssued = issueSourceRightButtonOrder(
+        staticObject.fixtureWorld,
+        staticObject.units.map((unit) => unit.id),
+        staticTarget.x,
+        staticTarget.y,
+        false,
+        staticObject.fixtureWorld.visibilityPlayer
+      );
 
       return {
         issued,
@@ -2154,6 +2193,17 @@ if (browserSmokeStateEnabled) {
         overlapTicks,
         completed: completedIds.size === units.length,
         commandCardTargets,
+        attackModeObjectOrders: {
+          mobile: {
+            issued: mobileObjectIssued,
+            targetId: mobileTarget.id,
+            orders: summarizeObjectOrders(mobileObject.units)
+          },
+          static: {
+            issued: staticObjectIssued,
+            orders: summarizeObjectOrders(staticObject.units)
+          }
+        },
         issueDurationMs,
         maximumUpdateMs,
         averageUpdateMs: updateCount > 0 ? totalUpdateMs / updateCount : 0
@@ -2173,7 +2223,8 @@ if (browserSmokeStateEnabled) {
       liveEmptyPathTicks: result.liveEmptyPathTicks,
       overlapTicks: result.overlapTicks,
       completed: result.completed,
-      commandCardTargets: result.commandCardTargets
+      commandCardTargets: result.commandCardTargets,
+      attackModeObjectOrders: result.attackModeObjectOrders
     });
     const liveFootprintApproach = (direction: "west" | "up") => {
       const fixtureWorld = createFixtureWorld(12, 12, [], 0);

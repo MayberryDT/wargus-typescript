@@ -25,6 +25,8 @@ for (const fragment of [
 }
 
 for (const fragment of [
+  "if (dest != nullptr && unit.CurrentAction() != UnitAction::Built)",
+  "if (DoRightButton_AttackUnit(unit, *dest, pos, flush, acknowledged))",
   "dest == nullptr && sz < 12 && Preference.FormationMovement",
   "const short magicBoxSize = 7",
   "if (max.x - min.x > magicBoxSize)",
@@ -63,6 +65,8 @@ for (const [name, source, fragments] of [
     "Math.min(world.map.height - 1",
     "sourceTileToPlannerPoint(world, unit, assignedTile)",
     "issueSourceRightButtonOrder",
+    "const objectClick = isSmartOrderObjectClick(world, x, y, playerId)",
+    "if (objectClick)",
     "issueGroupSmartOrderWithDestinations",
     "issueGroupAttackMoveOrderWithDestinations",
     "const planned = planMoveOrder(world, unit, destination.x, destination.y)",

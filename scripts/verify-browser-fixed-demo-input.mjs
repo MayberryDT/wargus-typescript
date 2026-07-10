@@ -218,6 +218,21 @@ try {
   ) {
     throw new Error(`Explicit command-card Move should send one common clicked tile to all five units: ${JSON.stringify(routeSemantics.m04?.commandCardTargets)}`);
   }
+  if (
+    routeSemantics.m04?.attackModeObjectOrders?.mobile?.issued !== true
+    || !Array.isArray(routeSemantics.m04.attackModeObjectOrders.mobile.orders)
+    || routeSemantics.m04.attackModeObjectOrders.mobile.orders.length !== 5
+    || routeSemantics.m04.attackModeObjectOrders.mobile.orders.some((order) => (
+      order.kind !== "follow"
+      || order.targetId !== routeSemantics.m04.attackModeObjectOrders.mobile.targetId
+    ))
+    || routeSemantics.m04?.attackModeObjectOrders?.static?.issued !== true
+    || !Array.isArray(routeSemantics.m04.attackModeObjectOrders.static.orders)
+    || routeSemantics.m04.attackModeObjectOrders.static.orders.length !== 5
+    || routeSemantics.m04.attackModeObjectOrders.static.orders.some((order) => order.kind !== "move")
+  ) {
+    throw new Error(`Attack-mode object right-clicks should follow friendly mobile units or issue ordinary common-point Moves to friendly static units without formation Attack-Move fallback: ${JSON.stringify(routeSemantics.m04?.attackModeObjectOrders)}`);
+  }
   const loadedState = await readSmokeState(client);
   const loadedCounts = loadedState.ownedUnitCounts ?? {};
   const loadedResources = loadedState.visibilityPlayerResources ?? {};
