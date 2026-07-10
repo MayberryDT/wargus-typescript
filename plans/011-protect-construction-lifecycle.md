@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving on. If a STOP condition occurs, stop and report; do not improvise. When done, update this plan's status in `plans/README.md` unless a coordinator owns the index.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/sourceUiHelpers.ts src/main.ts scripts/verify-browser-command-card-session.mjs scripts/verify-fixed-demo-random-ai.mjs plans/evidence/011.md plans/011-protect-construction-lifecycle.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/sourceUiHelpers.ts src/main.ts scripts/verify-browser-command-card-session.mjs scripts/verify-construction-definitions.mjs scripts/verify-fixed-demo-random-ai.mjs plans/evidence/011.md plans/011-protect-construction-lifecycle.md plans/README.md`
 > If any in-scope file changed, compare the current-state excerpts below with the live code. A semantic mismatch is a STOP condition.
 
 **Goal:** Match installed Wargus construction: placement creates a cancellable
@@ -129,6 +129,7 @@ Extend the existing build order instead of adding a new top-level order kind:
   build order from its `buildingTypeId`
 - `src/main.ts` only for a smoke-mode, data-only M01 scenario hook
 - `scripts/verify-browser-command-card-session.mjs`
+- `scripts/verify-construction-definitions.mjs`
 - `scripts/verify-fixed-demo-random-ai.mjs`
 - `plans/evidence/011.md` (create during execution)
 - `plans/README.md`
@@ -259,6 +260,7 @@ Expected observable behavior:
 - [ ] Run `./node_modules/.bin/tsc --noEmit`.
 - [ ] Run `npm run verify:browser-command-card-session`.
 - [ ] Run `npm run verify:fixed-demo-random-ai`.
+- [ ] Run `npm run verify:constructions`.
 - [ ] Run `npm run verify:save-schema`.
 - [ ] Run `git diff --check`.
 - [ ] Confirm `git status --short` lists only the in-scope source/verifier files and the plan index.
