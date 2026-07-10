@@ -4,6 +4,7 @@ dist/
 .codex/
 .git-local/
 .worktrees/
+.superpowers/
 *.log
 
 # Local Netlify folder
