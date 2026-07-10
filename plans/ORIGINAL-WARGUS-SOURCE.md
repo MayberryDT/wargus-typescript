@@ -85,10 +85,15 @@ Confirmed movement and combat contracts at the installed Stratagus commit:
 
 Confirmed source-AI contracts:
 
-- Each AI runs once per simulated second. Its script advances until a sleep or
-  unmet wait blocks; the installed launcher leaves the initial land-AI sleep at
+- Each AI's complete script/resource/force/exploration manager runs once per
+  simulated second, independent of difficulty. Difficulty scales explicit
+  script sleeps, not the whole think. The script advances until a sleep or
+  unmet wait blocks; the installed launcher leaves initial land/air AI sleep at
   zero cycles.
 - `AiNeed` adds one desired request. `AiSet` changes the absolute desired count.
+- Base Tower requests and Guard/Cannon Tower `upgrade-to` requests remain
+  distinct. Installed land AI also performs four Blacksmith weapon/armor
+  research instructions before declaring its first attack force.
 - `AiAttackWithForce` immediately launches members into a detached internal
   force, resets the scripted slot, and continues to the next barrier in the
   same think. Launched members do not replenish or satisfy the next force.
@@ -97,7 +102,8 @@ Confirmed source-AI contracts:
 - Source speed values are percentages: 75/100/100/120/150 correspond to runtime
   factors 0.75/1/1/1.2/1.5.
 - Exploration reads the AI player's own explored map and is attempted at most
-  every five simulated seconds.
+  every five simulated seconds; maintaining that player's knowledge remains a
+  separate bounded update.
 
 Confirmed fixed-demo/source boundary:
 
