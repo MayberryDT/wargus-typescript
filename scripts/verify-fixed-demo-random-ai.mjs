@@ -54,6 +54,9 @@ expect(saveGame, "normalizeAiSourceScriptForceRoles", "Save-game normalization s
 expect(orders, "SOURCE_AI_LAND_ATTACK_SCRIPT", "Orders should include a source-style land attack script.");
 expect(orders, "const townCenters = units.filter(isTownCenter);", "AI should count under-construction town centers before placing another hall.");
 expect(orders, "if (townCenters.length === 0 && workers.length > 0)", "AI should not queue multiple halls while the first town center is under construction.");
+if (/workers\.find\(\(worker\) => !worker\.order\)\s*\?\?\s*workers\[0\]/.test(orders)) {
+  throw new Error("AI construction must not steal a busy worker when no idle builder exists.");
+}
 expect(orders, "SOURCE_AI_AIR_ATTACK_SCRIPT", "Orders should include a source-style air attack script.");
 expect(orders, "advanceSourceAiScript", "AI step should advance source scripts.");
 expect(orders, "attack-force", "Source AI runner should support scripted attack waves.");

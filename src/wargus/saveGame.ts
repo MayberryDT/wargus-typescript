@@ -1817,6 +1817,7 @@ function pruneInvalidLoadedReferences(world: WorldState): void {
     unit.moveQueue = normalizeMoveQueue(world, unit.moveQueue, unit);
     unit.rallyPoint = normalizeLoadedRallyPoint(world, unit);
     unit.productionQueue = normalizeLoadedProductionQueueReferences(world, unit);
+    normalizeLoadedBuildOrderMetadata(world, unit);
     if (unit.construction?.builderId && !liveTopLevelUnitIds.has(unit.construction.builderId)) {
       unit.construction.builderId = "";
     }
@@ -1994,10 +1995,31 @@ function orderReferencesMissingUnit(order: WorldState["units"][number]["order"],
   if (!order) {
     return false;
   }
-  if (order.kind === "attack" || order.kind === "repair" || order.kind === "load-transport" || order.kind === "follow" || order.kind === "defend" || order.kind === "build" || order.kind === "build-oil-platform") {
+  if (order.kind === "build") {
+    return order.phase === "constructing" && (!order.targetId || !liveUnitIds.has(order.targetId));
+  }
+  if (order.kind === "attack" || order.kind === "repair" || order.kind === "load-transport" || order.kind === "follow" || order.kind === "defend" || order.kind === "build-oil-platform") {
     return !liveUnitIds.has(order.targetId);
   }
   return order.kind === "harvest" && order.targetId !== null && !liveUnitIds.has(order.targetId);
+}
+
+function normalizeLoadedBuildOrderMetadata(world: WorldState, unit: WorldState["units"][number]): void {
+  const order = unit.order;
+  if (order?.kind !== "build" || order.phase !== "constructing" || !order.targetId) {
+    return;
+  }
+  const foundation = world.units.find((candidate) => candidate.id === order.targetId);
+  if (!foundation) {
+    return;
+  }
+  const centerTileX = Math.floor(foundation.x / world.tileSize);
+  const centerTileY = Math.floor(foundation.y / world.tileSize);
+  order.buildingTypeId = foundation.typeId;
+  order.tileX = centerTileX - Math.floor(foundation.tileWidth / 2);
+  order.tileY = centerTileY - Math.floor(foundation.tileHeight / 2);
+  order.targetX = foundation.x;
+  order.targetY = foundation.y;
 }
 
 function hasInvalidLoadedBuildOrder(world: WorldState, unit: WorldState["units"][number]): boolean {
@@ -2005,10 +2027,22 @@ function hasInvalidLoadedBuildOrder(world: WorldState, unit: WorldState["units"]
   if (order?.kind !== "build") {
     return false;
   }
+  if (order.phase === "to-site") {
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === order.buildingTypeId);
+    return !definition
+      || order.targetId !== null
+      || !isLoadedBuildingTile(world, definition, order.tileX, order.tileY)
+      || !isLoadedMapPoint(world, order.targetX, order.targetY)
+      || !order.path.every((point) => isLoadedMapPoint(world, point.x, point.y));
+  }
+  if (!order.targetId) {
+    return true;
+  }
   const target = world.units.find((candidate) => candidate.id === order.targetId);
   return !target
     || !target.construction
     || target.player !== unit.player
+    || target.typeId !== order.buildingTypeId
     || Boolean(target.construction.builderId && target.construction.builderId !== unit.id);
 }
 
@@ -3684,7 +3718,60 @@ function normalizeLoadedOrder(world: WorldState, order: unknown, unit: WorldStat
     const repairCycle = Math.max(0, Math.min(repairCycleTicks, finiteNumberOr(record.repairCycle, finiteNumberOr(record.repairBank, 0))));
     return targetId ? { kind, targetId, targetX, targetY, repairCycle, path, pathIndex } : null;
   }
-  if (kind === "load-transport" || kind === "build" || kind === "build-oil-platform") {
+  if (kind === "build") {
+    const buildCycleTicks = sourceBuildCycleTicksForSave(world, unit);
+    const buildCycle = Math.max(0, Math.min(buildCycleTicks, finiteNumberOr(record.buildCycle, finiteNumberOr(record.buildBank, 0))));
+    if (record.phase === "to-site") {
+      const buildingTypeId = typeof record.buildingTypeId === "string" ? record.buildingTypeId : "";
+      const buildingDefinition = world.unitDefinitions.find((candidate) => candidate.id === buildingTypeId);
+      const tileX = finiteNullableNumber(record.tileX);
+      const tileY = finiteNullableNumber(record.tileY);
+      if (
+        !buildingDefinition
+        || tileX === null
+        || tileY === null
+        || !Number.isInteger(tileX)
+        || !Number.isInteger(tileY)
+        || !isLoadedBuildingTile(world, buildingDefinition, tileX, tileY)
+        || finiteNullableNumber(record.targetX) === null
+        || finiteNullableNumber(record.targetY) === null
+        || !savedPathPointsAreFinite(world, record.path)
+      ) {
+        return null;
+      }
+      return {
+        kind,
+        phase: "to-site",
+        buildingTypeId,
+        tileX,
+        tileY,
+        targetId: null,
+        targetX,
+        targetY,
+        buildCycle,
+        path,
+        pathIndex
+      };
+    }
+    const targetId = typeof record.targetId === "string" ? record.targetId : "";
+    if (!targetId) {
+      return null;
+    }
+    return {
+      kind,
+      phase: "constructing",
+      buildingTypeId: typeof record.buildingTypeId === "string" ? record.buildingTypeId : "",
+      tileX: Math.floor(finiteNumberOr(record.tileX, 0)),
+      tileY: Math.floor(finiteNumberOr(record.tileY, 0)),
+      targetId,
+      targetX,
+      targetY,
+      buildCycle,
+      path,
+      pathIndex
+    };
+  }
+  if (kind === "load-transport" || kind === "build-oil-platform") {
     const targetId = typeof record.targetId === "string" ? record.targetId : "";
     if (!targetId) {
       return null;
@@ -3699,18 +3786,6 @@ function normalizeLoadedOrder(world: WorldState, order: unknown, unit: WorldStat
         boardWaitTicks: Math.max(0, Math.min(boardWaitTicks, Math.floor(finiteNumberOr(record.boardWaitTicks, 0)))),
         targetX,
         targetY,
-        path,
-        pathIndex
-      };
-    }
-    if (kind === "build") {
-      const buildCycleTicks = sourceBuildCycleTicksForSave(world, unit);
-      return {
-        kind,
-        targetId,
-        targetX,
-        targetY,
-        buildCycle: Math.max(0, Math.min(buildCycleTicks, finiteNumberOr(record.buildCycle, finiteNumberOr(record.buildBank, 0)))),
         path,
         pathIndex
       };
@@ -3889,6 +3964,24 @@ function normalizePath(world: WorldState, value: unknown): { x: number; y: numbe
       return x === null || y === null || !isLoadedMapPoint(world, x, y) ? null : { x, y };
     })
     .filter((point): point is { x: number; y: number } => point !== null);
+}
+
+function savedPathPointsAreFinite(world: WorldState, value: unknown): boolean {
+  return Array.isArray(value) && value.every((point) => {
+    if (!point || typeof point !== "object") {
+      return false;
+    }
+    const record = point as Record<string, unknown>;
+    const x = finiteNullableNumber(record.x);
+    const y = finiteNullableNumber(record.y);
+    return x !== null && y !== null && isLoadedMapPoint(world, x, y);
+  });
+}
+
+function isLoadedBuildingTile(world: WorldState, definition: Pick<WargusUnit, "tileSize">, tileX: number, tileY: number): boolean {
+  const width = Math.max(1, Math.floor(definition.tileSize[0]));
+  const height = Math.max(1, Math.floor(definition.tileSize[1]));
+  return tileX >= 0 && tileY >= 0 && tileX + width <= world.map.width && tileY + height <= world.map.height;
 }
 
 function clampPathIndex(value: unknown, path: { x: number; y: number }[]): number {

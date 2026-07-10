@@ -674,7 +674,11 @@ export type WorldOrder =
     }
   | {
       kind: "build";
-      targetId: string;
+      phase: "to-site" | "constructing";
+      buildingTypeId: string;
+      tileX: number;
+      tileY: number;
+      targetId: string | null;
       targetX: number;
       targetY: number;
       buildCycle: number;

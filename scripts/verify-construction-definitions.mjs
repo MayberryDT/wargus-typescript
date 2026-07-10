@@ -55,6 +55,11 @@ if (darkPortal?.builderOutside !== true) {
 if (farm?.builderOutside === true) {
   errors.push("Normal farm construction should not be marked BuilderOutside.");
 }
+for (const platformId of ["unit-human-oil-platform", "unit-orc-oil-platform"]) {
+  if ((manifest.units ?? []).find((unit) => unit.id === platformId)?.builderOutside === true) {
+    errors.push(`Source oil platform ${platformId} should keep its tanker inside during construction.`);
+  }
+}
 
 for (const [name, source, fragments] of [
   ["world", worldSource, [
@@ -69,7 +74,8 @@ for (const [name, source, fragments] of [
     "function stepInsideConstructionStates",
     "function releaseBuilderFromConstruction",
     "updateUnitFacing(unit, building.x - unit.x, building.y - unit.y)",
-    "platform.construction = { builderId: builder.id, builderInside: false, remainingSeconds: totalSeconds, totalSeconds }"
+    "const builderInside = !platformDefinition.builderOutside",
+    "platform.construction = { builderId: builder.id, builderInside, remainingSeconds: totalSeconds, totalSeconds }"
   ]],
   ["save", saveSource, [
     "unit.hiddenInConstructionId = typeof unit.hiddenInConstructionId === \"string\"",

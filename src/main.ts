@@ -7,7 +7,7 @@ import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER
 import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
-import { canAttackTarget, canIssueTargetedSpellAt, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupTargetedSpellOrder, issueHarvestWoodOrder, issuePendingWorldCommandAt, issueResearchOrder, issueSourceRightButtonOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
+import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
 import { availableCommands, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type ModernHudLayoutDebug } from "./view/renderHud";
@@ -499,6 +499,7 @@ declare global {
     __WARGUS_TS_SELECT_SOURCE_HARVEST_RALLY_FIXTURE__?: (producerTypeId: string) => BrowserSmokePendingActionFixtureResult;
     __WARGUS_TS_SELECT_SOURCE_TRAIN_FIXTURE__?: (producerTypeId: string, unitTypeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__?: (kind: "train" | "research" | "construction") => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
+    __WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__?: (mode: "move" | "stop" | "harvest" | "repair" | "attack" | "second-build" | "arrival") => Record<string, unknown>;
     __WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__?: (casterTypeId: string, spellId: string) => ({ ok: boolean; error?: string; command?: string | null; instantCommand?: string | null; target?: BrowserSmokeOrderTarget | null } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_RESEARCH_FIXTURE__?: (typeId: string, upgradeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_CLEAR_SELECTION__?: () => ReturnType<typeof browserSmokeCommandResult>;
@@ -579,6 +580,29 @@ function clearBrowserSmokeFixtures(): void {
   world.activeResearch = world.activeResearch.filter((research) => !research.buildingId.startsWith("__smoke-fixture-"));
   world.queuedResearch = world.queuedResearch.filter((research) => !research.buildingId.startsWith("__smoke-fixture-"));
   restoreBrowserSmokeScenarioSnapshot();
+}
+
+function findConstructionLifecyclePlacement(loadedWorld: WorldState, builder: WorldUnit, buildingTypeId: string, excludedPoint: BrowserSmokeOrderTarget | null = null): BrowserSmokeOrderTarget | null {
+  const builderTileX = Math.floor(builder.x / loadedWorld.tileSize);
+  const builderTileY = Math.floor(builder.y / loadedWorld.tileSize);
+  for (let radius = 6; radius <= 14; radius += 1) {
+    for (let tileY = builderTileY - radius; tileY <= builderTileY + radius; tileY += 1) {
+      for (let tileX = builderTileX - radius; tileX <= builderTileX + radius; tileX += 1) {
+        if (tileX !== builderTileX - radius && tileX !== builderTileX + radius && tileY !== builderTileY - radius && tileY !== builderTileY + radius) {
+          continue;
+        }
+        const x = (tileX + 1) * loadedWorld.tileSize;
+        const y = (tileY + 1) * loadedWorld.tileSize;
+        if (excludedPoint && Math.hypot(excludedPoint.x - x, excludedPoint.y - y) < loadedWorld.tileSize) {
+          continue;
+        }
+        if (canPlaceBuildingAtPoint(loadedWorld, builder, buildingTypeId, x, y, loadedWorld.unitDefinitions)) {
+          return { x, y };
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function readyBrowserSmokeFixtureUnit(unit: WorldUnit): WorldUnit {
@@ -1456,6 +1480,188 @@ if (browserSmokeStateEnabled) {
       return selectFixtureUnit(building);
     }
     return { ok: false, error: `unknown cancel fixture ${kind}`, ...browserSmokeCommandResult() };
+  };
+  window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__ = (mode) => {
+    if (!world || !manifest) {
+      return { ok: false, error: "missing world" };
+    }
+    const fixtureWorld = structuredClone(world) as WorldState;
+    fixtureWorld.aiStates.forEach((state) => { state.enabled = false; });
+    const player = fixtureWorld.players.find((candidate) => candidate.id === fixtureWorld.visibilityPlayer);
+    const enemyPlayer = fixtureWorld.players.find((candidate) => candidate.id !== fixtureWorld.visibilityPlayer && candidate.id !== 15 && candidate.playerType !== "nobody");
+    const builderDefinition = fixtureWorld.unitDefinitions.find((unit) => unit.id === "unit-peasant");
+    const buildingDefinition = fixtureWorld.unitDefinitions.find((unit) => unit.id === "unit-town-hall");
+    const repairDefinition = fixtureWorld.unitDefinitions.find((unit) => unit.id === "unit-farm");
+    const mineDefinition = fixtureWorld.unitDefinitions.find((unit) => unit.id === "unit-gold-mine");
+    const enemyDefinition = fixtureWorld.unitDefinitions.find((unit) => unit.id === "unit-grunt");
+    if (!player || !enemyPlayer || !builderDefinition || !buildingDefinition || !repairDefinition || !mineDefinition || !enemyDefinition) {
+      return { ok: false, error: "missing construction lifecycle fixture definitions" };
+    }
+    player.resources.gold = Math.max(player.resources.gold, 100000);
+    player.resources.wood = Math.max(player.resources.wood, 100000);
+    player.resources.oil = Math.max(player.resources.oil, 100000);
+    fixtureWorld.allowedUnitTypes = [...new Set([
+      ...fixtureWorld.allowedUnitTypes,
+      builderDefinition.id,
+      buildingDefinition.id,
+      repairDefinition.id,
+      mineDefinition.id,
+      enemyDefinition.id
+    ])];
+    fixtureWorld.units = fixtureWorld.units.filter((unit) => unit.player !== player.id);
+    const baseTileX = Math.max(10, Math.min(fixtureWorld.map.width - 12, Math.floor(player.startX / fixtureWorld.tileSize) + 3));
+    const baseTileY = Math.max(10, Math.min(fixtureWorld.map.height - 12, Math.floor(player.startY / fixtureWorld.tileSize) + 3));
+    const builder = createWorldUnit({
+      unit: builderDefinition,
+      id: `__smoke-fixture-${builderDefinition.id}-${fixtureWorld.nextUnitSerial++}`,
+      player: player.id,
+      tileX: baseTileX,
+      tileY: baseTileY,
+      tileset: activeMap?.setup?.tileset ?? null
+    });
+    const dropoff = createWorldUnit({
+      unit: buildingDefinition,
+      id: `__smoke-fixture-dropoff-${fixtureWorld.nextUnitSerial++}`,
+      player: player.id,
+      tileX: Math.max(0, baseTileX - 7),
+      tileY: baseTileY,
+      tileset: activeMap?.setup?.tileset ?? null
+    });
+    const repairTarget = createWorldUnit({
+      unit: repairDefinition,
+      id: `__smoke-fixture-repair-${fixtureWorld.nextUnitSerial++}`,
+      player: player.id,
+      tileX: baseTileX,
+      tileY: Math.max(0, baseTileY - 4),
+      hitPoints: Math.max(1, Math.floor(repairDefinition.hitPoints / 2)),
+      tileset: activeMap?.setup?.tileset ?? null
+    });
+    const mine = createWorldUnit({
+      unit: mineDefinition,
+      id: `__smoke-fixture-mine-${fixtureWorld.nextUnitSerial++}`,
+      player: 15,
+      tileX: baseTileX + 4,
+      tileY: baseTileY,
+      resourcesHeld: 50000,
+      tileset: activeMap?.setup?.tileset ?? null
+    });
+    const enemy = createWorldUnit({
+      unit: enemyDefinition,
+      id: `__smoke-fixture-enemy-${fixtureWorld.nextUnitSerial++}`,
+      player: enemyPlayer.id,
+      tileX: baseTileX,
+      tileY: baseTileY + 4,
+      tileset: activeMap?.setup?.tileset ?? null
+    });
+    fixtureWorld.units.push(builder, dropoff, repairTarget, mine, enemy);
+    updateVisibility(fixtureWorld);
+    const placement = findConstructionLifecyclePlacement(fixtureWorld, builder, buildingDefinition.id);
+    if (!placement) {
+      return { ok: false, error: "missing reachable construction lifecycle placement" };
+    }
+    const costs: Record<string, number> = {};
+    for (let index = 0; index < buildingDefinition.costs.length - 1; index += 2) {
+      const resource = buildingDefinition.costs[index];
+      if (resource !== "time") {
+        costs[resource] = Number(buildingDefinition.costs[index + 1]);
+      }
+    }
+    const snapshot = () => ({
+      resources: { ...player.resources },
+      unitCount: fixtureWorld.units.length,
+      nextUnitSerial: fixtureWorld.nextUnitSerial,
+      totalBuildings: player.stats.totalBuildings,
+      orderKind: builder.order?.kind ?? null,
+      orderPhase: builder.order?.kind === "build" ? builder.order.phase : null,
+      orderTargetId: builder.order?.kind === "build" ? builder.order.targetId : null,
+      orderTileX: builder.order?.kind === "build" ? builder.order.tileX : null,
+      orderTileY: builder.order?.kind === "build" ? builder.order.tileY : null,
+      paidFoundationCount: fixtureWorld.units.filter((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && Boolean(unit.construction)).length,
+      foundationHitPoints: fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction)?.hitPoints ?? null,
+      foundationMaxHitPoints: fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction)?.maxHitPoints ?? null,
+      builderHidden: Boolean(builder.hiddenInConstructionId)
+    });
+    const before = snapshot();
+    const issued = issueBuildAtOrder(fixtureWorld, builder.id, buildingDefinition.id, placement.x, placement.y, fixtureWorld.unitDefinitions);
+    const pending = snapshot();
+    if (!issued) {
+      return { ok: false, error: "unable to issue pending construction", before, pending };
+    }
+    if (mode !== "arrival") {
+      let retaskIssued = false;
+      if (mode === "move") {
+        issueMoveOrder(fixtureWorld, builder.id, placement.x, placement.y);
+        retaskIssued = builder.order?.kind === "move";
+      } else if (mode === "stop") {
+        retaskIssued = issueStopOrder(fixtureWorld, builder.id);
+      } else if (mode === "harvest") {
+        retaskIssued = issueHarvestOrder(fixtureWorld, builder.id, mine.id);
+      } else if (mode === "repair") {
+        retaskIssued = issueRepairOrder(fixtureWorld, builder.id, repairTarget.id);
+      } else if (mode === "attack") {
+        retaskIssued = issueAttackOrder(fixtureWorld, builder.id, enemy.id);
+      } else if (mode === "second-build") {
+        const secondPlacement = findConstructionLifecyclePlacement(fixtureWorld, builder, buildingDefinition.id, placement);
+        retaskIssued = Boolean(secondPlacement && issueBuildAtOrder(fixtureWorld, builder.id, buildingDefinition.id, secondPlacement.x, secondPlacement.y, fixtureWorld.unitDefinitions));
+      }
+      return { ok: retaskIssued, costs, placement, before, pending, retask: snapshot() };
+    }
+    const pendingSaveJson = exportSavedGame(fixtureWorld, { x: 0, y: 0, zoom: 1 });
+    const pendingImported = importSavedGameJson(pendingSaveJson, 9);
+    const pendingLoaded = pendingImported ? loadSavedGame(manifest, 9) : null;
+    const loadedPendingBuilder = pendingLoaded?.world.units.find((unit) => unit.id === builder.id);
+    const pendingRoundtrip = {
+      orderKind: loadedPendingBuilder?.order?.kind ?? null,
+      orderPhase: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.phase : null,
+      orderTargetId: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.targetId : null,
+      buildingTypeId: loadedPendingBuilder?.order?.kind === "build" ? loadedPendingBuilder.order.buildingTypeId : null
+    };
+    let foundation = fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction);
+    for (let ticks = 0; !foundation && ticks < 3000; ticks += 1) {
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      foundation = fixtureWorld.units.find((unit) => unit.player === player.id && unit.typeId === buildingDefinition.id && unit.construction);
+    }
+    if (!foundation) {
+      return { ok: false, error: "builder did not reach construction site", costs, placement, before, pending, arrival: snapshot() };
+    }
+    const arrival = snapshot();
+    const foundationSaveJson = exportSavedGame(fixtureWorld, { x: 0, y: 0, zoom: 1 });
+    const foundationImported = importSavedGameJson(foundationSaveJson, 9);
+    const foundationLoaded = foundationImported ? loadSavedGame(manifest, 9) : null;
+    const loadedFoundation = foundationLoaded?.world.units.find((unit) => unit.id === foundation.id);
+    const loadedFoundationBuilder = foundationLoaded?.world.units.find((unit) => unit.id === builder.id);
+    const foundationRoundtrip = {
+      construction: Boolean(loadedFoundation?.construction),
+      builderHidden: loadedFoundationBuilder?.hiddenInConstructionId === loadedFoundation?.id,
+      foundationTypeId: loadedFoundation?.typeId ?? null
+    };
+    const legacySave = JSON.parse(foundationSaveJson) as { world?: { units?: Array<Record<string, unknown>> } };
+    const legacyBuilder = legacySave.world?.units?.find((unit) => unit.id === builder.id);
+    if (legacyBuilder) {
+      legacyBuilder.hiddenInConstructionId = null;
+      legacyBuilder.order = {
+        kind: "build",
+        targetId: foundation.id,
+        targetX: foundation.x,
+        targetY: foundation.y,
+        buildCycle: 0,
+        path: [],
+        pathIndex: 0
+      };
+    }
+    const legacyImported = importSavedGameJson(JSON.stringify(legacySave), 9);
+    const legacyLoaded = legacyImported ? loadSavedGame(manifest, 9) : null;
+    const legacyLoadedFoundation = legacyLoaded?.world.units.find((unit) => unit.id === foundation.id);
+    const legacyLoadedBuilder = legacyLoaded?.world.units.find((unit) => unit.id === builder.id);
+    const legacyFoundationRoundtrip = {
+      construction: Boolean(legacyLoadedFoundation?.construction),
+      builderHidden: legacyLoadedBuilder?.hiddenInConstructionId === legacyLoadedFoundation?.id,
+      builderOrder: legacyLoadedBuilder?.order?.kind ?? null,
+      foundationTypeId: legacyLoadedFoundation?.typeId ?? null
+    };
+    const cancelled = issueCancelConstructionOrder(fixtureWorld, foundation.id);
+    const cancel = snapshot();
+    return { ok: cancelled, costs, placement, before, pending, pendingRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, cancel };
   };
   window.__WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__ = (casterTypeId, spellId) => {
     if (!world || !manifest) {

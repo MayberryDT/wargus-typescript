@@ -2,7 +2,7 @@ import type { WargusAllowRule, WargusButton, WargusMissile, WargusSpell, WargusU
 import { sourceButtonAppliesTo, sourceButtonLabel } from "../wargus/buttons";
 import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
-import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
+import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
@@ -2056,8 +2056,13 @@ export function issueRepairOrder(world: WorldState, unitId: string, targetId: st
       previousBuilder.order = null;
     }
     target.construction.builderId = unit.id;
+    const targetTile = worldToTile(world, target.x, target.y);
     unit.order = {
       kind: "build",
+      phase: "constructing",
+      buildingTypeId: target.typeId,
+      tileX: targetTile.x - Math.floor(target.tileWidth / 2),
+      tileY: targetTile.y - Math.floor(target.tileHeight / 2),
       targetId,
       targetX: target.x,
       targetY: target.y,
@@ -4171,7 +4176,7 @@ export function issueBuildOrder(world: WorldState, builderId: string, buildingTy
     return false;
   }
 
-  return placeBuilding(world, builder, player, buildingDefinition, placement.x, placement.y);
+  return planBuilding(world, builder, buildingDefinition, placement.x, placement.y);
 }
 
 export function issueBuildAtOrder(world: WorldState, builderId: string, buildingTypeId: string, x: number, y: number, unitDefinitions: WargusUnit[]): boolean {
@@ -4190,7 +4195,7 @@ export function issueBuildAtOrder(world: WorldState, builderId: string, building
     return false;
   }
 
-  return placeBuilding(world, builder, player, buildingDefinition, tileX, tileY);
+  return planBuilding(world, builder, buildingDefinition, tileX, tileY);
 }
 
 function startQueuedBuildAtOrder(world: WorldState, builder: WorldUnit, buildingTypeId: string, x: number, y: number, unitDefinitions: WargusUnit[] = world.unitDefinitions): boolean {
@@ -4208,7 +4213,7 @@ function startQueuedBuildAtOrder(world: WorldState, builder: WorldUnit, building
     return false;
   }
 
-  return placeBuilding(world, builder, player, buildingDefinition, tileX, tileY, { clearQueue: false });
+  return planBuilding(world, builder, buildingDefinition, tileX, tileY, { clearQueue: false });
 }
 
 export function issueSelectedBuildAtOrder(world: WorldState, unitIds: string[], buildingTypeId: string, x: number, y: number, unitDefinitions: WargusUnit[] = world.unitDefinitions, playerId = world.visibilityPlayer): boolean {
@@ -4949,7 +4954,32 @@ export function buildingTypeForHudCommand(world: WorldState, command: string, un
   return buildingTypeId && canStartBuildingPlacementByType(world, worker, buildingTypeId) ? buildingTypeId : null;
 }
 
-function placeBuilding(world: WorldState, builder: WorldUnit, player: WorldState["players"][number], buildingDefinition: WargusUnit, tileX: number, tileY: number, options: { clearQueue?: boolean } = {}): boolean {
+function planBuilding(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number, options: { clearQueue?: boolean } = {}): boolean {
+  const approach = inspectBuildSiteApproach(world, builder, buildingDefinition, tileX, tileY);
+  if (approach.path.length === 0 && !approach.inTouchRange) {
+    return false;
+  }
+  if (options.clearQueue !== false) {
+    builder.moveQueue = [];
+  }
+  const target = buildSiteWorldPoint(world, buildingDefinition, tileX, tileY);
+  builder.order = {
+    kind: "build",
+    phase: "to-site",
+    buildingTypeId: buildingDefinition.id,
+    tileX,
+    tileY,
+    targetId: null,
+    targetX: target.x,
+    targetY: target.y,
+    buildCycle: 0,
+    path: approach.path,
+    pathIndex: approach.path.length > 1 ? 1 : 0
+  };
+  return true;
+}
+
+function startBuildingFoundation(world: WorldState, builder: WorldUnit, player: WorldState["players"][number], buildingDefinition: WargusUnit, tileX: number, tileY: number): WorldUnit {
   spendResources(player.resources, buildingDefinition.costs);
   const totalSeconds = sourceBuildDurationSecondsForPlayer(world, builder.player, buildingDefinition.costs);
   const replacedUnits = sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY);
@@ -4975,28 +5005,15 @@ function placeBuilding(world: WorldState, builder: WorldUnit, player: WorldState
   world.units.push(building);
   recordPlayerUnitCreated(world, building);
 
-  const path = sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder));
-  if (path.length === 0 && !isInTouchRange(builder, building, world)) {
-    world.units = world.units.filter((unit) => unit.id !== building.id);
-    if (replacedUnits.length > 0) {
-      world.units.push(...replacedUnits);
-    }
-    if (isBuildingLike(building)) {
-      player.stats.totalBuildings = Math.max(0, player.stats.totalBuildings - 1);
-    } else {
-      player.stats.totalUnits = Math.max(0, player.stats.totalUnits - 1);
-    }
-    refundCosts(world, player, buildingDefinition.costs, 1);
-    return false;
-  }
   emitSoundEvent(world, "placement-success", builder.player, building.x, building.y);
   emitSoundEvent(world, "building-construction", builder.player, building.x, building.y);
-
-  if (options.clearQueue !== false) {
-    builder.moveQueue = [];
-  }
+  const path = sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder));
   builder.order = {
     kind: "build",
+    phase: "constructing",
+    buildingTypeId: buildingDefinition.id,
+    tileX,
+    tileY,
     targetId: building.id,
     targetX: building.x,
     targetY: building.y,
@@ -5004,7 +5021,7 @@ function placeBuilding(world: WorldState, builder: WorldUnit, player: WorldState
     path,
     pathIndex: path.length > 1 ? 1 : 0
   };
-  return true;
+  return building;
 }
 
 export function issueBuildOilPlatformOrder(world: WorldState, builderId: string, oilPatchId: string, unitDefinitions: WargusUnit[]): boolean {
@@ -5231,7 +5248,8 @@ function startOilPlatformConstruction(world: WorldState, builder: WorldUnit, oil
   });
   world.nextUnitSerial += 1;
   platform.hitPoints = Math.max(1, Math.floor(platform.maxHitPoints * 0.1));
-  platform.construction = { builderId: builder.id, builderInside: false, remainingSeconds: totalSeconds, totalSeconds };
+  const builderInside = !platformDefinition.builderOutside;
+  platform.construction = { builderId: builder.id, builderInside, remainingSeconds: totalSeconds, totalSeconds };
   world.units = world.units.filter((unit) => unit.id !== oilPatch.id);
   world.units.push(platform);
   recordPlayerUnitCreated(world, platform);
@@ -5245,6 +5263,10 @@ function startOilPlatformConstruction(world: WorldState, builder: WorldUnit, oil
   }
   builder.order = {
     kind: "build",
+    phase: "constructing",
+    buildingTypeId: platformDefinition.id,
+    tileX: Math.max(0, tile.x - Math.floor(platformDefinition.tileSize[0] / 2)),
+    tileY: Math.max(0, tile.y - Math.floor(platformDefinition.tileSize[1] / 2)),
     targetId: platform.id,
     targetX: platform.x,
     targetY: platform.y,
@@ -5252,6 +5274,10 @@ function startOilPlatformConstruction(world: WorldState, builder: WorldUnit, oil
     path,
     pathIndex: path.length > 1 ? 1 : 0
   };
+  if (builderInside) {
+    hideBuilderInsideConstruction(builder, platform);
+    builder.order = null;
+  }
   return true;
 }
 
@@ -6809,8 +6835,10 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   const attackUnitTargets = sourceAiDifficultyUnitTargets(world, currentAiAttackUnitTargets(state, attackForceId));
 
   if (townCenters.length === 0 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "town-center", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "town-center", race);
+    }
   }
 
   issueSourceAiBuildNeeds(world, playerId, state.buildOrder ?? [], race, state.buildDepots ?? true);
@@ -6859,28 +6887,34 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   }
 
   if (barracks.length === 0 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "barracks", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "barracks", race);
+    }
   }
 
   if (barracks.length > 0 && lumberMills.length === 0 && army.length >= 2 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "lumber-mill", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "lumber-mill", race);
+    }
   }
 
   if (barracks.length > 0 && blacksmiths.length === 0 && army.length >= 3 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "blacksmith", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "blacksmith", race);
+    }
   }
 
   if (barracks.length > 0 && advancedProducers.length === 0 && army.length >= (state.strategy === "air" ? 2 : 4) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
+    const builder = workers.find((worker) => !worker.order);
     if (!hasTownCenterTier(world, playerId, 2)) {
       const hall = halls.find((candidate) => canAiUpgradeTownCenter(world, candidate));
       if (hall) {
         issueUpgradeTownCenterOrder(world, hall.id, world.unitDefinitions);
       }
-    } else {
+    } else if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "advanced-melee", race);
     }
   }
@@ -6893,38 +6927,52 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   }
 
   if (hasTownCenterTier(world, playerId, 2) && holyProducers.length === 0 && army.length >= 5 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "holy", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "holy", race);
+    }
   }
 
   if (hasTownCenterTier(world, playerId, 2) && casterProducers.length === 0 && army.length >= 5 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "caster", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "caster", race);
+    }
   }
 
   if (hasOilOnMap(world) && shipyards.length === 0 && hasTownCenterTier(world, playerId, 2) && army.length >= (state.strategy === "sea" ? 2 : 5) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "shipyard", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "shipyard", race);
+    }
   }
 
   if (shipyards.length > 0 && foundries.length === 0 && army.length >= (state.strategy === "sea" ? 2 : 7) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "foundry", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "foundry", race);
+    }
   }
 
   if ((state.buildDepots ?? true) && shipyards.length > 0 && refineries.length === 0 && tankers.length > 0 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "refinery", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "refinery", race);
+    }
   }
 
   if (hasTownCenterTier(world, playerId, 3) && airProducers.length === 0 && army.length >= (state.strategy === "air" ? 3 : 7) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "air", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "air", race);
+    }
   }
 
   if (hasTownCenterTier(world, playerId, 3) && demolitionProducers.length === 0 && army.length >= 6 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order) ?? workers[0];
-    issueAiBuildBySourceRole(world, builder, playerId, "demolition", race);
+    const builder = workers.find((worker) => !worker.order);
+    if (builder) {
+      issueAiBuildBySourceRole(world, builder, playerId, "demolition", race);
+    }
   }
 
   for (const building of blacksmiths) {
@@ -8607,6 +8655,42 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
   if (unit.order?.kind !== "build") {
     return;
   }
+  const order = unit.order;
+  if (order.phase === "to-site") {
+    const buildingDefinition = world.unitDefinitions.find((definition) => definition.id === order.buildingTypeId);
+    const player = world.players.find((candidate) => candidate.id === unit.player);
+    if (!buildingDefinition || !player) {
+      failPendingBuildAtArrival(world, unit);
+      return;
+    }
+    const approach = inspectBuildSiteApproach(world, unit, buildingDefinition, order.tileX, order.tileY);
+    if (!approach.inTouchRange) {
+      if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
+        unit.order.path = approach.path;
+        unit.order.pathIndex = approach.path.length > 1 ? 1 : 0;
+      }
+      if (unit.order.path.length === 0) {
+        failPendingBuildAtArrival(world, unit);
+        return;
+      }
+      stepMoveOrder(world, unit, tickSeconds);
+      return;
+    }
+    if (!canStartBuildingPlacement(world, unit, buildingDefinition) || !canPlaceReachableBuilding(world, unit, buildingDefinition, order.tileX, order.tileY)) {
+      failPendingBuildAtArrival(world, unit);
+      return;
+    }
+    const building = startBuildingFoundation(world, unit, player, buildingDefinition, order.tileX, order.tileY);
+    if (building.construction?.builderInside) {
+      hideBuilderInsideConstruction(unit, building);
+      unit.order = null;
+    }
+    return;
+  }
+  if (!unit.order.targetId) {
+    unit.order = null;
+    return;
+  }
   const building = findUnit(world, unit.order.targetId);
   if (!building || !building.construction || building.player !== unit.player || (building.construction.builderId && building.construction.builderId !== unit.id)) {
     unit.order = null;
@@ -8637,6 +8721,12 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
       unit.order.buildCycle -= buildCycleTicks;
     }
   }
+}
+
+function failPendingBuildAtArrival(world: WorldState, builder: WorldUnit): void {
+  emitSoundEvent(world, "placement-error", builder.player, builder.x, builder.y);
+  builder.order = null;
+  startNextQueuedMove(world, builder);
 }
 
 function hideBuilderInsideConstruction(builder: WorldUnit, building: WorldUnit): void {
@@ -10047,8 +10137,13 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
           previousBuilder.order = null;
         }
         repairTarget.construction.builderId = unit.id;
+        const targetTile = worldToTile(world, repairTarget.x, repairTarget.y);
         unit.order = {
           kind: "build",
+          phase: "constructing",
+          buildingTypeId: repairTarget.typeId,
+          tileX: targetTile.x - Math.floor(repairTarget.tileWidth / 2),
+          tileY: targetTile.y - Math.floor(repairTarget.tileHeight / 2),
           targetId: repairTarget.id,
           targetX: repairTarget.x,
           targetY: repairTarget.y,
@@ -10494,7 +10589,16 @@ function sourceOrderTargetPath(world: WorldState, unit: WorldUnit): Array<{ x: n
   if (!unit.order || !("path" in unit.order)) {
     return [];
   }
-  if (unit.order.kind === "build" || unit.order.kind === "build-oil-platform") {
+  if (unit.order.kind === "build") {
+    const order = unit.order;
+    if (order.phase === "to-site") {
+      const definition = world.unitDefinitions.find((candidate) => candidate.id === order.buildingTypeId);
+      return definition ? sourceBuildSitePath(world, unit, definition, order.tileX, order.tileY) : [];
+    }
+    const target = order.targetId ? findUnit(world, order.targetId) : undefined;
+    return target ? sourceUnitInteractionPath(world, unit, target, sourceTouchRange(world, unit)) : [];
+  }
+  if (unit.order.kind === "build-oil-platform") {
     const target = findUnit(world, unit.order.targetId);
     return target ? sourceUnitInteractionPath(world, unit, target, sourceTouchRange(world, unit)) : [];
   }
@@ -17588,6 +17692,46 @@ export function canPlaceReachableBuilding(world: WorldState, builder: WorldUnit,
     world.units.push(...replacedUnits);
   }
   return reachable;
+}
+
+function buildSiteWorldPoint(world: WorldState, buildingDefinition: WargusUnit, tileX: number, tileY: number): { x: number; y: number } {
+  const probe = createWorldUnit({
+    unit: buildingDefinition,
+    id: "build-site-point-probe",
+    player: 0,
+    tileX,
+    tileY,
+    tileset: world.map.setup?.tileset ?? null
+  });
+  return { x: probe.x, y: probe.y };
+}
+
+function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): { path: WorldPathPoint[]; inTouchRange: boolean } {
+  const replacedUnits = sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY);
+  if (replacedUnits.length > 0) {
+    const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
+    world.units = world.units.filter((unit) => !replacedUnitIds.has(unit.id));
+  }
+  const probe = createWorldUnit({
+    unit: buildingDefinition,
+    id: "build-site-path-probe",
+    player: builder.player,
+    tileX,
+    tileY,
+    tileset: world.map.setup?.tileset ?? null
+  });
+  world.units.push(probe);
+  const path = sourceUnitInteractionPath(world, builder, probe, sourceTouchRange(world, builder));
+  const inTouchRange = isInTouchRange(builder, probe, world);
+  world.units = world.units.filter((unit) => unit.id !== probe.id);
+  if (replacedUnits.length > 0) {
+    world.units.push(...replacedUnits);
+  }
+  return { path, inTouchRange };
+}
+
+function sourceBuildSitePath(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): WorldPathPoint[] {
+  return inspectBuildSiteApproach(world, builder, buildingDefinition, tileX, tileY).path;
 }
 
 function canPlaceShoreBuilding(world: WorldState, tileX: number, tileY: number, width: number, height: number, ignoredUnitId?: string): boolean {

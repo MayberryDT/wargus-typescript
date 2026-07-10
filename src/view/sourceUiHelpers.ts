@@ -580,7 +580,9 @@ export function selectedOrderLine(selected: WorldUnit | null, world: WorldState,
     return `${sourceResourceActionLabel(world, selected.order.resource, "Harvest")} ${resourceNameLabel(world, selected.order.resource)} ${selected.order.phase}`;
   }
   if (selected.order?.kind === "build") {
-    return `Build ${orderTargetLabel(world, manifest, selected.order.targetId)}`;
+    return `Build ${selected.order.targetId
+      ? orderTargetLabel(world, manifest, selected.order.targetId)
+      : unitTypeName(manifest, selected.order.buildingTypeId)}`;
   }
   if (selected.order?.kind === "build-oil-platform") {
     return `Build platform ${Math.round(selected.order.targetX / world.tileSize)}, ${Math.round(selected.order.targetY / world.tileSize)}`;

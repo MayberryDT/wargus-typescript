@@ -104,6 +104,7 @@ try {
     "typeof window.__WARGUS_TS_SELECT_OIL_TANKER_BUILD_FIXTURE__ === \"function\"",
     "typeof window.__WARGUS_TS_SELECT_SOURCE_TRAIN_FIXTURE__ === \"function\"",
     "typeof window.__WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__ === \"function\"",
+    "typeof window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__ === \"function\"",
     "typeof window.__WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__ === \"function\"",
     "typeof window.__WARGUS_TS_SELECT_SOURCE_RESEARCH_FIXTURE__ === \"function\"",
     "typeof window.__WARGUS_TS_EXPECTED_SOURCE_COMMANDS__ === \"function\"",
@@ -176,6 +177,7 @@ try {
     throw new Error(`Training barracks should expose source cancel command after queuing: ${summarize(trained.commandCard)}`);
   }
   await verifySourceCancelCommands();
+  await verifyConstructionLifecycle();
 
   const rallyStart = await selectFixtureUnitType("unit-human-barracks");
   const movePending = await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('move')");
@@ -379,6 +381,115 @@ async function verifySourceCancelCommands() {
     }
   });
   console.log("Source cancel command fixtures checked 3 commands (3 hotkeys).");
+}
+
+async function verifyConstructionLifecycle() {
+  const expectedRetaskOrder = new Map([
+    ["move", "move"],
+    ["stop", null],
+    ["harvest", "harvest"],
+    ["repair", "repair"],
+    ["attack", "attack"],
+    ["second-build", "build"]
+  ]);
+  for (const [retask, expectedOrderKind] of expectedRetaskOrder) {
+    const result = await evalValue(client, `window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__(${JSON.stringify(retask)})`);
+    if (!result?.ok) {
+      throw new Error(`Unable to run ${retask} construction retask fixture: ${JSON.stringify(result)}`);
+    }
+    expectUnpaidPendingConstruction(`${retask} construction retask`, result);
+    if (
+      result.retask.unitCount !== result.before.unitCount
+      || result.retask.nextUnitSerial !== result.before.nextUnitSerial
+      || result.retask.totalBuildings !== result.before.totalBuildings
+      || result.retask.resources.gold !== result.before.resources.gold
+      || result.retask.resources.wood !== result.before.resources.wood
+      || result.retask.resources.oil !== result.before.resources.oil
+      || result.retask.paidFoundationCount !== 0
+      || result.retask.orderKind !== expectedOrderKind
+    ) {
+      throw new Error(`${retask} must safely replace unpaid construction with no foundation/resource delta: ${JSON.stringify(result)}`);
+    }
+    if (retask === "second-build" && (
+      result.retask.orderPhase !== "to-site"
+      || (result.retask.orderTileX === result.pending.orderTileX && result.retask.orderTileY === result.pending.orderTileY)
+    )) {
+      throw new Error(`Second Build must replace the first unpaid site with a distinct to-site order: ${JSON.stringify(result)}`);
+    }
+  }
+
+  const result = await evalValue(client, "window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__('arrival')");
+  if (!result?.ok) {
+    throw new Error(`Unable to run construction arrival fixture: ${JSON.stringify(result)}`);
+  }
+  expectUnpaidPendingConstruction("construction arrival", result);
+  if (
+    result.pendingRoundtrip?.orderKind !== "build"
+    || result.pendingRoundtrip?.orderPhase !== "to-site"
+    || result.pendingRoundtrip?.orderTargetId !== null
+    || result.pendingRoundtrip?.buildingTypeId !== "unit-town-hall"
+  ) {
+    throw new Error(`Pending construction must round-trip through the real save loader: ${JSON.stringify(result)}`);
+  }
+  const expectedArrivalGold = result.before.resources.gold - (result.costs.gold ?? 0);
+  const expectedArrivalWood = result.before.resources.wood - (result.costs.wood ?? 0);
+  if (
+    result.arrival.resources.gold !== expectedArrivalGold
+    || result.arrival.resources.wood !== expectedArrivalWood
+    || result.arrival.unitCount !== result.before.unitCount + 1
+    || result.arrival.nextUnitSerial !== result.before.nextUnitSerial + 1
+    || result.arrival.totalBuildings !== result.before.totalBuildings + 1
+    || result.arrival.paidFoundationCount !== 1
+    || result.arrival.foundationHitPoints !== Math.max(1, Math.floor(result.arrival.foundationMaxHitPoints * 0.1))
+    || result.arrival.builderHidden !== true
+  ) {
+    throw new Error(`Construction arrival must deduct once and create one 10%-HP inside-builder foundation: ${JSON.stringify(result)}`);
+  }
+  if (
+    result.foundationRoundtrip?.construction !== true
+    || result.foundationRoundtrip?.builderHidden !== true
+    || result.foundationRoundtrip?.foundationTypeId !== "unit-town-hall"
+  ) {
+    throw new Error(`Paid inside-builder foundation must round-trip through the real save loader: ${JSON.stringify(result)}`);
+  }
+  if (
+    result.legacyFoundationRoundtrip?.construction !== true
+    || result.legacyFoundationRoundtrip?.builderHidden !== true
+    || result.legacyFoundationRoundtrip?.builderOrder !== null
+    || result.legacyFoundationRoundtrip?.foundationTypeId !== "unit-town-hall"
+  ) {
+    throw new Error(`Legacy target-only build orders must migrate to a live paid inside-builder foundation: ${JSON.stringify(result)}`);
+  }
+  const expectedCancelGold = expectedArrivalGold + Math.floor((result.costs.gold ?? 0) * 0.75);
+  const expectedCancelWood = expectedArrivalWood + Math.floor((result.costs.wood ?? 0) * 0.75);
+  if (
+    result.cancel.resources.gold !== expectedCancelGold
+    || result.cancel.resources.wood !== expectedCancelWood
+    || result.cancel.unitCount !== result.before.unitCount
+    || result.cancel.paidFoundationCount !== 0
+    || result.cancel.builderHidden !== false
+    || result.cancel.orderKind !== null
+  ) {
+    throw new Error(`Paid construction cancel must release the builder and refund 75%: ${JSON.stringify(result)}`);
+  }
+  console.log("Construction lifecycle checked unpaid Move/Stop/Harvest/Repair/Attack/Build retasks, paid arrival, and 75% cancel.");
+}
+
+function expectUnpaidPendingConstruction(label, result) {
+  if (
+    result.pending.unitCount !== result.before.unitCount
+    || result.pending.nextUnitSerial !== result.before.nextUnitSerial
+    || result.pending.totalBuildings !== result.before.totalBuildings
+    || result.pending.resources.gold !== result.before.resources.gold
+    || result.pending.resources.wood !== result.before.resources.wood
+    || result.pending.resources.oil !== result.before.resources.oil
+    || result.pending.paidFoundationCount !== 0
+    || result.pending.orderKind !== "build"
+    || result.pending.orderPhase !== "to-site"
+    || result.pending.orderTargetId !== null
+  ) {
+    throw new Error(`${label} placement must remain an unpaid to-site order: ${JSON.stringify(result)}`);
+  }
 }
 
 async function verifySourceCancelCommand(kind, expectedAction, validate) {
@@ -614,8 +725,15 @@ async function expectOilPlatformBuildPendingThenIssued(label, target, result, af
   }
   const issued = await evalValue(client, `window.__WARGUS_TS_ISSUE_PENDING_WORLD_COMMAND_AT__(${Math.round(target.x)}, ${Math.round(target.y)})`);
   const afterIssue = await readSmokeState(client);
-  if (issued.issued !== true || !["build-oil-platform", "build"].includes(afterIssue.firstSelectedOrderKind)) {
-    throw new Error(`${label} should issue a tanker build-oil-platform order: result=${JSON.stringify(issued)}, smoke=${JSON.stringify(afterIssue)}`);
+  const travellingUnpaid = afterIssue.firstSelectedOrderKind === "build-oil-platform"
+    && afterIssue.visibilityPlayerResources.gold === afterPending.visibilityPlayerResources.gold
+    && afterIssue.visibilityPlayerResources.wood === afterPending.visibilityPlayerResources.wood;
+  const paidInsideFoundation = afterIssue.selectedUnitCount === 0
+    && afterIssue.unitCount === afterPending.unitCount
+    && afterIssue.visibilityPlayerResources.gold < afterPending.visibilityPlayerResources.gold
+    && afterIssue.visibilityPlayerResources.wood < afterPending.visibilityPlayerResources.wood;
+  if (issued.issued !== true || (!travellingUnpaid && !paidInsideFoundation)) {
+    throw new Error(`${label} should issue unpaid tanker travel or enter a paid inside-builder platform foundation: result=${JSON.stringify(issued)}, before=${JSON.stringify(afterPending)}, after=${JSON.stringify(afterIssue)}`);
   }
 }
 
