@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow this plan in slices and run the browser/layout gates after each slice. Do not redesign the HUD. Stop on any STOP condition and update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/renderHud.ts src/view/sourceUiHelpers.ts src/view/iconTextureAtlas.ts src/view/selectionInput.ts src/main.ts scripts/verify-modern-hud-layout.mjs scripts/verify-browser-command-card-session.mjs scripts/verify-browser-train-session.mjs scripts/verify-source-selection-mixing.mjs scripts/verify-source-status-line-tooltips.mjs scripts/verify-icon-references.mjs plans/evidence/016.md plans/016-make-gameplay-state-legible.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/renderHud.ts src/view/sourceUiHelpers.ts src/view/iconTextureAtlas.ts src/view/selectionInput.ts src/main.ts scripts/verify-modern-hud-layout.mjs scripts/verify-browser-command-card-session.mjs scripts/verify-browser-train-session.mjs scripts/verify-browser-fixed-demo-input.mjs scripts/verify-source-selection-mixing.mjs scripts/verify-source-status-line-tooltips.mjs scripts/verify-source-upgrade-to-action.mjs scripts/verify-source-info-panel-layout.mjs scripts/verify-icon-references.mjs plans/evidence/016.md plans/016-make-gameplay-state-legible.md plans/README.md`
 > If command availability, fixed-HUD queue rendering, production order shape, pointer tracking, or additive selection changed, STOP and reconcile.
 
 **Goal:** Make mechanics understandable and source-correct: icons load,
@@ -15,9 +15,11 @@ categories/ownership, and camera movement cannot leave stale targeting state.
 
 **Architecture:** Keep simulation eligibility authoritative while labelling UI
 explanations as usability enhancements. Return structured command reasons,
-correct supply from enqueue reservation to completion-time retry, search outward
+remove authoritative queued food/slot reservation in favor of completion-time
+retry, search outward
 for spawn egress, extend production orders with save-safe completion blocks,
-reuse indexed queue rendering, implement source selection categories, and
+reuse indexed queue rendering, persist source team identity for selection,
+implement definition-based selection categories, and
 normalize imported display identifiers only at presentation boundaries.
 
 **Tech Stack:** TypeScript 6 simulation/UI, PixiJS 8 HUD and input, JSON save normalization, generated Wargus manifest, repo-native browser/layout verifiers.
@@ -30,6 +32,8 @@ normalize imported display identifiers only at presentation boundaries.
 - Preserve the source-faithful 127-entry queue limit.
 - Preserve source prerequisite/resource/supply checks: enqueue checks current
   supply but does not reserve queued demand; completion rechecks supply/limits.
+- A paid production order at `remainingSeconds: 0` is valid blocked state; save
+  normalization must not re-run unpaid enqueue affordability/supply checks.
 - Do not alter costs, durations, damage, or tech dependencies.
 - Browser-visible behavior is the acceptance criterion; static verifiers are guardrails.
 
@@ -65,6 +69,8 @@ normalize imported display identifiers only at presentation boundaries.
 - `sourceHintText` strips markup but preserves the imported typo `SET ZTOP`.
 - `completeSelectionDrag` additive-merges rectangle ids directly, bypassing `sourceCanToggleUnitIntoSelection`.
 - Plain rectangle selection can return every visible id in the box instead of applying source ownership/category priority.
+- Parsed map teams are dropped before `WorldPlayer`; exact source teamed
+  multi-selection therefore needs a backward-compatible persistent team id.
 - `pointerWorldPosition` changes only on pointer movement while the camera changes every frame.
 
 ## Interfaces
@@ -104,6 +110,16 @@ export interface ProductionOrder {
 the entire map; an ordinarily surrounded producer must find the nearest tile
 beyond the ring. Old saves normalize missing `blockedReason` to `null`.
 
+Selection team identity:
+
+```ts
+// WorldPlayer
+team: number;
+```
+
+Initialize from map setup teams and default to the player's own id. Old saves
+use that same per-player fallback; never default missing teams to zero.
+
 ## Design decision and rollback
 
 - **Rejected:** infer English failure reasons independently in the HUD; duplicated rules will drift from simulation eligibility.
@@ -135,7 +151,10 @@ beyond the ring. Old saves normalize missing `blockedReason` to `null`.
 - `scripts/verify-browser-train-session.mjs`
 - `scripts/verify-source-selection-mixing.mjs`
 - `scripts/verify-source-status-line-tooltips.mjs`
+- `scripts/verify-source-upgrade-to-action.mjs`
+- `scripts/verify-source-info-panel-layout.mjs` only if its production-status contract changes
 - `scripts/verify-icon-references.mjs`
+- `scripts/verify-browser-fixed-demo-input.mjs`
 - `plans/evidence/016.md` (create during execution)
 - `plans/README.md`
 
@@ -161,8 +180,8 @@ beyond the ring. Old saves normalize missing `blockedReason` to `null`.
 |---|---|---|---|
 | 016-A — icon baseline | 2 | The atlas id is normalized only at the presentation boundary; real command icons load. | Icon verifier passes, the live warning is absent, required viewports fit, and no simulation/world/save files change. |
 | 016-B — actionable commands | 3–4 | Simulation returns structured usability reasons and the fixed opening explains `Food 1/0` without changing supply. | Dependency/resource/supply/busy/limit fixtures agree with authoritative eligibility; enabled commands never show a reason; Hall warning fits and clears. |
-| 016-C — queue and status truth | 5–7 | Six indexed entries and overflow are visible/cancellable; food is unreserved until completion; supply/limit blocks, source-like egress, duration, and selected stats are truthful and save-safe. | Cancel index 2 refunds only its resources; a supply-blocked head retries and clears; one-ring obstruction ejects beyond the ring; text fixtures and save round-trip pass. |
-| 016-D — input correctness | 8–10 | Additive and plain selection obey source ownership/categories and stationary-cursor targeting tracks camera movement. | M12 and full M11 playable session pass with no required-viewport overlap or drag discontinuity; replay M01/M04/M10. |
+| 016-C — queue and status truth | 5–7 | Six indexed entries and overflow are visible/cancellable; food/slots are unreserved until completion; zero-second supply/limit blocks, source-like egress, duration, and selected stats are truthful and save-safe. | Cancel index 2 refunds only its resources; a zero-second supply-blocked head round-trips/retries without recharge; one-ring obstruction ejects beyond the ring; text fixtures pass. |
+| 016-D — input correctness | 8–10 | Additive and plain selection obey setup-derived teams/definition categories and stationary-cursor targeting tracks camera movement. | M12 and full M11 playable session pass with old-save team fallback, no required-viewport overlap, and no drag discontinuity; replay M01/M04/M10. |
 
 If a checkpoint fails twice, revert only that checkpoint and keep the last READY
 commit. A presentation checkpoint may not weaken simulation eligibility to pass.
@@ -177,6 +196,8 @@ commit. A presentation checkpoint may not weaken simulation eligibility to pass.
 - [ ] Run `npm run verify:browser-train-session`.
 - [ ] Run `npm run verify:source-selection-mixing`.
 - [ ] Run `npm run verify:source-status-line-tooltips`.
+- [ ] Run `npm run verify:source-upgrade-to-action`.
+- [ ] Run `npm run verify:browser-fixed-demo-input`.
 - [ ] Run `npm run verify:icons`.
 
 Expected: all exit 0. STOP on a pre-existing unrelated failure.
@@ -265,18 +286,33 @@ function commandBlockReasonText(manifest: WargusManifest, reason: SourceCommandB
 
 - [ ] Add `blockedReason` to `ProductionOrder` and every constructor with default `null`.
 - [ ] Remove queued demand from supply eligibility. Enqueue checks current used/cap but paying for another queued order does not reserve food and cancellation never refunds food.
+- [ ] Remove `PlayerSupply.queued` from authoritative state/callers and remove
+  paid queues from unit/total/type limit counts. Diagnostic queue demand, if
+  needed by a fixture, must use a different non-authoritative name.
 - [ ] When the head reaches completion, recheck supply and unit/type/total limits. Keep the paid order at the head with `"supply"` or `"limit"`, retry deterministically, and complete once the block clears.
-- [ ] Replace the narrow-ring `findSpawnTile` with deterministic outward expansion equivalent to source `DropOutOnSide`: search beyond a surrounded producer until the nearest valid map tile is found.
+- [ ] Replace the narrow-ring `findSpawnTile` with deterministic W/S/E/N
+  outward perimeter expansion equivalent to source `DropOutOnSide`: search
+  beyond a surrounded producer until the first valid map tile is found. Do not
+  reorder a ring by rally-point distance.
 - [ ] Bound the outward search by the whole map. Set `"no-egress"` only when no valid tile exists anywhere; this is a TypeScript safety divergence from source's unbounded retry, not the normal result of a one-ring surround.
 - [ ] Clear the field as soon as production can complete, when the block changes, or when an old order is loaded without a block.
 - [ ] Show `Needs N Food`, `Unit limit reached`, or `No valid exit` on slot zero instead of a misleading completed progress label.
-- [ ] Normalize the field in `saveGame.ts`; old saves use `null`.
+- [ ] Normalize the field in `saveGame.ts`; old saves use `null`. Preserve
+  `remainingSeconds === 0` for a blocked paid head rather than clamping to
+  `0.001`.
+- [ ] Replace paid-queue load revalidation through `canTrainUnitAt` with a paid
+  compatibility check (definition, producer/action, allow/dependency identity,
+  and queue shape). Current resources/supply must not drop or re-charge an
+  already-paid order.
 
 **Verify**: extend the browser train session so several same-demand units can be paid while only current supply is checked; the head waits at completion when food is exhausted, then completes after supply is added.
 
 **Verify**: surround a producer's immediate ring. Expected: the unit exits on the nearest valid tile beyond the ring without a normal blocked-exit state. Add a whole-map-invalid fixture for the bounded `no-egress` safety case.
 
 **Verify**: `npm run verify:save-schema` -> exits 0.
+
+**Verify**: `npm run verify:source-upgrade-to-action` -> exits 0 with the
+zero-second production shape and `used/cap` supply contract.
 
 ### Task 7: Display real elapsed time and truthful stats
 
@@ -295,6 +331,8 @@ function commandBlockReasonText(manifest: WargusManifest, reason: SourceCommandB
 
 ### Task 8: Apply source category, ownership, and mixing rules to rectangle selection
 
+- [ ] Add `team` to `WorldPlayer`, populate it from setup team assignments, and
+  normalize/save it. Missing setup/save data falls back to `player.id`.
 - [ ] Define a source building category from the unit definition's actual `building`/`Building` flag. Do not infer buildings from zero speed or tile size; 2×2 mobile siege/ships remain mobile.
 - [ ] Preserve the source selection cap of 18.
 - [ ] For additive rectangle and same-type selection, filter candidates to local/teamed, usable, rectangle-selectable units before applying mixing: a first selected building admits only its exact type; a mobile-first selection admits mixed mobile types but no buildings.
@@ -306,6 +344,9 @@ helpers; both input paths must call those helpers instead of separately
 reimplementing source rules.
 
 **Verify**: `npm run verify:source-selection-mixing` -> exits 0 and covers soldier+Hall, same/different building types, a 2×2 mobile plus another mobile, enemy-only rectangles, plain-selection priority, ownership/usability filters, and the 18-unit cap.
+
+**Verify**: old-save team fallback preserves free-for-all ownership instead of
+placing every player on implicit team zero.
 
 ### Task 9: Recompute pointer world position after camera movement
 
@@ -325,6 +366,10 @@ if (pointerScreenPosition) {
 ```
 
 **Verify**: extend `scripts/verify-modern-hud-layout.mjs` or the fixed-demo input verifier to hold the cursor still, pan the camera, and confirm the hovered/build-preview world tile changes with the camera.
+
+**Verify**: `npm run verify:browser-fixed-demo-input` performs real pointer and
+Shift-drag events; pointer screen coordinates stay fixed while world/drag
+coordinates follow camera movement in the same frame.
 
 ### Task 10: Perform the playable clarity session
 
@@ -354,6 +399,7 @@ Expected observable behavior:
 - [ ] Run `npm run verify:source-status-line-tooltips`.
 - [ ] Run `npm run verify:icons`.
 - [ ] Run `npm run verify:save-schema`.
+- [ ] Run `npm run verify:source-upgrade-to-action`.
 - [ ] Replay M01/M04/M10 and record M11–M12 in `plans/evidence/016.md`; obtain a READY review decision.
 - [ ] Run `git diff --check` and confirm only in-scope files changed.
 - [ ] Update plan 016 to `DONE` in `plans/README.md`.
@@ -368,6 +414,7 @@ Expected observable behavior:
 - [ ] Trained units search outward past an occupied ring; `no-egress` is reserved for a whole-map-invalid safety case.
 - [ ] Time/status/stat text reflects actual mechanics.
 - [ ] Additive and plain rectangle selection obey source category, ownership, priority, and mixing rules.
+- [ ] Team selection is setup-derived and backward-compatible in saves.
 - [ ] Stationary-cursor targeting follows camera movement correctly.
 - [ ] Browser verification and the playable clarity session pass.
 - [ ] M01, M04, and M10–M12 evidence is recorded and plan 016 has a READY review decision.
@@ -378,10 +425,12 @@ Expected observable behavior:
 - Queue rendering requires reducing the source queue limit.
 - Icon normalization requires changing or regenerating the asset pack.
 - Production blocked state or corrected no-reservation supply timing cannot be added backward-compatibly to saves.
+- A paid blocked order must be recharged or revalidated with current enqueue
+  affordability/supply after load.
 - Camera recomputation creates a selection-drag discontinuity.
 - The fixed HUD needs a wholesale layout redesign to fit six compact slots.
 - Any focused verification fails twice after a reasonable correction.
 
 ## Maintenance notes
 
-Keep reasons structured until the presentation boundary so future localization or alternate HUDs do not parse English. Source command omission/click-time feedback and TypeScript always-visible reasons are intentionally distinct; do not change eligibility to make the enhancement easier. Queued food is derived from completed units, never paid orders. Any new production-block cause should extend `blockedReason` instead of overloading remaining time. Selection category comes from definitions, not movement heuristics.
+Keep reasons structured until the presentation boundary so future localization or alternate HUDs do not parse English. Source command omission/click-time feedback and TypeScript always-visible reasons are intentionally distinct; do not change eligibility to make the enhancement easier. Food and unit slots are derived from created/live units, never paid orders. Any new production-block cause should extend `blockedReason` instead of overloading remaining time. Selection category comes from definitions, not movement heuristics, and exact team identity comes from setup/save data rather than diplomacy guesses.
