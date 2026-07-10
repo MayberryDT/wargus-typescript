@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving on. If a STOP condition occurs, stop and report; do not improvise. When done, update this plan's status in `plans/README.md` unless a coordinator owns the index.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/sourceUiHelpers.ts src/main.ts scripts/verify-browser-command-card-session.mjs scripts/verify-construction-definitions.mjs scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-build-action.mjs plans/evidence/011.md plans/011-protect-construction-lifecycle.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- package.json src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/view/sourceUiHelpers.ts src/main.ts scripts/verify-browser-command-card-session.mjs scripts/verify-construction-definitions.mjs scripts/verify-fixed-demo-random-ai.mjs scripts/verify-save-schema.mjs scripts/verify-source-build-action.mjs plans/evidence/011.md plans/011-protect-construction-lifecycle.md plans/README.md`
 > If any in-scope file changed, compare the current-state excerpts below with the live code. A semantic mismatch is a STOP condition.
 
 **Goal:** Match installed Wargus construction: placement creates a cancellable
@@ -128,9 +128,11 @@ Extend the existing build order instead of adding a new top-level order kind:
 - `src/view/sourceUiHelpers.ts` only to label a nullable-target `to-site`
   build order from its `buildingTypeId`
 - `src/main.ts` only for a smoke-mode, data-only M01 scenario hook
+- `package.json` only for the bounded exact-seed M01 verifier command
 - `scripts/verify-browser-command-card-session.mjs`
 - `scripts/verify-construction-definitions.mjs`
 - `scripts/verify-fixed-demo-random-ai.mjs`
+- `scripts/verify-save-schema.mjs`
 - `scripts/verify-source-build-action.mjs`
 - `plans/evidence/011.md` (create during execution)
 - `plans/README.md`
@@ -237,7 +239,11 @@ if (builder) {
   the existing fixture cannot expose those real order/resource transitions.
 - [ ] Extend `scripts/verify-fixed-demo-random-ai.mjs` only with stable guards for idle-only AI builder selection; do not encode exact line formatting.
 
-**Verify**: `npm run verify:browser-command-card-session` -> exits 0 and its success output includes the construction-retask scenario.
+**Verify**: `npm run verify:browser-construction-lifecycle` -> exits 0 at the
+exact `construction-lifecycle` seed and reports every retask plus arrival/cancel.
+The broad `verify:browser-command-card-session` remains a shared regression
+guard, but its unrelated post-M01 legacy sweep/cleanup hang does not supersede
+the bounded playable-mechanics result for this plan.
 
 **Verify**: `npm run verify:fixed-demo-random-ai` -> exits 0.
 
@@ -259,7 +265,9 @@ Expected observable behavior:
 ### Task 6: Close out
 
 - [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:browser-command-card-session`.
+- [ ] Run `npm run verify:browser-construction-lifecycle`.
+- [ ] Record the bounded broad command-card attempt and its post-M01 harness
+  residual; do not rerun it unbounded during this plan.
 - [ ] Run `npm run verify:fixed-demo-random-ai`.
 - [ ] Run `npm run verify:constructions`.
 - [ ] Run `npm run verify:source-build-action`.
