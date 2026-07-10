@@ -42,6 +42,8 @@ selection still uses genuinely idle workers so scripts do not thrash orders.
 - **Depends on**: none
 - **Category**: bug
 - **Planned at**: commit `6af2eeb`, 2026-07-10
+- **Completed at**: commit `a93ef25`, 2026-07-10; evidence
+  `plans/evidence/011.md`, review READY
 
 ## Player-visible contract and evidence
 
