@@ -74,3 +74,28 @@ Confirmed movement and combat contracts at the installed Stratagus commit:
 - Demolish damages all alive non-flying units in range. Default Wargus area
   missiles damage owner/allies/enemies/neutrals while excluding only their
   source caster when `CanHitOwner` is false.
+
+Confirmed source-AI contracts:
+
+- Each AI runs once per simulated second. Its script advances until a sleep or
+  unmet wait blocks; the installed launcher leaves the initial land-AI sleep at
+  zero cycles.
+- `AiNeed` adds one desired request. `AiSet` changes the absolute desired count.
+- `AiAttackWithForce` immediately launches members into a detached internal
+  force, resets the scripted slot, and continues to the next barrier in the
+  same think. Launched members do not replenish or satisfy the next force.
+- Workers already building, repairing, or actively gathering are ineligible;
+  unpaid build-travel costs are reserved so the AI does not overcommit.
+- Source speed values are percentages: 75/100/100/120/150 correspond to runtime
+  factors 0.75/1/1/1.2/1.5.
+- Exploration reads the AI player's own explored map and is attempted at most
+  every five simulated seconds.
+
+Confirmed fixed-demo/source boundary:
+
+- One Peasant and 10,000 gold / 5,000 wood / 5,000 oil are original Wargus
+  setup options. Distance-filtered starts and pacing score bands are
+  TypeScript-demo tuning, not original rules.
+- Garden of War BNE source starts 1 and 6 use `wc2-air-attack`; the others use
+  `wc2-land-attack`. Distance-only pairing therefore mixes incomparable contact
+  strategies unless the fixed demo filters or stratifies AI type.

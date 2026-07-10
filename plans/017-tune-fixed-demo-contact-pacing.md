@@ -9,7 +9,11 @@
 
 **Goal:** Preserve the deliberate one-Peasant/no-Hall/high-resource opening while selecting an evidence-backed global pace and start-distance band that reduce dead time and contact variance without a hidden movement-only multiplier.
 
-**Architecture:** Compare three fixed coherent pace/distance candidates before changing source, select the highest-scoring candidate through a frozen milestone rubric, then centralize the winner, remove private unit-speed mutation, and verify it across three deterministic seeds.
+**Architecture:** First restrict the fixed demo's enemy source slots to the
+map's `wc2-land-attack` strategy so contact runs compare like with like. Then
+compare three coherent pace/distance candidates, select the highest-scoring
+candidate through a frozen milestone rubric, centralize the winner, remove
+private unit-speed mutation, and verify it across deterministic seeds.
 
 **Tech Stack:** TypeScript 6 fixed-demo setup/runtime, deterministic seeded selection, PixiJS 8/Vite browser session, playtest telemetry and repo-native browser verifiers.
 
@@ -22,6 +26,9 @@
 - Do not change manifest costs or per-unit movement statistics.
 - The UI must show the real selected pace; no hidden “Speed 1x” multiplier.
 - Deterministic `?demoSeed=` and `?smoke=1` behavior must remain.
+- The fixed demo deliberately uses only Garden of War source slots assigned
+  `wc2-land-attack`; do not mix the radically later air script into contact
+  timing evidence.
 
 ---
 
@@ -48,6 +55,9 @@
 - A Town Hall's source time 255 is 51 seconds at 1x; Farm is 20 seconds, Barracks 40 seconds, Peasant 9 seconds, and Footman 12 seconds.
 - The previous draft's champion candidate was 45 source ticks/sec (1.5x), which predicts approximately 34s, 13.3s, 26.7s, 6s, and 8s for those actions. This plan now requires it to beat two challengers before landing.
 - `chooseFixedDemoStarts` selects human and enemy independently. Previous seeded inspection found start distances from roughly 31 to 151 tiles.
+- Garden of War source starts 1 and 6 carry `wc2-air-attack`; the other source
+  slots carry `wc2-land-attack`. Current random enemy selection therefore mixes
+  incomparable strategy/contact timelines.
 - High resources deliberately make harvesting optional during the opening; this plan retains that immediate-play direction.
 
 ## Candidate configurations and decision rule
@@ -60,7 +70,8 @@ Evaluate exactly these candidates; do not invent a fourth during execution:
 | B — champion | 45 | 1.5x | 70–110 tiles | 90 tiles |
 | C — aggressive | 50 | 1.6667x | 80–120 tiles | 100 tiles |
 
-Every candidate must first pass the hard gates: unchanged one-Peasant/high-resource
+Every candidate uses only eligible `wc2-land-attack` enemy source slots and must
+first pass the hard gates: unchanged one-Peasant/high-resource
 premise, M01–M12 regression replay, no per-unit pace mutation, deterministic
 replay, and shared performance budgets.
 
@@ -81,7 +92,11 @@ force sizes.
 
 - **Rejected:** add workers/buildings or lower source build costs; both erase the intended opening rather than tune it.
 - **Rejected:** retain per-unit 1.3x movement under a 1x label; it distorts every movement-relative balance relationship.
-- **Chosen:** a measurement-gated visible global simulation pace plus deterministic start band. Candidate B is the champion, not a foregone conclusion.
+- **Chosen:** source-assigned land-AI enemy slots for comparable fixed-demo
+  contact, plus a measurement-gated visible global simulation pace and
+  deterministic start band. This slot restriction is explicit demo tuning, not
+  an original Wargus start-selection rule. Candidate B remains the champion to
+  beat, not a foregone conclusion.
 - **Rollback trigger:** any M01–M12 regression, sustained performance-budget failure, or first contact outside the accepted window. Return to the previous global speed/start-pair checkpoint and report the milestone breakdown instead of changing force size or resources.
 
 ## Scope
@@ -125,34 +140,57 @@ force sizes.
 
 Expected: all exit 0 before tuning. STOP if a correctness dependency is incomplete or red.
 
-### Task 2: Run the pre-change champion/challenger bakeoff
+### Task 2: Run a land-AI-only pre-change champion/challenger bakeoff
 
-- [ ] Enumerate all Garden of War ordered start pairs and their Euclidean tile distances without changing runtime selection.
-- [ ] For each candidate A/B/C, select three deterministic representative pairs: nearest the band minimum, target, and maximum. Find and record one `demoSeed` that deterministically selects each pair, plus their player ids and exact distances.
+- [ ] Enumerate Garden of War source slots with their configured AI type, then
+  enumerate ordered start pairs whose enemy slot is `wc2-land-attack` and their
+  Euclidean tile distances. Record excluded air-AI enemy slots explicitly.
+- [ ] For each candidate A/B/C, select three deterministic eligible pairs:
+  nearest the band minimum, target, and maximum. Find and record one `demoSeed`
+  that selects each pair under the proposed pair algorithm, plus player ids,
+  enemy AI type, and exact distance.
 - [ ] Run both the economy-first and pressure-first action sequence for each candidate's three pairs. Use visible speed controls to set the candidate pace; use a temporary isolated checkpoint for candidate pair filtering, never stack candidates in one diff.
 - [ ] Record Hall completion, first human combat unit, first AI attack activation, first visible hostile contact, update/render timing, and M01–M12 replay result in `plans/evidence/017.md`.
 - [ ] Score candidates with the frozen formula above. Select the winner only if it passes every hard gate and scores at least 80; apply the lower-speed tie-break exactly.
 
-**Verify**: the evidence packet contains 18 measured runs (3 candidates × 3 seeds × 2 openings), the arithmetic can be recomputed from the raw milestone table, and one candidate is selected unambiguously. Otherwise STOP.
+**Verify**: the evidence packet contains 18 measured land-AI runs (3 candidates
+× 3 seeds × 2 openings), every enemy AI field is `wc2-land-attack`, the
+arithmetic can be recomputed from the raw milestone table, and one candidate is
+selected unambiguously. Otherwise STOP.
 
 ### Task 3: Choose start pairs inside the selected contact band
 
 - [ ] Add `DEMO_MIN_START_DISTANCE_TILES`, `DEMO_MAX_START_DISTANCE_TILES`, and `DEMO_TARGET_START_DISTANCE_TILES` with the selected row's exact values.
-- [ ] In `chooseFixedDemoStarts`, construct every ordered human/enemy pair from available Garden of War starts.
+- [ ] In `chooseFixedDemoStarts`, resolve each available source player's AI from
+  `setup.players`/`aiTypeOverrides`, then construct ordered pairs whose enemy
+  source player is `wc2-land-attack`.
 - [ ] Compute Euclidean distance from `setup.starts` points in tiles.
-- [ ] Filter to the selected candidate's exact minimum/maximum band.
+- [ ] Filter those comparable land-AI pairs to the selected candidate's exact
+  minimum/maximum distance band.
 - [ ] Sort candidates by human player id, then enemy player id before applying the seed so input ordering cannot change results.
 - [ ] Select from the filtered pairs with `seededIndex(`${seed}:pair`, pairs.length)`.
-- [ ] If no pair lies inside the selected band, choose deterministically from all pairs by smallest absolute distance from that candidate's target distance, then player-id tie-breaks.
+- [ ] If no eligible land-AI pair lies inside the selected band, choose
+  deterministically from all eligible land-AI pairs by smallest absolute
+  distance from the target, then player-id tie-breaks.
 - [ ] Keep the existing fallback for maps with fewer than two available starts.
+  If the fixed demo map unexpectedly has no land-AI enemy source slot, STOP the
+  fixed-demo setup with an explicit diagnostic rather than silently measuring
+  the air script as land pressure.
 
 Target data shape:
 
 ```ts
-type DemoStartPair = { human: number; enemy: number; distanceTiles: number };
+type DemoStartPair = {
+  human: number;
+  enemy: number;
+  enemyAi: "wc2-land-attack";
+  distanceTiles: number;
+};
 ```
 
-**Verify**: update `scripts/verify-fixed-demo-random-ai.mjs` with the selected candidate's exact numeric band and enumerate several deterministic seeds. Every chosen pair must be inside the band when eligible pairs exist.
+**Verify**: update `scripts/verify-fixed-demo-random-ai.mjs` with the selected
+candidate's exact numeric band and enumerate several deterministic seeds. Every
+chosen pair must have land AI and lie inside the band when eligible pairs exist.
 
 ### Task 4: Set the selected honest global pace
 
@@ -195,6 +233,8 @@ type DemoStartPair = { human: number; enemy: number; distanceTiles: number };
   - first AI attack order activation;
   - first visible hostile contact.
 - [ ] Use the three representative seeds from the winning candidate's bakeoff.
+- [ ] Assert and record `wc2-land-attack` for every selected enemy source slot;
+  a strategy mismatch invalidates the timing run.
 - [ ] Keep measurements in verifier output/telemetry; do not add mission objectives or tutorial UI.
 
 Required acceptance windows on a normal foreground browser session:
@@ -218,6 +258,7 @@ Expected observable behavior:
 - The first Hall completes inside the selected candidate's measured expectation and never exceeds the 40-second acceptance ceiling.
 - High resources allow immediate strategic choice; harvesting is useful for sustain rather than mandatory before the first army.
 - Small AI pressure arrives before the large wave and travel time is comparable between seeds.
+- Both sessions use source land AI; neither substitutes the air-tech timing path.
 - Speed controls and status text truthfully show the selected candidate's pace.
 
 ### Task 9: Close out
@@ -238,6 +279,8 @@ Expected observable behavior:
 - [ ] The selected candidate scored at least 80, passed every hard gate, and its pace is displayed truthfully.
 - [ ] No fixed-demo code mutates individual unit movement speed.
 - [ ] Seeded start pairs use the selected candidate's exact band or deterministic closest-to-target fallback.
+- [ ] Every fixed-demo enemy source slot is `wc2-land-attack`; air-script starts
+  remain available to non-demo map play but are excluded from contact scoring.
 - [ ] Hall, first combat unit, and first hostile contact fall inside the stated acceptance windows.
 - [ ] Two play sessions with different seeds feel comparably paced.
 - [ ] Focused browser/performance gates pass.
@@ -246,7 +289,8 @@ Expected observable behavior:
 ## STOP conditions
 
 - Any correctness plan 011–016 is incomplete.
-- A candidate band has fewer than three representative ordered pairs.
+- A candidate band has fewer than three representative ordered pairs with a
+  land-AI enemy slot.
 - No candidate scores at least 80 while passing the hard gates.
 - First AI contact remains outside 90–180 seconds after plan 014, because the required fix belongs in AI strategy rather than more speed tuning.
 - Achieving the target requires lowering resources, adding starting units/buildings, or changing manifest costs.
@@ -254,4 +298,9 @@ Expected observable behavior:
 
 ## Maintenance notes
 
-This plan intentionally optimizes immediate skirmish play with optional early harvesting because the high-resource premise is already deliberate. Preserve the bakeoff table and winning score in evidence so future pacing changes challenge a measured champion rather than silently replacing constants.
+This plan intentionally optimizes immediate land-skirmish play with optional
+early harvesting because the high-resource premise is deliberate. The land-AI
+slot filter is demo-only tuning; do not describe it as an original start rule or
+remove the air AI from normal map data. Preserve the bakeoff table, enemy AI
+type, and winning score so future pacing changes challenge a measured champion
+rather than silently replacing constants.

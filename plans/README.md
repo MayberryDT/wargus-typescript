@@ -116,12 +116,12 @@ gameplay quality.
 | Unreachable aggro freezes attack-move | 013 | M05 |
 | Fog cancels committed projectile/area damage | 013 | M06 |
 | Idle mobile defenders do not chase; visible enemy combat is silent | 013 | M07 |
-| AI sleep/attack instructions are swallowed; desired producer counts collapse | 014 | M08 |
+| AI barriers/force detachment are wrong; Need/Set producer semantics collapse | 014 | M08 |
 | Difficulty writes 75/120/150 as factors and fails to reset; AI uses human exploration history | 014 | M09 |
 | Advanced units lack producers; Inventor/Alchemist roster is absent | 015 | M10 |
 | Icon path fails; 1/0 supply, disabled reasons, paid queues, spawn blocks, time/stats, and source hint text are unclear | 016 | M11 |
 | Shift-drag mixing and stale pointer-world coordinates corrupt input state | 016 | M12 |
-| Start distance varies 31–151 tiles and hidden movement-only 1.3x distorts pacing | 017 | M13 |
+| Start distance/AI strategy vary and hidden movement-only 1.3x distorts pacing | 017 | M13 |
 
 ## Verification Baselines From Recon
 
