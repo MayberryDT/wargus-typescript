@@ -41,7 +41,7 @@ accepting general Move's range-expanded endpoint as a firing position.
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: HIGH
-- **Depends on**: plans/012-make-movement-orders-reliable.md
+- **Depends on**: plans/012-make-movement-orders-reliable.md, plans/015-complete-demo-tech-paths.md (serialized smoke-fixture ownership)
 - **Category**: bug
 - **Planned at**: commit `6af2eeb`, 2026-07-10
 

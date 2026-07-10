@@ -15,14 +15,13 @@ evidence packet.
 ## Critical path and safe concurrency
 
 ```text
-011 construction ─┬─> 015 tech reachability ──────────────┐
-                  └─> 012 movement -> 013 combat ─────────┼─> 014 AI -> 016 legibility -> 017 pacing
-                                                         ┘
+011 construction -> 012 movement -> 015 tech reachability -> 013 combat -> 014 AI -> 016 legibility -> 017 pacing
 ```
 
-- Plans 012 and 015 may run concurrently after 011 because their runtime source
-  scopes do not overlap. Merge 015 before 014.
-- Plan 013 waits for 012.
+- Plan 015 follows 012 because its bounded completion-level M10 evidence hook
+  now uses `src/main.ts`; this keeps one owner on the shared fixture surface.
+- Plan 013 waits for both 012 and 015, then owns the next `src/main.ts` and
+  `orders.ts` checkpoint.
 - Plan 014 waits for 011, 012, 013, and 015 so AI execution is evaluated only
   after the source-faithful Barracks/Inventor/Alchemist graph is reachable.
 - Plan 016 waits for 014 and 015 because it changes the same world/order/save
@@ -39,7 +38,7 @@ Only one active implementation plan may own a hotspot at a time:
 | `src/simulation/world.ts` | 013 -> 014 -> 016 |
 | `src/wargus/saveGame.ts` | 013 -> 014 -> 016 |
 | `src/view/sourceUiHelpers.ts` | 011 -> 016 |
-| `src/main.ts` | 011 -> 012 -> 013 -> 014 -> 016 -> 017 |
+| `src/main.ts` | 011 -> 012 -> 015 -> 013 -> 014 -> 016 -> 017 |
 | `src/wargus/demoScenario.ts` | 015 -> 017 |
 | `scripts/verify-fixed-demo-random-ai.mjs` | 011 -> 015 -> 014 -> 017 |
 | `scripts/verify-browser-command-card-session.mjs` | 011 -> 015 -> 016 |

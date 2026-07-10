@@ -4,14 +4,17 @@
 >
 > **Executor instructions**: Follow the plan and verification gates exactly. This plan completes the existing advertised roster; it does not expand the demo with unrelated naval or campaign content. Update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/wargus/demoScenario.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-browser-command-card-session.mjs scripts/verify-browser-train-session.mjs plans/evidence/015.md plans/015-complete-demo-tech-paths.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/wargus/demoScenario.ts src/main.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-browser-command-card-session.mjs scripts/verify-browser-train-session.mjs plans/evidence/015.md plans/015-complete-demo-tech-paths.md plans/README.md`
 > If the fixed-demo allowed-unit list or advanced build-page behavior changed, STOP and reconcile.
 
 **Goal:** Close the missing producer paths for the fixed demo's current advanced
 roster, then deliberately add the four source-faithful Inventor/Alchemist units
 with complete player-buildable paths from the one-Peasant opening.
 
-**Architecture:** Use the existing manifest buttons, dependency rules, build mappings, production functions, and unrestricted demo upgrade list. Add only the scenario allow-list producer links missing from the existing reachability graph.
+**Architecture:** Use the existing manifest buttons, dependency rules, build
+mappings, production functions, and unrestricted demo upgrade list. Add only
+the ten missing scenario allow-list links, then exercise the existing runtime
+through one bounded smoke-only cloned-world completion fixture.
 
 **Tech Stack:** TypeScript 6 scenario setup, generated Wargus manifest data, PixiJS/Vite browser runtime, repo-native command-card/train verifiers.
 
@@ -26,6 +29,9 @@ with complete player-buildable paths from the one-Peasant opening.
   Inventor/Alchemist: Flying Machine/Dwarves and Zeppelin/Goblin Sappers. Do
   not add ships, heroes, or unrelated roster expansion.
 - Air producers already exist in the allow list; do not duplicate them.
+- Do not encode the port's queued-food reservation as a contract. Original
+  Wargus pays queued resources but changes food demand only when a unit is
+  created; Plan 016 owns that correction.
 
 ---
 
@@ -34,7 +40,7 @@ with complete player-buildable paths from the one-Peasant opening.
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
-- **Depends on**: plans/011-protect-construction-lifecycle.md
+- **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md (for serialized `src/main.ts` fixture ownership)
 - **Category**: bug, direction
 - **Planned at**: commit `6af2eeb`, 2026-07-10
 
@@ -77,6 +83,12 @@ The runtime already knows how to build them:
 
 `allowedUpgradeTypes: []` intentionally leaves upgrades governed by the manifest/source dependency rules rather than a second demo allow list.
 
+The manifest and runtime already contain all six producer definitions, their
+buttons/dependencies/assets, both research conversions, direct upgraded
+Barracks training, and all ten direct output paths. This plan repairs scenario
+reachability and proves those existing mechanics; it does not add a new tech
+tree implementation.
+
 ## Design decision and rollback
 
 - **Rejected:** remove Paladin/Mage/Death Knight from the advertised roster;
@@ -92,6 +104,7 @@ The runtime already knows how to build them:
 **In scope**:
 
 - `src/wargus/demoScenario.ts`
+- `src/main.ts` only for one smoke-mode, data-only cloned-world M10 completion hook after the Plan 012/013 hotspot owner releases it
 - `scripts/verify-fixed-demo-random-ai.mjs`
 - `scripts/verify-browser-command-card-session.mjs`
 - `scripts/verify-browser-train-session.mjs`
@@ -155,7 +168,7 @@ Target additions:
 
 ### Task 3: Lock scenario reachability without duplicating the tech tree
 
-- [ ] Update `scripts/verify-fixed-demo-random-ai.mjs` to assert all six producer ids are present in the fixed-demo allow list.
+- [ ] Update `scripts/verify-fixed-demo-random-ai.mjs` to assert all six producer ids and all four Inventor/Alchemist output ids are present exactly once in the fixed-demo allow list.
 - [ ] Keep its one-Peasant, high-resource, randomized-start, and source-AI assertions unchanged.
 - [ ] Do not encode prerequisite logic in this static verifier; browser scenarios own behavior.
 
@@ -164,15 +177,20 @@ Target additions:
 ### Task 4: Exercise advanced build command cards
 
 - [ ] Extend the existing fixture matrix in `scripts/verify-browser-command-card-session.mjs` rather than creating a parallel command-card harness.
-- [ ] For a completed Keep/Castle-era Peasant fixture, assert the advanced page exposes enabled source build commands for Church, Mage Tower, and Inventor when their source dependencies are satisfied.
-- [ ] Repeat with an Orc fixture for Altar, Temple, and Alchemist.
-- [ ] Assert the commands are disabled before their source prerequisites are satisfied; do not bypass dependencies to make the buttons green.
+- [ ] Use Peasant + completed Elven Lumber Mill to expose the advanced page while Inventor, Mage Tower, and Church remain dependency-disabled; add a completed Castle to the same fixture and assert all three become executable.
+- [ ] Mirror with Peon + completed Troll Lumber Mill, then add a completed Fortress for Alchemist, Temple, and Altar.
+- [ ] Assert the actual source command values before/after; do not hardcode a second dependency graph or bypass prerequisites.
 
 **Verify**: `npm run verify:browser-command-card-session` -> exits 0 and reports six advanced producer commands.
 
 ### Task 5: Exercise production and conversion paths
 
-- [ ] Extend `scripts/verify-browser-train-session.mjs` with data-driven fixtures using the existing fixture hooks:
+- [ ] After Plan 012/013 release `src/main.ts`, add one smoke-only
+  `__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__` that clones the loaded demo
+  world, disables AI in the clone, prepares real prerequisites/resources, issues
+  normal research/train orders, and advances fixed simulation steps. It must
+  not mutate the live playable world or use wall-clock waits as game time.
+- [ ] Extend `scripts/verify-browser-train-session.mjs` with data-driven results from that fixture:
   - Church researches Paladin. Completion converts existing Knights to
     Paladins and unlocks direct Paladin training at the Barracks.
   - Altar researches Ogre Mage. Completion converts existing Ogres to Ogre
@@ -187,7 +205,13 @@ Target additions:
   research completion converts an existing Knight/Ogre, and the upgraded unit
   becomes directly trainable from the Barracks afterward. Do not expect a
   Church/Altar production queue.
-- [ ] For each directly trained unit, verify resource deduction, queue progress, completion, spawn, and supply reservation/release using the existing train-session conventions.
+- [ ] For each directly trained unit, verify resource deduction, queue progress,
+  completion, spawn, and stable deterministic ids/counts. Record supply
+  snapshots, but do not assert queued reservation/release: demand is unchanged
+  before spawn and increases only when the unit is created in source behavior.
+- [ ] For both conversions, preserve the existing Knight/Ogre unit id while its
+  type changes, then prove the separate Barracks Paladin/Ogre Mage command
+  changes from blocked to executable after real research completion.
 
 **Verify**: `npm run verify:browser-train-session` -> exits 0 and reports all
 ten source-faithful advanced paths.
@@ -215,6 +239,7 @@ Expected observable behavior:
 - [ ] Run `npm run verify:browser-command-card-session`.
 - [ ] Run `npm run verify:browser-train-session`.
 - [ ] Run `npm run verify:wargus-assets`.
+- [ ] Run `npm run verify:runtime-determinism`.
 - [ ] Replay M01 and record M10 in `plans/evidence/015.md`; obtain a READY review decision.
 - [ ] Run `git diff --check` and confirm only in-scope files changed.
 - [ ] Update plan 015 to `DONE` in `plans/README.md`.
@@ -235,10 +260,13 @@ Expected observable behavior:
 
 - Any missing producer lacks manifest art, buttons, or production definitions.
 - Reaching an advertised unit requires bypassing source dependency rules.
+- `src/main.ts` is still owned by an unfinished predecessor plan.
+- Completion evidence requires pre-seeding `researchedUpgrades`, bypassing
+  normal order completion, or encoding queued-food reservation as correct.
 - A unit advertised as direct training is actually conversion-only, or vice versa, and the fixture cannot follow manifest data.
 - The fix expands into naval/oil or campaign tech.
 - Any focused verification fails twice after a reasonable correction.
 
 ## Maintenance notes
 
-Keep the demo roster and producer allow list in sync. Future additions to `allowedUnitTypes` should be reviewed as a reachability graph: unit -> producer -> producer prerequisites -> required upgrade producer.
+Keep the demo roster and producer allow list in sync. Future additions to `allowedUnitTypes` should be reviewed as a reachability graph: unit -> producer -> producer prerequisites -> required upgrade producer. Keep M10 supply snapshots diagnostic until Plan 016 restores source completion-time food checks.
