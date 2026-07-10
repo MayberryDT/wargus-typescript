@@ -491,6 +491,7 @@ declare global {
     __WARGUS_TS_SELECT_FIRST_UNIT_TYPE__?: (typeId: string) => boolean;
     __WARGUS_TS_SELECT_FIXTURE_UNIT_TYPE__?: (typeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_MIXED_FIXTURE_UNIT_TYPES__?: (typeIds: string[]) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
+    __WARGUS_TS_SELECT_ADVANCED_BUILD_FIXTURE__?: (race: "human" | "orc", topTier: boolean) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_UPGRADE_FIXTURE__?: () => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_CARRYING_WORKER_FIXTURE__?: () => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_LOADED_TRANSPORT_FIXTURE__?: (typeId?: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
@@ -917,6 +918,61 @@ if (browserSmokeStateEnabled) {
     pendingWorldCommand = null;
     commandPage = 0;
     centerCameraOnWorldPoint(world, units[0].x, units[0].y);
+    publishBrowserSmokeState(true);
+    return { ok: true, ...browserSmokeCommandResult() };
+  };
+  window.__WARGUS_TS_SELECT_ADVANCED_BUILD_FIXTURE__ = (race, topTier) => {
+    if (!world || !manifest || (race !== "human" && race !== "orc")) {
+      return { ok: false, error: "missing world or invalid race", ...browserSmokeCommandResult() };
+    }
+    const workerTypeId = race === "human" ? "unit-peasant" : "unit-peon";
+    const millTypeId = race === "human" ? "unit-elven-lumber-mill" : "unit-troll-lumber-mill";
+    const topTierTypeId = race === "human" ? "unit-castle" : "unit-fortress";
+    const producerTypeIds = race === "human"
+      ? ["unit-inventor", "unit-mage-tower", "unit-church"]
+      : ["unit-alchemist", "unit-temple-of-the-damned", "unit-altar-of-storms"];
+    const workerDefinition = world.unitDefinitions.find((unit) => unit.id === workerTypeId);
+    const millDefinition = world.unitDefinitions.find((unit) => unit.id === millTypeId);
+    const topTierDefinition = world.unitDefinitions.find((unit) => unit.id === topTierTypeId);
+    if (!workerDefinition || !millDefinition || !topTierDefinition) {
+      return { ok: false, error: `missing ${race} advanced build fixture definitions`, ...browserSmokeCommandResult() };
+    }
+    clearBrowserSmokeFixtures();
+    world.allowedUnitTypes = [...new Set([
+      ...world.allowedUnitTypes,
+      workerTypeId,
+      millTypeId,
+      topTierTypeId,
+      ...producerTypeIds
+    ])];
+    const player = world.players.find((candidate) => candidate.id === world!.visibilityPlayer) ?? world.players[0];
+    if (player) {
+      player.resources.gold = Math.max(player.resources.gold ?? 0, 100000);
+      player.resources.wood = Math.max(player.resources.wood ?? 0, 100000);
+      player.resources.oil = Math.max(player.resources.oil ?? 0, 100000);
+    }
+    const baseTileX = Math.max(1, Math.min(world.map.width - 16, Math.floor((player?.startX ?? 8 * 32) / 32) + 3));
+    const baseTileY = Math.max(1, Math.min(world.map.height - 8, Math.floor((player?.startY ?? 8 * 32) / 32) + 3));
+    const createFixtureUnit = (definition: typeof workerDefinition, idSuffix: string, tileX: number): WorldUnit => readyBrowserSmokeFixtureUnit(createWorldUnit({
+      unit: definition,
+      id: `__smoke-fixture-${idSuffix}-${world!.nextUnitSerial++}`,
+      player: world!.visibilityPlayer,
+      tileX,
+      tileY: baseTileY,
+      tileset: activeMap?.setup?.tileset ?? null
+    }));
+    const worker = createFixtureUnit(workerDefinition, workerTypeId, baseTileX);
+    const mill = createFixtureUnit(millDefinition, millTypeId, baseTileX + 4);
+    const fixtureUnits = [worker, mill];
+    if (topTier) {
+      fixtureUnits.push(createFixtureUnit(topTierDefinition, topTierTypeId, baseTileX + 9));
+    }
+    world.units.push(...fixtureUnits);
+    updateVisibility(world);
+    selectedUnitIds = clampSelectionToSourceLimit(world, [worker.id]);
+    pendingWorldCommand = null;
+    commandPage = 0;
+    centerCameraOnWorldPoint(world, worker.x, worker.y);
     publishBrowserSmokeState(true);
     return { ok: true, ...browserSmokeCommandResult() };
   };

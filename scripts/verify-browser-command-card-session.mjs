@@ -8,6 +8,7 @@ const DEBUG_PORT = 9235;
 const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=construction-lifecycle`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CONSTRUCTION_ONLY = process.env.WARGUS_CONSTRUCTION_LIFECYCLE_ONLY === "1";
+const ADVANCED_BUILD_ONLY = process.env.WARGUS_ADVANCED_BUILD_FIXTURE_ONLY === "1";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
 const EXPECTED_GENERIC_DISABLED_HARVEST_TYPES = new Set([
@@ -126,6 +127,11 @@ try {
   }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
 
+  let completionMessage = "";
+  if (ADVANCED_BUILD_ONLY) {
+    await verifyAdvancedProducerBuildCommands();
+    completionMessage = "Advanced producer build commands verified (human/orc dependency-disabled before top tier and executable after Castle/Fortress).";
+  } else {
   const peasant = await selectUnitType("unit-peasant");
   expectCommands(peasant.commandCard, [
     "move",
@@ -181,7 +187,6 @@ try {
   await verifySourceCancelCommands();
   await verifyConstructionLifecycle();
 
-  let completionMessage = "";
   if (CONSTRUCTION_ONLY) {
     completionMessage = "Exact-seed construction lifecycle fixture passed.";
   } else {
@@ -263,6 +268,7 @@ try {
 
   completionMessage = `Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`;
   }
+  }
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
@@ -290,6 +296,37 @@ async function selectFixtureUnitType(typeId) {
   }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitIds?.length === 1", 5_000);
   return await readSmokeState(client);
+}
+
+async function verifyAdvancedProducerBuildCommands() {
+  const fixtures = [
+    {
+      race: "human",
+      producerTypeIds: ["unit-inventor", "unit-mage-tower", "unit-church"]
+    },
+    {
+      race: "orc",
+      producerTypeIds: ["unit-alchemist", "unit-temple-of-the-damned", "unit-altar-of-storms"]
+    }
+  ];
+  for (const fixture of fixtures) {
+    for (const topTier of [false, true]) {
+      const setup = await evalValue(client, `window.__WARGUS_TS_SELECT_ADVANCED_BUILD_FIXTURE__?.(${JSON.stringify(fixture.race)}, ${topTier})`);
+      if (!setup?.ok) {
+        throw new Error(`Unable to create ${fixture.race} advanced build fixture at topTier=${topTier}: ${JSON.stringify(setup)}`);
+      }
+      expectCommand(setup.commandCard, "build-advanced-page", { disabled: false, sourceAction: "button", sourceValue: "2" }, `${fixture.race} advanced page entry`);
+      const page = await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('build-advanced-page')");
+      for (const producerTypeId of fixture.producerTypeIds) {
+        expectCommand(page.commandCard, `source-build:${producerTypeId}`, {
+          disabled: !topTier,
+          sourceAction: "build",
+          sourceValue: producerTypeId
+        }, `${fixture.race} ${producerTypeId} at topTier=${topTier}`);
+      }
+      await evalValue(client, "window.__WARGUS_TS_EXECUTE_HUD_COMMAND__('build-page-cancel')");
+    }
+  }
 }
 
 async function verifyAllFixtureSourceCommands() {
