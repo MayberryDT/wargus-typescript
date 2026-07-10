@@ -500,6 +500,7 @@ declare global {
     __WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__?: (action: "move" | "attack" | "attack-ground" | "patrol" | "repair" | "harvest") => BrowserSmokePendingActionFixtureResult;
     __WARGUS_TS_SELECT_SOURCE_HARVEST_RALLY_FIXTURE__?: (producerTypeId: string) => BrowserSmokePendingActionFixtureResult;
     __WARGUS_TS_SELECT_SOURCE_TRAIN_FIXTURE__?: (producerTypeId: string, unitTypeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
+    __WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__?: () => Record<string, unknown>;
     __WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__?: (kind: "train" | "research" | "construction") => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__?: (mode: "move" | "stop" | "harvest" | "repair" | "attack" | "second-build" | "arrival") => Record<string, unknown>;
     __WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__?: () => Record<string, unknown>;
@@ -1440,6 +1441,242 @@ if (browserSmokeStateEnabled) {
       return { ok: false, error: `train fixture ${producerTypeId} ${unitTypeId} is still blocked`, ...browserSmokeCommandResult() };
     }
     return { ok: true, ...browserSmokeCommandResult() };
+  };
+  window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__ = () => {
+    if (!world) {
+      return { ok: false, error: "missing world" };
+    }
+    const runRace = (race: "human" | "orc") => {
+      const fixtureWorld = structuredClone(world) as WorldState;
+      fixtureWorld.aiStates.forEach((state) => { state.enabled = false; });
+      fixtureWorld.matchState = { status: "playing", winner: null, endedTick: null };
+      fixtureWorld.victoryRequirements = [];
+      fixtureWorld.victoryRequirementGroups = [];
+      fixtureWorld.defeatRequirements = [];
+      fixtureWorld.activeResearch = [];
+      fixtureWorld.queuedResearch = [];
+      fixtureWorld.units = [];
+      const player = fixtureWorld.players.find((candidate) => candidate.id === fixtureWorld.visibilityPlayer);
+      if (!player) {
+        throw new Error(`missing ${race} fixture player`);
+      }
+      player.race = race;
+      player.resources = { gold: 100000, wood: 100000, oil: 100000 };
+      fixtureWorld.researchedUpgrades[player.id] = [];
+      const startTileX = Math.max(0, Math.min(fixtureWorld.map.width - 1, Math.floor(player.startX / fixtureWorld.tileSize)));
+      const startTileY = Math.max(0, Math.min(fixtureWorld.map.height - 1, Math.floor(player.startY / fixtureWorld.tileSize)));
+      const groundTile = fixtureWorld.tiles[startTileY * fixtureWorld.map.width + startTileX] ?? 0;
+      fixtureWorld.tiles.fill(groundTile);
+
+      const types = race === "human"
+        ? {
+            farm: "unit-farm",
+            barracks: "unit-human-barracks",
+            lumberMill: "unit-elven-lumber-mill",
+            blacksmith: "unit-human-blacksmith",
+            cavalry: "unit-stables",
+            topTier: "unit-castle",
+            researchProducer: "unit-church",
+            casterProducer: "unit-mage-tower",
+            specialistProducer: "unit-inventor",
+            baseCavalry: "unit-knight",
+            upgrade: "upgrade-paladin",
+            upgradedCavalry: "unit-paladin",
+            caster: "unit-mage",
+            siege: "unit-ballista",
+            flyer: "unit-balloon",
+            specialist: "unit-dwarves"
+          }
+        : {
+            farm: "unit-pig-farm",
+            barracks: "unit-orc-barracks",
+            lumberMill: "unit-troll-lumber-mill",
+            blacksmith: "unit-orc-blacksmith",
+            cavalry: "unit-ogre-mound",
+            topTier: "unit-fortress",
+            researchProducer: "unit-altar-of-storms",
+            casterProducer: "unit-temple-of-the-damned",
+            specialistProducer: "unit-alchemist",
+            baseCavalry: "unit-ogre",
+            upgrade: "upgrade-ogre-mage",
+            upgradedCavalry: "unit-ogre-mage",
+            caster: "unit-death-knight",
+            siege: "unit-catapult",
+            flyer: "unit-zeppelin",
+            specialist: "unit-goblin-sappers"
+          };
+      const requiredTypeIds = [...new Set(Object.values(types).filter((id) => id.startsWith("unit-")))];
+      fixtureWorld.allowedUnitTypes = [...new Set([...fixtureWorld.allowedUnitTypes, ...requiredTypeIds])];
+      fixtureWorld.allowedUpgradeTypes = [...new Set([...fixtureWorld.allowedUpgradeTypes, types.upgrade])];
+      const addUnit = (typeId: string, index: number, label = typeId): WorldUnit => {
+        const definition = fixtureWorld.unitDefinitions.find((candidate) => candidate.id === typeId);
+        if (!definition) {
+          throw new Error(`missing ${race} fixture definition ${typeId}`);
+        }
+        const tileX = 6 + (index % 6) * 6;
+        const tileY = 6 + Math.floor(index / 6) * 6;
+        const unit = createWorldUnit({
+          unit: definition,
+          id: `__smoke-fixture-advanced-${race}-${label}`,
+          player: player.id,
+          tileX,
+          tileY,
+          tileset: activeMap?.setup?.tileset ?? null
+        });
+        fixtureWorld.units.push(unit);
+        return unit;
+      };
+      const enemyPlayer = fixtureWorld.players.find((candidate) => (
+        candidate.id !== player.id && candidate.id !== 15 && candidate.playerType !== "nobody"
+      ));
+      const enemyHallTypeId = enemyPlayer?.race === "orc" ? "unit-great-hall" : "unit-town-hall";
+      const enemyHallDefinition = fixtureWorld.unitDefinitions.find((candidate) => candidate.id === enemyHallTypeId);
+      if (!enemyPlayer || !enemyHallDefinition) {
+        throw new Error(`missing ${race} fixture opponent`);
+      }
+      fixtureWorld.units.push(createWorldUnit({
+        unit: enemyHallDefinition,
+        id: `__smoke-fixture-advanced-${race}-enemy-hall`,
+        player: enemyPlayer.id,
+        tileX: Math.max(1, fixtureWorld.map.width - 8),
+        tileY: Math.max(1, fixtureWorld.map.height - 8),
+        tileset: activeMap?.setup?.tileset ?? null
+      }));
+      addUnit(types.farm, 0, "farm-a");
+      addUnit(types.farm, 1, "farm-b");
+      const barracks = addUnit(types.barracks, 2, "barracks");
+      addUnit(types.lumberMill, 3, "lumber-mill");
+      addUnit(types.blacksmith, 4, "blacksmith");
+      addUnit(types.cavalry, 5, "cavalry-building");
+      addUnit(types.topTier, 6, "top-tier");
+      const researchProducer = addUnit(types.researchProducer, 7, "research-producer");
+      const casterProducer = addUnit(types.casterProducer, 8, "caster-producer");
+      const specialistProducer = addUnit(types.specialistProducer, 9, "specialist-producer");
+      const conversionSource = addUnit(types.baseCavalry, 10, "conversion-source");
+      const conversionSourceId = conversionSource.id;
+      const beforeResearchCanTrain = canTrainUnitAt(fixtureWorld, barracks.id, types.upgradedCavalry, fixtureWorld.unitDefinitions);
+      const researchResourcesBefore = { ...player.resources };
+      if (!issueResearchOrder(fixtureWorld, researchProducer.id, types.upgrade, fixtureWorld.upgradeDefinitions)) {
+        throw new Error(`unable to issue ${types.upgrade}`);
+      }
+      const researchResourcesAfterIssue = { ...player.resources };
+      const researchRemaining = fixtureWorld.activeResearch[0]?.remainingSeconds ?? null;
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      const researchProgressed = Number.isFinite(researchRemaining)
+        && (fixtureWorld.activeResearch[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < researchRemaining!;
+      for (let ticks = 0; fixtureWorld.activeResearch.length > 0 && ticks < 5000; ticks += 1) {
+        simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      }
+      const converted = fixtureWorld.units.find((unit) => unit.id === conversionSourceId);
+      const afterResearchCanTrain = canTrainUnitAt(fixtureWorld, barracks.id, types.upgradedCavalry, fixtureWorld.unitDefinitions);
+      const researchResourcesStable = JSON.stringify(researchResourcesAfterIssue) === JSON.stringify(player.resources)
+        && JSON.stringify(researchResourcesBefore) !== JSON.stringify(researchResourcesAfterIssue);
+      if (!afterResearchCanTrain) {
+        throw new Error(`post-research ${types.upgradedCavalry} blocked: ${JSON.stringify({
+          matchStatus: fixtureWorld.matchState.status,
+          activeResearch: fixtureWorld.activeResearch,
+          researched: fixtureWorld.researchedUpgrades[player.id] ?? [],
+          convertedTypeId: converted?.typeId ?? null,
+          supply: getPlayerSupply(fixtureWorld, player.id),
+          resources: player.resources,
+          prerequisiteTypes: fixtureWorld.units.map((unit) => unit.typeId)
+        })}`);
+      }
+
+      const supplyBefore = getPlayerSupply(fixtureWorld, player.id);
+      const outputTypeIds = [types.upgradedCavalry, types.caster, types.siege, types.flyer, types.specialist];
+      const outputCountsBefore = Object.fromEntries(outputTypeIds.map((typeId) => [
+        typeId,
+        fixtureWorld.units.filter((unit) => unit.typeId === typeId).length
+      ]));
+      const firstWave = [
+        [barracks, types.upgradedCavalry],
+        [casterProducer, types.caster],
+        [specialistProducer, types.flyer]
+      ] as const;
+      const firstWaveResourcesBefore = { ...player.resources };
+      for (const [producer, outputTypeId] of firstWave) {
+        if (!issueTrainUnitOrder(fixtureWorld, producer.id, outputTypeId, fixtureWorld.unitDefinitions)) {
+          throw new Error(`unable to train ${outputTypeId}`);
+        }
+      }
+      const firstWaveResourcesAfterIssue = { ...player.resources };
+      const specialistResourcesBefore = { ...player.resources };
+      const firstRemaining = firstWave.map(([producer]) => producer.productionQueue[0]?.remainingSeconds ?? null);
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      const firstWaveProgressed = firstWave.every(([producer], index) => (
+        Number.isFinite(firstRemaining[index])
+        && (producer.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < firstRemaining[index]!
+      ));
+      for (let ticks = 0; firstWave.some(([producer]) => producer.productionQueue.length > 0) && ticks < 5000; ticks += 1) {
+        simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      }
+      if (!issueTrainUnitOrder(fixtureWorld, specialistProducer.id, types.specialist, fixtureWorld.unitDefinitions)) {
+        throw new Error(`unable to train ${types.specialist}`);
+      }
+      const specialistResourcesAfterIssue = { ...player.resources };
+      const specialistRemaining = specialistProducer.productionQueue[0]?.remainingSeconds ?? null;
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      const specialistProgressed = Number.isFinite(specialistRemaining)
+        && (specialistProducer.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < specialistRemaining!;
+      for (let ticks = 0; specialistProducer.productionQueue.length > 0 && ticks < 7000; ticks += 1) {
+        simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      }
+      const siegeResourcesBefore = { ...player.resources };
+      if (!issueTrainUnitOrder(fixtureWorld, barracks.id, types.siege, fixtureWorld.unitDefinitions)) {
+        throw new Error(`unable to train ${types.siege}`);
+      }
+      const siegeResourcesAfterIssue = { ...player.resources };
+      const siegeRemaining = barracks.productionQueue[0]?.remainingSeconds ?? null;
+      simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      const siegeProgressed = Number.isFinite(siegeRemaining)
+        && (barracks.productionQueue[0]?.remainingSeconds ?? Number.POSITIVE_INFINITY) < siegeRemaining!;
+      for (let ticks = 0; barracks.productionQueue.length > 0 && ticks < 9000; ticks += 1) {
+        simulateWorld(fixtureWorld, 1 / sourceDefaultGameSpeed(fixtureWorld));
+      }
+      const outputsCompleted = outputTypeIds.every((typeId) => fixtureWorld.units.some((unit) => unit.typeId === typeId));
+      const trainingResourcesStable = JSON.stringify(firstWaveResourcesBefore) !== JSON.stringify(firstWaveResourcesAfterIssue)
+        && JSON.stringify(firstWaveResourcesAfterIssue) === JSON.stringify(specialistResourcesBefore)
+        && JSON.stringify(specialistResourcesBefore) !== JSON.stringify(specialistResourcesAfterIssue)
+        && JSON.stringify(specialistResourcesAfterIssue) === JSON.stringify(siegeResourcesBefore)
+        && JSON.stringify(siegeResourcesBefore) !== JSON.stringify(siegeResourcesAfterIssue)
+        && JSON.stringify(siegeResourcesAfterIssue) === JSON.stringify(player.resources);
+      return {
+        conversion: `${types.baseCavalry}->${types.upgradedCavalry}`,
+        conversionComplete: !beforeResearchCanTrain && afterResearchCanTrain && converted?.id === conversionSourceId && converted.typeId === types.upgradedCavalry,
+        outputs: outputTypeIds,
+        outputsCompleted,
+        resourcesChargedOnce: researchResourcesStable && trainingResourcesStable,
+        queueProgressed: researchProgressed && firstWaveProgressed && specialistProgressed && siegeProgressed,
+        stableIdsAndCounts: converted?.id === conversionSourceId
+          && outputTypeIds.every((typeId) => (
+            fixtureWorld.units.filter((unit) => unit.typeId === typeId).length === outputCountsBefore[typeId] + 1
+          )),
+        supply: { before: supplyBefore, after: getPlayerSupply(fixtureWorld, player.id) }
+      };
+    };
+    try {
+      const human = runRace("human");
+      const orc = runRace("orc");
+      const outputs = [
+        human.outputs[0], orc.outputs[0],
+        human.outputs[1], orc.outputs[1],
+        human.outputs[2], orc.outputs[2],
+        human.outputs[3], human.outputs[4],
+        orc.outputs[3], orc.outputs[4]
+      ];
+      return {
+        ok: human.conversionComplete && orc.conversionComplete && human.outputsCompleted && orc.outputsCompleted,
+        conversions: [human.conversion, orc.conversion],
+        outputs,
+        resourcesChargedOnce: human.resourcesChargedOnce && orc.resourcesChargedOnce,
+        queueProgressed: human.queueProgressed && orc.queueProgressed,
+        stableIdsAndCounts: human.stableIdsAndCounts && orc.stableIdsAndCounts,
+        supplyDiagnostic: { human: human.supply, orc: orc.supply }
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   };
   window.__WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__ = (kind) => {
     if (!world || !manifest) {

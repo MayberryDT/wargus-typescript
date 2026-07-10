@@ -7,6 +7,7 @@ const PORT = 5203;
 const DEBUG_PORT = 9230;
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
+const ADVANCED_TECH_ONLY = process.env.WARGUS_ADVANCED_TECH_FIXTURE_ONLY === "1";
 const CANDIDATE_MAPS = (process.env.WARGUS_BROWSER_TRAIN_MAPS ?? process.env.WARGUS_BROWSER_TRAIN_MAP ?? [
   "maps/ladder/Garden of war BNE.pud.smp.gz",
   "campaigns/orc/level01o.smp.gz",
@@ -28,8 +29,12 @@ try {
   chrome = spawn(CHROME, [
     "--headless=new",
     "--disable-gpu",
+    "--disable-background-networking",
+    "--disable-extensions",
     "--no-sandbox",
+    "--no-first-run",
     "--disable-dev-shm-usage",
+    "--renderer-process-limit=1",
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
@@ -49,23 +54,57 @@ try {
   await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
   await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_TRAIN__ === \"function\" && typeof window.__WARGUS_TS_SELECT_FIXTURE_UNIT_TYPE__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
 
-  const failures = [];
-  let verified = false;
-  for (const mapPath of CANDIDATE_MAPS) {
-    try {
-      const result = await verifyTrainMap(client, mapPath);
-      if (pageErrors.length > 0) {
-        throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
-      }
-      console.log(`Browser train session verified (${mapPath}, unit=${result.unitTypeId}, queue=${result.beforeQueue}->${result.afterQueue}, remaining=${result.beforeRemaining}->${result.afterRemaining}, tick=${result.tick}).`);
-      verified = true;
-      break;
-    } catch (error) {
-      failures.push(`${mapPath}: ${error instanceof Error ? error.message : String(error)}`);
+  if (ADVANCED_TECH_ONLY) {
+    await waitForExpression(client, "typeof window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__ === \"function\"", 5_000);
+    const result = await evalValue(client, "window.__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__()");
+    if (!result?.ok) {
+      throw new Error(`advanced tech-path fixture failed: ${JSON.stringify(result)}`);
     }
-  }
-  if (!verified) {
-    throw new Error(`Unable to verify browser train session on candidate maps:\n${failures.join("\n")}`);
+    const expectedConversions = [
+      "unit-knight->unit-paladin",
+      "unit-ogre->unit-ogre-mage"
+    ];
+    const expectedOutputs = [
+      "unit-paladin",
+      "unit-ogre-mage",
+      "unit-mage",
+      "unit-death-knight",
+      "unit-ballista",
+      "unit-catapult",
+      "unit-balloon",
+      "unit-dwarves",
+      "unit-zeppelin",
+      "unit-goblin-sappers"
+    ];
+    if (JSON.stringify(result.conversions) !== JSON.stringify(expectedConversions)) {
+      throw new Error(`advanced conversion results differed: ${JSON.stringify(result)}`);
+    }
+    if (JSON.stringify(result.outputs) !== JSON.stringify(expectedOutputs)) {
+      throw new Error(`advanced training results differed: ${JSON.stringify(result)}`);
+    }
+    if (!result.resourcesChargedOnce || !result.queueProgressed || !result.stableIdsAndCounts) {
+      throw new Error(`advanced lifecycle checks failed: ${JSON.stringify(result)}`);
+    }
+    console.log(`Advanced tech paths verified (${result.outputs.length} trained outputs, ${result.conversions.length} in-place conversions).`);
+  } else {
+    const failures = [];
+    let verified = false;
+    for (const mapPath of CANDIDATE_MAPS) {
+      try {
+        const result = await verifyTrainMap(client, mapPath);
+        if (pageErrors.length > 0) {
+          throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
+        }
+        console.log(`Browser train session verified (${mapPath}, unit=${result.unitTypeId}, queue=${result.beforeQueue}->${result.afterQueue}, remaining=${result.beforeRemaining}->${result.afterRemaining}, tick=${result.tick}).`);
+        verified = true;
+        break;
+      } catch (error) {
+        failures.push(`${mapPath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (!verified) {
+      throw new Error(`Unable to verify browser train session on candidate maps:\n${failures.join("\n")}`);
+    }
   }
 } finally {
   client?.close();
