@@ -40,6 +40,25 @@ reject(demoScenario, "fixedDemoRaceUnitType", "Fixed demo should not remap origi
 reject(demoScenario, "demoStartingUnits", "Fixed demo should use the original start points, not a custom staged base list.");
 reject(demoScenario, "return `${DEMO_DEFAULT_SEED}:${Date.now()}:${Math.random()}`", "Normal fixed-demo randomness should not use wall-clock or random APIs inside src/**/*.ts.");
 
+const allowedUnitTypesSource = demoScenario.match(/allowedUnitTypes: \[([\s\S]*?)\],\n\s*allowedUpgradeTypes:/)?.[1] ?? "";
+for (const typeId of [
+  "unit-church",
+  "unit-altar-of-storms",
+  "unit-mage-tower",
+  "unit-temple-of-the-damned",
+  "unit-inventor",
+  "unit-alchemist",
+  "unit-balloon",
+  "unit-zeppelin",
+  "unit-dwarves",
+  "unit-goblin-sappers"
+]) {
+  const occurrences = allowedUnitTypesSource.match(new RegExp(`"${typeId}"`, "g"))?.length ?? 0;
+  if (occurrences !== 1) {
+    throw new Error(`Fixed demo advanced reachability should allow ${typeId} exactly once; found ${occurrences}.`);
+  }
+}
+
 expect(indexHtml, "__WARGUS_TS_RANDOM_DEMO_SEED__", "Browser entrypoint should install a normal-play random demo seed hook.");
 expect(indexHtml, "getRandomValues", "Normal player demo starts should vary using browser entropy when available.");
 expect(indexHtml, "Math.random()", "Normal player demo starts should keep a browser-only fallback outside src/**/*.ts.");
