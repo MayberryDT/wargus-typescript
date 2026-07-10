@@ -175,6 +175,49 @@ try {
   ) {
     throw new Error(`M02/M03 route semantics exceeded the ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms update/pathfinding or ${MAX_ROUTE_SEMANTICS_RENDER_MS}ms render budget: ${JSON.stringify(routeSemantics.performance)}`);
   }
+  const expectedFormation = [
+    { id: "__smoke-fixture-m04-west", x: 9, y: 7 },
+    { id: "__smoke-fixture-m04-center", x: 10, y: 7 },
+    { id: "__smoke-fixture-m04-east", x: 11, y: 7 },
+    { id: "__smoke-fixture-m04-north", x: 10, y: 6 },
+    { id: "__smoke-fixture-m04-south", x: 10, y: 8 }
+  ];
+  const expectedSource = [
+    { id: "__smoke-fixture-m04-west", x: 3, y: 3 },
+    { id: "__smoke-fixture-m04-center", x: 4, y: 3 },
+    { id: "__smoke-fixture-m04-east", x: 5, y: 3 },
+    { id: "__smoke-fixture-m04-north", x: 4, y: 2 },
+    { id: "__smoke-fixture-m04-south", x: 4, y: 4 }
+  ];
+  if (
+    routeSemantics.m04?.issued !== true
+    || routeSemantics.m04?.center?.x !== 4
+    || routeSemantics.m04?.center?.y !== 3
+    || routeSemantics.m04?.clickedTile?.x !== 10
+    || routeSemantics.m04?.clickedTile?.y !== 7
+    || JSON.stringify(routeSemantics.m04?.sourceTiles) !== JSON.stringify(expectedSource)
+    || JSON.stringify(routeSemantics.m04?.expectedAssignedTiles) !== JSON.stringify(expectedFormation)
+    || JSON.stringify(routeSemantics.m04?.committedAssignedTiles) !== JSON.stringify(expectedFormation)
+    || JSON.stringify(routeSemantics.m04?.finalTiles) !== JSON.stringify(expectedFormation)
+    || routeSemantics.m04?.completionCount !== 5
+    || routeSemantics.m04?.prematureOrderDrops !== 0
+    || routeSemantics.m04?.liveEmptyPathTicks !== 0
+    || routeSemantics.m04?.overlapTicks !== 0
+    || routeSemantics.m04?.completed !== true
+    || !(routeSemantics.m04?.issueDurationMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    || !(routeSemantics.m04?.maximumUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    || !(routeSemantics.m04?.averageUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    || routeSemantics.m04SemanticRepeat !== true
+  ) {
+    throw new Error(`M04 source right-click should preserve five exact integer offsets, settle without dropped/empty/overlapping orders, and replay deterministically under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.m04)}`);
+  }
+  if (
+    !Array.isArray(routeSemantics.m04?.commandCardTargets)
+    || routeSemantics.m04.commandCardTargets.length !== 5
+    || routeSemantics.m04.commandCardTargets.some((target) => target.x !== 10 || target.y !== 7)
+  ) {
+    throw new Error(`Explicit command-card Move should send one common clicked tile to all five units: ${JSON.stringify(routeSemantics.m04?.commandCardTargets)}`);
+  }
   const loadedState = await readSmokeState(client);
   const loadedCounts = loadedState.ownedUnitCounts ?? {};
   const loadedResources = loadedState.visibilityPlayerResources ?? {};
@@ -239,7 +282,7 @@ try {
   }
   const isolatedTiming = routeSemantics.isolatedPerformance.map((sample) => `${sample.size}=${formatTiming(sample.elapsedMs)}ms`).join("/");
   const liveFootprintSummary = routeSemantics.liveFootprint.map((sample) => `${sample.direction}=${formatTiming(sample.movedDistance)}px/overlap:${sample.afterOverlap}`).join("/");
-  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}/blocked=${routeSemantics.dynamicM02.blockedTicks}/complete=${routeSemantics.dynamicM02.completionTick}/retry=${formatTiming(routeSemantics.dynamicM02.maximumRetryUpdateMs)}ms, stack path=${routeSemantics.stack.immediatePathLength}/complete=${routeSemantics.stack.completionTick}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, 2x2 ${liveFootprintSummary}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
+  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}/blocked=${routeSemantics.dynamicM02.blockedTicks}/complete=${routeSemantics.dynamicM02.completionTick}/retry=${formatTiming(routeSemantics.dynamicM02.maximumRetryUpdateMs)}ms, stack path=${routeSemantics.stack.immediatePathLength}/complete=${routeSemantics.stack.completionTick}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, M04 complete=${routeSemantics.m04.completionCount}/issue=${formatTiming(routeSemantics.m04.issueDurationMs)}ms/update=${formatTiming(routeSemantics.m04.maximumUpdateMs)}ms, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, 2x2 ${liveFootprintSummary}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);

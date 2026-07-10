@@ -1514,7 +1514,23 @@ export function canIssueQueuePatrolAt(world: WorldState, unit: WorldUnit, x: num
   return canReachQueuedDestination(world, unit, clampedX, clampedY);
 }
 
-export function formationDestinations(world: WorldState, units: WorldUnit[], x: number, y: number): Map<string, { x: number; y: number }> {
+type SourceTile = { x: number; y: number };
+
+function unitSourceTile(world: WorldState, unit: WorldUnit): SourceTile {
+  return {
+    x: Math.floor(unit.x / world.tileSize) - Math.floor(unit.tileWidth / 2),
+    y: Math.floor(unit.y / world.tileSize) - Math.floor(unit.tileHeight / 2)
+  };
+}
+
+function sourceTileToPlannerPoint(world: WorldState, unit: WorldUnit, assignedTile: SourceTile): { x: number; y: number } {
+  return {
+    x: (assignedTile.x + Math.floor(unit.tileWidth / 2)) * world.tileSize + world.tileSize / 2,
+    y: (assignedTile.y + Math.floor(unit.tileHeight / 2)) * world.tileSize + world.tileSize / 2
+  };
+}
+
+function sourceRightClickDestinations(world: WorldState, units: WorldUnit[], x: number, y: number): Map<string, { x: number; y: number }> {
   const destinations = new Map<string, { x: number; y: number }>();
   if (units.length === 0) {
     return destinations;
@@ -1526,55 +1542,23 @@ export function formationDestinations(world: WorldState, units: WorldUnit[], x: 
     }
     return destinations;
   }
-  const movementGroups = groupUnitsByMovementKind(units);
-  if (movementGroups.length > 1) {
-    const groupCenters = movementGroupDestinations(world, movementGroups, x, y);
-    for (const group of movementGroups) {
-      const groupDestination = groupCenters.get(movementKindForUnit(group[0])) ?? { x, y };
-      for (const [unitId, destination] of formationDestinations(world, group, groupDestination.x, groupDestination.y)) {
-        destinations.set(unitId, destination);
-      }
-    }
-    return destinations;
-  }
-  if (units.length === 1) {
-    destinations.set(units[0].id, clampWorldPoint(world, x, y));
-    return destinations;
-  }
 
-  const center = averageUnitPosition(units);
-  const travelX = x - center.x;
-  const travelY = y - center.y;
-  const travelDistance = Math.hypot(travelX, travelY);
-  const forwardX = travelDistance > 0.01 ? travelX / travelDistance : 0;
-  const forwardY = travelDistance > 0.01 ? travelY / travelDistance : -1;
-  const sideX = -forwardY;
-  const sideY = forwardX;
-  const columns = Math.ceil(Math.sqrt(units.length));
-  const rows = Math.ceil(units.length / columns);
-  const spacing = world.tileSize * 0.92;
-  const sortedUnits = [...units].sort((left, right) => {
-    const leftSide = (left.x - center.x) * sideX + (left.y - center.y) * sideY;
-    const rightSide = (right.x - center.x) * sideX + (right.y - center.y) * sideY;
-    if (Math.abs(leftSide - rightSide) > 1) {
-      return leftSide - rightSide;
+  const sourceTiles = units.map((unit) => ({ unit, sourceTile: unitSourceTile(world, unit) }));
+  const center = {
+    x: Math.floor(sourceTiles.reduce((sum, entry) => sum + entry.sourceTile.x, 0) / sourceTiles.length),
+    y: Math.floor(sourceTiles.reduce((sum, entry) => sum + entry.sourceTile.y, 0) / sourceTiles.length)
+  };
+  const clickedTile = worldToTile(world, x, y);
+  for (const { unit, sourceTile } of sourceTiles) {
+    const assignedTile = {
+      x: Math.max(0, Math.min(world.map.width - 1, clickedTile.x + sourceTile.x - center.x)),
+      y: Math.max(0, Math.min(world.map.height - 1, clickedTile.y + sourceTile.y - center.y))
+    };
+    if (assignedTile.x === sourceTile.x && assignedTile.y === sourceTile.y) {
+      continue;
     }
-    const leftForward = (left.x - center.x) * forwardX + (left.y - center.y) * forwardY;
-    const rightForward = (right.x - center.x) * forwardX + (right.y - center.y) * forwardY;
-    return rightForward - leftForward;
-  });
-
-  sortedUnits.forEach((unit, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const sideOffset = (column - (columns - 1) / 2) * spacing;
-    const forwardOffset = (row - (rows - 1) / 2) * spacing;
-    destinations.set(unit.id, clampWorldPoint(
-      world,
-      x + sideX * sideOffset - forwardX * forwardOffset,
-      y + sideY * sideOffset - forwardY * forwardOffset
-    ));
-  });
+    destinations.set(unit.id, sourceTileToPlannerPoint(world, unit, assignedTile));
+  }
   return destinations;
 }
 
@@ -1582,95 +1566,26 @@ function sourceFormationMovementApplies(world: WorldState, units: WorldUnit[]): 
   if (!world.engineSettings.formationMovementDefault || units.length >= 12) {
     return false;
   }
-  const magicBoxSize = 7 * world.tileSize;
-  let minX = units[0]?.x ?? 0;
+  const magicBoxSize = 7;
+  const firstTile = unitSourceTile(world, units[0]);
+  let minX = firstTile.x;
   let maxX = minX;
-  let minY = units[0]?.y ?? 0;
+  let minY = firstTile.y;
   let maxY = minY;
   for (const unit of units.slice(1)) {
-    minX = Math.min(minX, unit.x);
-    maxX = Math.max(maxX, unit.x);
+    const tile = unitSourceTile(world, unit);
+    minX = Math.min(minX, tile.x);
+    maxX = Math.max(maxX, tile.x);
     if (maxX - minX > magicBoxSize) {
       return false;
     }
-    minY = Math.min(minY, unit.y);
-    maxY = Math.max(maxY, unit.y);
+    minY = Math.min(minY, tile.y);
+    maxY = Math.max(maxY, tile.y);
     if (maxY - minY > magicBoxSize) {
       return false;
     }
   }
   return true;
-}
-
-function groupUnitsByMovementKind(units: WorldUnit[]): WorldUnit[][] {
-  const groups = new Map<ReturnType<typeof movementKindForUnit>, WorldUnit[]>();
-  for (const unit of units) {
-    const movement = movementKindForUnit(unit);
-    groups.set(movement, [...(groups.get(movement) ?? []), unit]);
-  }
-  return [...groups.values()];
-}
-
-function movementGroupDestinations(world: WorldState, groups: WorldUnit[][], x: number, y: number): Map<ReturnType<typeof movementKindForUnit>, { x: number; y: number }> {
-  const destinations = new Map<ReturnType<typeof movementKindForUnit>, { x: number; y: number }>();
-  if (groups.length === 1) {
-    destinations.set(movementKindForUnit(groups[0][0]), clampWorldPoint(world, x, y));
-    return destinations;
-  }
-
-  const totalUnits = groups.reduce((sum, group) => sum + group.length, 0);
-  const center = groups.reduce((sum, group) => {
-    for (const unit of group) {
-      sum.x += unit.x;
-      sum.y += unit.y;
-    }
-    return sum;
-  }, { x: 0, y: 0 });
-  center.x /= Math.max(1, totalUnits);
-  center.y /= Math.max(1, totalUnits);
-
-  const travelX = x - center.x;
-  const travelY = y - center.y;
-  const travelDistance = Math.hypot(travelX, travelY);
-  const sideX = travelDistance > 0.01 ? -travelY / travelDistance : 1;
-  const sideY = travelDistance > 0.01 ? travelX / travelDistance : 0;
-  const sortedGroups = [...groups].sort((left, right) => {
-    const leftMovement = movementKindForUnit(left[0]);
-    const rightMovement = movementKindForUnit(right[0]);
-    const leftCenter = averageUnitPosition(left);
-    const rightCenter = averageUnitPosition(right);
-    const leftSide = (leftCenter.x - center.x) * sideX + (leftCenter.y - center.y) * sideY;
-    const rightSide = (rightCenter.x - center.x) * sideX + (rightCenter.y - center.y) * sideY;
-    if (Math.abs(leftSide - rightSide) > 1) {
-      return leftSide - rightSide;
-    }
-    return movementSortRank(leftMovement) - movementSortRank(rightMovement);
-  });
-  const spacing = world.tileSize * 1.35;
-  sortedGroups.forEach((group, index) => {
-    const movement = movementKindForUnit(group[0]);
-    const offset = (index - (sortedGroups.length - 1) / 2) * spacing;
-    destinations.set(movement, clampWorldPoint(world, x + sideX * offset, y + sideY * offset));
-  });
-  return destinations;
-}
-
-function averageUnitPosition(units: WorldUnit[]): { x: number; y: number } {
-  const sum = units.reduce((total, unit) => ({ x: total.x + unit.x, y: total.y + unit.y }), { x: 0, y: 0 });
-  return {
-    x: sum.x / Math.max(1, units.length),
-    y: sum.y / Math.max(1, units.length)
-  };
-}
-
-function movementSortRank(movement: ReturnType<typeof movementKindForUnit>): number {
-  if (movement === "land") {
-    return 0;
-  }
-  if (movement === "naval") {
-    return 1;
-  }
-  return 2;
 }
 
 function clampWorldPoint(world: WorldState, x: number, y: number): { x: number; y: number } {
@@ -1688,29 +1603,17 @@ function selectedUnitsForPlayer(world: WorldState, unitIds: string[], playerId =
 
 export function canSelectedIssueMoveAt(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
-  const destinations = formationDestinations(world, movableUnits, x, y);
-  return movableUnits.some((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    return canIssueMoveAt(world, unit, destination.x, destination.y);
-  });
+  return movableUnits.some((unit) => canIssueMoveAt(world, unit, x, y));
 }
 
 export function canSelectedIssueCombatMoveAt(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
-  const destinations = formationDestinations(world, movableUnits, x, y);
-  return movableUnits.some((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    return canIssueCombatMoveAt(world, unit, destination.x, destination.y);
-  });
+  return movableUnits.some((unit) => canIssueCombatMoveAt(world, unit, x, y));
 }
 
 export function canSelectedIssuePatrolAt(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
-  const destinations = formationDestinations(world, movableUnits, x, y);
-  return movableUnits.some((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    return canIssuePatrolAt(world, unit, destination.x, destination.y);
-  });
+  return movableUnits.some((unit) => canIssuePatrolAt(world, unit, x, y));
 }
 
 export function canSelectedIssueFollowAt(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
@@ -1731,6 +1634,10 @@ export function canSelectedIssueHarvestAt(world: WorldState, unitIds: string[], 
 
 export function issueGroupSmartOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+  return issueGroupSmartOrderWithDestinations(world, unitIds, movableUnits, x, y, playerId);
+}
+
+function issueGroupSmartOrderWithDestinations(world: WorldState, unitIds: string[], movableUnits: WorldUnit[], x: number, y: number, playerId: number, destinations?: Map<string, { x: number; y: number }>): boolean {
   if (movableUnits.length === 0) {
     return false;
   }
@@ -1744,10 +1651,12 @@ export function issueGroupSmartOrder(world: WorldState, unitIds: string[], x: nu
     }
     return issued;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   for (const unit of movableUnits) {
-    const destination = destinations.get(unit.id) ?? { x, y };
+    if (destinations && !destinations.has(unit.id)) {
+      continue;
+    }
+    const destination = destinations?.get(unit.id) ?? { x, y };
     const planned = planMoveOrder(world, unit, destination.x, destination.y);
     if (planned) {
       commitMoveOrder(unit, planned, true);
@@ -1762,6 +1671,10 @@ export function issueGroupSmartOrder(world: WorldState, unitIds: string[], x: nu
 
 export function issueGroupQueueSmartOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+  return issueGroupQueueSmartOrderWithDestinations(world, unitIds, movableUnits, x, y, playerId);
+}
+
+function issueGroupQueueSmartOrderWithDestinations(world: WorldState, unitIds: string[], movableUnits: WorldUnit[], x: number, y: number, playerId: number, destinations?: Map<string, { x: number; y: number }>): boolean {
   if (movableUnits.length === 0) {
     return false;
   }
@@ -1808,10 +1721,12 @@ export function issueGroupQueueSmartOrder(world: WorldState, unitIds: string[], 
     }
     return issued;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   for (const unit of movableUnits) {
-    const destination = destinations.get(unit.id) ?? { x, y };
+    if (destinations && !destinations.has(unit.id)) {
+      continue;
+    }
+    const destination = destinations?.get(unit.id) ?? { x, y };
     issued = (canIssueQueueMoveAt(world, unit, destination.x, destination.y) && issueQueueMoveOrder(world, unit.id, destination.x, destination.y)) || issued;
   }
   if (issued) {
@@ -1825,11 +1740,9 @@ export function issueGroupMoveOrder(world: WorldState, unitIds: string[], x: num
   if (movableUnits.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   movableUnits.forEach((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    const planned = planMoveOrder(world, unit, destination.x, destination.y);
+    const planned = planMoveOrder(world, unit, x, y);
     if (planned) {
       commitMoveOrder(unit, planned, true);
       issued = true;
@@ -1843,11 +1756,9 @@ export function issueGroupQueueMoveOrder(world: WorldState, unitIds: string[], x
   if (movableUnits.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   movableUnits.forEach((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    issued = (canIssueQueueMoveAt(world, unit, destination.x, destination.y) && issueQueueMoveOrder(world, unit.id, destination.x, destination.y)) || issued;
+    issued = (canIssueQueueMoveAt(world, unit, x, y) && issueQueueMoveOrder(world, unit.id, x, y)) || issued;
   });
   return issued;
 }
@@ -1881,9 +1792,24 @@ function issueGroupRallyPointOrder(world: WorldState, unitIds: string[], x: numb
 
 export function issueSourceRightButtonOrder(world: WorldState, unitIds: string[], x: number, y: number, queue = false, playerId = world.visibilityPlayer): boolean {
   if (world.engineSettings.rightButtonAction !== "attack") {
+    if (queue && isSmartOrderObjectClick(world, x, y, playerId)) {
+      return issueGroupQueueSmartOrder(world, unitIds, x, y, playerId);
+    }
+    if (!queue) {
+      const selectedUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+      const producers = selectedUnits.filter((unit) => canSetRallyPoint(world, unit));
+      if (producers.length > 0 && producers.length === selectedUnits.length) {
+        return issueGroupSmartOrRallyOrder(world, unitIds, x, y, playerId);
+      }
+      if (isSmartOrderObjectClick(world, x, y, playerId)) {
+        return issueGroupSmartOrRallyOrder(world, unitIds, x, y, playerId);
+      }
+    }
+    const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+    const destinations = sourceRightClickDestinations(world, movableUnits, x, y);
     return queue
-      ? issueGroupQueueSmartOrder(world, unitIds, x, y, playerId)
-      : issueGroupSmartOrRallyOrder(world, unitIds, x, y, playerId);
+      ? issueGroupQueueSmartOrderWithDestinations(world, unitIds, movableUnits, x, y, playerId, destinations)
+      : issueGroupSmartOrderWithDestinations(world, unitIds, movableUnits, x, y, playerId, destinations);
   }
   const targetIssued = queue
     ? issueGroupQueueAttackTargetAtOrder(world, unitIds, x, y, playerId)
@@ -1891,20 +1817,28 @@ export function issueSourceRightButtonOrder(world: WorldState, unitIds: string[]
   if (targetIssued) {
     return true;
   }
+  const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+  const destinations = sourceRightClickDestinations(world, movableUnits, x, y);
   return queue
-    ? issueGroupQueueAttackMoveOrder(world, unitIds, x, y, playerId)
-    : issueGroupAttackMoveOrder(world, unitIds, x, y, playerId);
+    ? issueGroupQueueAttackMoveOrderWithDestinations(world, movableUnits, x, y, destinations)
+    : issueGroupAttackMoveOrderWithDestinations(world, movableUnits, x, y, destinations);
 }
 
 export function issueGroupAttackMoveOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+  return issueGroupAttackMoveOrderWithDestinations(world, movableUnits, x, y);
+}
+
+function issueGroupAttackMoveOrderWithDestinations(world: WorldState, movableUnits: WorldUnit[], x: number, y: number, destinations?: Map<string, { x: number; y: number }>): boolean {
   if (movableUnits.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   movableUnits.forEach((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
+    if (destinations && !destinations.has(unit.id)) {
+      return;
+    }
+    const destination = destinations?.get(unit.id) ?? { x, y };
     issued = (canIssueCombatMoveAt(world, unit, destination.x, destination.y) && issueAttackMoveOrder(world, unit.id, destination.x, destination.y)) || issued;
   });
   return issued;
@@ -1912,13 +1846,19 @@ export function issueGroupAttackMoveOrder(world: WorldState, unitIds: string[], 
 
 export function issueGroupQueueAttackMoveOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
+  return issueGroupQueueAttackMoveOrderWithDestinations(world, movableUnits, x, y);
+}
+
+function issueGroupQueueAttackMoveOrderWithDestinations(world: WorldState, movableUnits: WorldUnit[], x: number, y: number, destinations?: Map<string, { x: number; y: number }>): boolean {
   if (movableUnits.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   movableUnits.forEach((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
+    if (destinations && !destinations.has(unit.id)) {
+      return;
+    }
+    const destination = destinations?.get(unit.id) ?? { x, y };
     issued = (canIssueQueueCombatMoveAt(world, unit, destination.x, destination.y) && issueQueueAttackMoveOrder(world, unit.id, destination.x, destination.y)) || issued;
   });
   return issued;
@@ -1929,11 +1869,9 @@ export function issueGroupPatrolOrder(world: WorldState, unitIds: string[], x: n
   if (movableUnits.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   movableUnits.forEach((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    issued = (canIssuePatrolAt(world, unit, destination.x, destination.y) && issuePatrolOrder(world, unit.id, destination.x, destination.y)) || issued;
+    issued = (canIssuePatrolAt(world, unit, x, y) && issuePatrolOrder(world, unit.id, x, y)) || issued;
   });
   return issued;
 }
@@ -1943,11 +1881,9 @@ export function issueGroupQueuePatrolOrder(world: WorldState, unitIds: string[],
   if (movableUnits.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, movableUnits, x, y);
   let issued = false;
   movableUnits.forEach((unit) => {
-    const destination = destinations.get(unit.id) ?? { x, y };
-    issued = (canIssueQueuePatrolAt(world, unit, destination.x, destination.y) && issueQueuePatrolOrder(world, unit.id, destination.x, destination.y)) || issued;
+    issued = (canIssueQueuePatrolAt(world, unit, x, y) && issueQueuePatrolOrder(world, unit.id, x, y)) || issued;
   });
   return issued;
 }
@@ -4019,11 +3955,9 @@ export function issueGroupUnloadTransportOrder(world: WorldState, unitIds: strin
   if (transports.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, transports, x, y);
   let issued = false;
   transports.forEach((transport) => {
-    const destination = destinations.get(transport.id) ?? { x, y };
-    issued = (canIssueUnloadTransportAt(world, transport, destination.x, destination.y) && issueUnloadTransportAtOrder(world, transport.id, destination.x, destination.y)) || issued;
+    issued = (canIssueUnloadTransportAt(world, transport, x, y) && issueUnloadTransportAtOrder(world, transport.id, x, y)) || issued;
   });
   return issued;
 }
@@ -4033,11 +3967,9 @@ export function issueGroupQueueUnloadTransportOrder(world: WorldState, unitIds: 
   if (transports.length === 0) {
     return false;
   }
-  const destinations = formationDestinations(world, transports, x, y);
   let issued = false;
   transports.forEach((transport) => {
-    const destination = destinations.get(transport.id) ?? { x, y };
-    issued = (canIssueQueueUnloadTransportAt(world, transport, destination.x, destination.y) && issueQueueUnloadTransportAtOrder(world, transport.id, destination.x, destination.y)) || issued;
+    issued = (canIssueQueueUnloadTransportAt(world, transport, x, y) && issueQueueUnloadTransportAtOrder(world, transport.id, x, y)) || issued;
   });
   return issued;
 }

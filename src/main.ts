@@ -7,7 +7,7 @@ import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER
 import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, loadSavedGameJson, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
-import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
+import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
 import { availableCommands, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type ModernHudLayoutDebug } from "./view/renderHud";
@@ -2040,6 +2040,141 @@ if (browserSmokeStateEnabled) {
         finalTile: unitTile(fixtureWorld, stackMover)
       };
     };
+    const formationSettlement = () => {
+      const sourceTable = [
+        { id: "__smoke-fixture-m04-west", x: 3, y: 3, assignedX: 9, assignedY: 7 },
+        { id: "__smoke-fixture-m04-center", x: 4, y: 3, assignedX: 10, assignedY: 7 },
+        { id: "__smoke-fixture-m04-east", x: 5, y: 3, assignedX: 11, assignedY: 7 },
+        { id: "__smoke-fixture-m04-north", x: 4, y: 2, assignedX: 10, assignedY: 6 },
+        { id: "__smoke-fixture-m04-south", x: 4, y: 4, assignedX: 10, assignedY: 8 }
+      ];
+      const prepareWorld = () => {
+        const fixtureWorld = createFixtureWorld(16, 12, [], 0);
+        fixtureWorld.accumulator = 0;
+        fixtureWorld.elapsed = 0;
+        fixtureWorld.tick = 0;
+        fixtureWorld.matchState.status = "playing";
+        fixtureWorld.engineSettings.formationMovementDefault = true;
+        fixtureWorld.engineSettings.rightButtonAction = "move";
+        const units = sourceTable.map((entry) => unitAt(fixtureWorld, entry.id, entry.x, entry.y));
+        fixtureWorld.units = [...units, inertOpponentAt(fixtureWorld, "__smoke-fixture-m04-opponent", 15, 11)];
+        return { fixtureWorld, units };
+      };
+      const sourceTiles = sourceTable.map((entry) => ({ id: entry.id, x: entry.x, y: entry.y }));
+      const expectedAssignedTiles = sourceTable.map((entry) => ({ id: entry.id, x: entry.assignedX, y: entry.assignedY }));
+      const clickedTile = { x: 10, y: 7 };
+      const center = {
+        x: Math.floor(sourceTable.reduce((sum, entry) => sum + entry.x, 0) / sourceTable.length),
+        y: Math.floor(sourceTable.reduce((sum, entry) => sum + entry.y, 0) / sourceTable.length)
+      };
+      const { fixtureWorld, units } = prepareWorld();
+      const clickedPoint = tilePoint(clickedTile.x, clickedTile.y);
+      const issueStartedAt = performance.now();
+      const issued = issueSourceRightButtonOrder(
+        fixtureWorld,
+        units.map((unit) => unit.id),
+        clickedPoint.x,
+        clickedPoint.y,
+        false,
+        fixtureWorld.visibilityPlayer
+      );
+      const issueDurationMs = performance.now() - issueStartedAt;
+      const orderTargetTile = (unit: WorldUnit) => unit.order && "targetX" in unit.order && "targetY" in unit.order
+        ? { id: unit.id, x: Math.floor(unit.order.targetX / fixtureWorld.tileSize), y: Math.floor(unit.order.targetY / fixtureWorld.tileSize) }
+        : { id: unit.id, x: -1, y: -1 };
+      const committedAssignedTiles = units.map(orderTargetTile);
+      const expectedById = new Map(sourceTable.map((entry) => [entry.id, { x: entry.assignedX, y: entry.assignedY }]));
+      const completedIds = new Set<string>();
+      const droppedIds = new Set<string>();
+      const completionMilestones: Array<{ id: string; tick: number }> = [];
+      let liveEmptyPathTicks = 0;
+      let overlapTicks = 0;
+      let maximumUpdateMs = 0;
+      let totalUpdateMs = 0;
+      let updateCount = 0;
+      for (let ticks = 0; ticks < 2400 && completedIds.size < units.length; ticks += 1) {
+        const elapsedMs = simulateFixtureTick(fixtureWorld);
+        maximumUpdateMs = Math.max(maximumUpdateMs, elapsedMs);
+        totalUpdateMs += elapsedMs;
+        updateCount += 1;
+        for (let leftIndex = 0; leftIndex < units.length; leftIndex += 1) {
+          for (let rightIndex = leftIndex + 1; rightIndex < units.length; rightIndex += 1) {
+            if (unitFootprintsOverlap(fixtureWorld, units[leftIndex], units[rightIndex])) {
+              overlapTicks += 1;
+            }
+          }
+        }
+        for (const unit of units) {
+          if (unit.order && "path" in unit.order && unit.order.path.length === 0) {
+            liveEmptyPathTicks += 1;
+          }
+          if (!unit.order && !completedIds.has(unit.id)) {
+            const expected = expectedById.get(unit.id);
+            const tile = unitTile(fixtureWorld, unit);
+            if (expected && tile.x === expected.x && tile.y === expected.y) {
+              completedIds.add(unit.id);
+              completionMilestones.push({ id: unit.id, tick: fixtureWorld.tick });
+            } else {
+              droppedIds.add(unit.id);
+            }
+          }
+        }
+      }
+      const finalTiles = units.map((unit) => ({ id: unit.id, ...unitTile(fixtureWorld, unit) }));
+
+      const commandCard = prepareWorld();
+      issueGroupMoveOrder(
+        commandCard.fixtureWorld,
+        commandCard.units.map((unit) => unit.id),
+        clickedPoint.x,
+        clickedPoint.y,
+        commandCard.fixtureWorld.visibilityPlayer
+      );
+      const commandCardTargets = commandCard.units.map((unit) => {
+        const order = unit.order;
+        return {
+          id: unit.id,
+          x: order && "targetX" in order ? Math.floor(order.targetX / commandCard.fixtureWorld.tileSize) : -1,
+          y: order && "targetY" in order ? Math.floor(order.targetY / commandCard.fixtureWorld.tileSize) : -1
+        };
+      });
+
+      return {
+        issued,
+        sourceTiles,
+        center,
+        clickedTile,
+        expectedAssignedTiles,
+        committedAssignedTiles,
+        finalTiles,
+        completionCount: completedIds.size,
+        completionMilestones,
+        prematureOrderDrops: droppedIds.size,
+        liveEmptyPathTicks,
+        overlapTicks,
+        completed: completedIds.size === units.length,
+        commandCardTargets,
+        issueDurationMs,
+        maximumUpdateMs,
+        averageUpdateMs: updateCount > 0 ? totalUpdateMs / updateCount : 0
+      };
+    };
+    const semanticFormationResult = (result: ReturnType<typeof formationSettlement>) => ({
+      issued: result.issued,
+      sourceTiles: result.sourceTiles,
+      center: result.center,
+      clickedTile: result.clickedTile,
+      expectedAssignedTiles: result.expectedAssignedTiles,
+      committedAssignedTiles: result.committedAssignedTiles,
+      finalTiles: result.finalTiles,
+      completionCount: result.completionCount,
+      completionMilestones: result.completionMilestones,
+      prematureOrderDrops: result.prematureOrderDrops,
+      liveEmptyPathTicks: result.liveEmptyPathTicks,
+      overlapTicks: result.overlapTicks,
+      completed: result.completed,
+      commandCardTargets: result.commandCardTargets
+    });
     const liveFootprintApproach = (direction: "west" | "up") => {
       const fixtureWorld = createFixtureWorld(12, 12, [], 0);
       fixtureWorld.accumulator = 0;
@@ -2100,6 +2235,8 @@ if (browserSmokeStateEnabled) {
     const liveFootprint = [liveFootprintApproach("west"), liveFootprintApproach("up")];
     const dynamicM02 = dynamicCongestionRecovery();
     const stack = stackRecovery();
+    const m04 = formationSettlement();
+    const m04Repeat = formationSettlement();
 
     return {
       ok: true,
@@ -2131,6 +2268,8 @@ if (browserSmokeStateEnabled) {
       liveFootprint,
       dynamicM02,
       stack,
+      m04,
+      m04SemanticRepeat: JSON.stringify(semanticFormationResult(m04)) === JSON.stringify(semanticFormationResult(m04Repeat)),
       performance: {
         blockedPathfindingMs,
         expansionPathfindingMs,

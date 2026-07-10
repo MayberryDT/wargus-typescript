@@ -51,11 +51,22 @@ for (const [name, source, fragments] of [
   ["orders", ordersSource, [
     "function sourceFormationMovementApplies(world: WorldState, units: WorldUnit[]): boolean",
     "!world.engineSettings.formationMovementDefault || units.length >= 12",
-    "const magicBoxSize = 7 * world.tileSize",
+    "const magicBoxSize = 7",
     "if (maxX - minX > magicBoxSize)",
     "if (maxY - minY > magicBoxSize)",
-    "if (!sourceFormationMovementApplies(world, units))",
-    "destinations.set(unit.id, destination)"
+    "function sourceRightClickDestinations",
+    "const sourceTiles = units.map",
+    "Math.floor(sourceTiles.reduce",
+    "clickedTile.x + sourceTile.x - center.x",
+    "clickedTile.y + sourceTile.y - center.y",
+    "Math.min(world.map.width - 1",
+    "Math.min(world.map.height - 1",
+    "sourceTileToPlannerPoint(world, unit, assignedTile)",
+    "issueSourceRightButtonOrder",
+    "issueGroupSmartOrderWithDestinations",
+    "issueGroupAttackMoveOrderWithDestinations",
+    "const planned = planMoveOrder(world, unit, destination.x, destination.y)",
+    "commitMoveOrder(unit, planned, true)"
   ]],
   ["HUD command type", hudSource, ["\"toggle-formation-movement\""]],
   ["preferences menu", helpersSource, [
@@ -72,6 +83,34 @@ for (const [name, source, fragments] of [
   }
 }
 
+for (const forbidden of [
+  "0.92",
+  "const spacing = world.tileSize * 1.35",
+  "groupUnitsByMovementKind",
+  "movementGroupDestinations",
+  "movementSortRank",
+  "destinationReservations"
+]) {
+  expect(!ordersSource.includes(forbidden), `orders should not retain invented formation fragment: ${forbidden}`);
+}
+
+const explicitMoveStart = ordersSource.indexOf("export function issueGroupMoveOrder");
+const explicitQueueMoveStart = ordersSource.indexOf("export function issueGroupQueueMoveOrder");
+const smartOrRallyStart = ordersSource.indexOf("export function issueGroupSmartOrRallyOrder");
+expect(explicitMoveStart >= 0 && explicitQueueMoveStart > explicitMoveStart, "orders missing explicit group Move functions.");
+expect(
+  explicitMoveStart >= 0
+    && explicitQueueMoveStart > explicitMoveStart
+    && !ordersSource.slice(explicitMoveStart, explicitQueueMoveStart).includes("sourceRightClickDestinations"),
+  "explicit command-card Move must not use right-click formation destinations."
+);
+expect(
+  explicitQueueMoveStart >= 0
+    && smartOrRallyStart > explicitQueueMoveStart
+    && !ordersSource.slice(explicitQueueMoveStart, smartOrRallyStart).includes("sourceRightClickDestinations"),
+  "queued command-card Move must not use right-click formation destinations."
+);
+
 expect(JSON.stringify(packageJson.scripts).includes("verify:source-formation-movement"), "package.json verify scripts missing verify:source-formation-movement.");
 
 if (errors.length > 0) {
@@ -80,4 +119,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log("Source formation movement verified (Preference.FormationMovement gates compact group formation destinations).");
+console.log("Source formation movement verified (compact empty-ground right-click preserves integer source-tile offsets; explicit Move keeps one target).");
