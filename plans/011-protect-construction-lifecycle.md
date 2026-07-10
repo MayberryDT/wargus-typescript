@@ -1,15 +1,22 @@
-# Plan 011: Protect Builder-Inside Construction From Orphaned Foundations — Implementation Plan
+# Plan 011: Restore The Original Two-Phase Construction Lifecycle — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving on. If a STOP condition occurs, stop and report; do not improvise. When done, update this plan's status in `plans/README.md` unless a coordinator owns the index.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/orders.ts scripts/verify-browser-command-card-session.mjs scripts/verify-fixed-demo-random-ai.mjs plans/evidence/011.md plans/011-protect-construction-lifecycle.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts scripts/verify-browser-command-card-session.mjs scripts/verify-fixed-demo-random-ai.mjs plans/evidence/011.md plans/011-protect-construction-lifecycle.md plans/README.md`
 > If any in-scope file changed, compare the current-state excerpts below with the live code. A semantic mismatch is a STOP condition.
 
-**Goal:** Make a paid builder-inside foundation impossible to orphan through an ordinary player or AI retask, while preserving the deliberate one-Peasant opening and the existing explicit 75% construction-cancel path.
+**Goal:** Match installed Wargus construction: placement creates a cancellable
+unpaid travel order, arrival revalidates and pays for the 10% foundation, and
+ordinary retasks before arrival leave no foundation or resource loss.
 
-**Architecture:** Treat a worker whose `build` order already targets a paid foundation as committed until construction completes, fails, or the player cancels the foundation. Pre-foundation `build-oil-platform` travel remains interruptible because the original flow has not spent resources or created a platform yet; once it creates the platform it becomes an ordinary committed `build` order. Centralize this predicate at command eligibility boundaries. AI construction selection must use genuinely idle workers and wait when all workers are committed.
+**Architecture:** Give `build` orders explicit `to-site` and `constructing`
+phases. Placement stores building type/tile/path only. On arrival, revalidate
+site, limits, prerequisites, and resources; then spend, create the foundation,
+and continue through the existing inside/outside construction step. Keep
+`build-oil-platform` as the same already-deferred travel model. AI construction
+selection still uses genuinely idle workers so scripts do not thrash orders.
 
 **Tech Stack:** TypeScript 6, PixiJS 8 runtime, Vite 8, repo-native browser/CDP verifier scripts.
 
@@ -20,6 +27,8 @@
 - Preserve the fixed demo's one Peasant, no starting Hall, and high resources.
 - Do not make builder-inside foundations repairable by unrelated workers in this plan.
 - Do not change construction costs, durations, the 10% starting hit points, or the 75% cancellation refund.
+- Do not reserve or deduct resources during `to-site`; this matches installed
+  Stratagus `COrder_Build::StartBuilding`.
 - Playable behavior is the acceptance criterion; source-fragment verifiers are regression guardrails only.
 - Do not deploy or alter `public/wargus` assets.
 
@@ -37,8 +46,11 @@
 ## Player-visible contract and evidence
 
 - Assigned scenario: M01 in `plans/MECHANICS-ACCEPTANCE.md`.
-- Before: a retask can leave a paid Hall foundation permanently at 10%.
-- After: retasks reject while the Peasant is committed; explicit foundation cancel is the only early release and still refunds 75%.
+- Before: placement immediately spends resources and creates a 10% Hall, so a
+  retask while walking can leave it orphaned.
+- After: retasks safely replace the unpaid travel order with no foundation or
+  resource loss; arrival creates the paid 10% Hall and explicit foundation
+  cancel still refunds 75%.
 - Required handoff: `plans/evidence/011.md`, ending with `Review decision: READY`.
 
 ## Current state
@@ -47,6 +59,9 @@
 - `src/simulation/orders.ts:5343-5345` considers a moving worker usable even when it already has a build order.
 - `src/simulation/orders.ts:5415-5434` already has the correct explicit cancellation behavior: 75% refund, builder release/order clear, foundation removal.
 - `src/simulation/orders.ts:6784-6864` uses `workers.find((worker) => !worker.order) ?? workers[0]` for several AI buildings. With one Peon, this can overwrite the Great Hall build order with a Barracks build order.
+- Installed Stratagus `src/action/action_build.cpp:276-349` deducts and creates
+  only after the worker reaches the site. Ordinary unshifted commands flush the
+  unpaid travel order through `src/action/command.cpp:65-108`.
 - `canReceiveMoveOrders()` currently ignores the active order:
 
 ```ts
@@ -60,36 +75,57 @@ export function canReceiveMoveOrders(unit: WorldUnit): boolean {
 
 ## Interfaces
 
-- Produce `isCommittedToConstruction(unit: WorldUnit): boolean` in `src/simulation/orders.ts`.
-- `canReceiveMoveOrders`, `isUsableBuilder`, and `isUsableSourceBuildActor` consume that predicate.
-- Pending harvest/repair eligibility and direct selected-unit commands must
-  delegate to the same predicate or to `canReceiveMoveOrders`; do not duplicate
-  order-kind tests at each call site.
-- AI building selection continues to use existing order functions; it receives no new bypass flag.
-- Explicit cancellation continues through `issueCancelConstructionOrder(world, buildingId)`.
-
-Target predicate:
+Extend the existing build order instead of adding a new top-level order kind:
 
 ```ts
-function isCommittedToConstruction(unit: WorldUnit): boolean {
-  return unit.order?.kind === "build"
-    || isUnitHiddenInConstruction(unit);
+{
+  kind: "build";
+  phase: "to-site" | "constructing";
+  buildingTypeId: string;
+  tileX: number;
+  tileY: number;
+  targetId: string | null;
+  targetX: number;
+  targetY: number;
+  buildCycle: number;
+  path: WorldPathPoint[];
+  pathIndex: number;
 }
 ```
 
+- Placement creates `phase: "to-site"`, `targetId: null`, and spends nothing.
+- Arrival calls one `startBuildingFoundation` helper. Success changes the same
+  order to `phase: "constructing"` with the new foundation id.
+- Repairing an existing outside-built foundation creates a `constructing`
+  order directly.
+- Save loading accepts old build orders as `constructing` and validates new
+  `to-site` orders by building definition, tile, path, and map bounds.
+- Explicit paid-foundation cancellation remains
+  `issueCancelConstructionOrder(world, buildingId)`.
+
 ## Design decision and rollback
 
-- **Rejected:** silently cancel/refund the first foundation when a new order arrives; this makes an accidental click economically destructive.
-- **Rejected:** add general foundation resumption; that expands construction semantics and save state before the orphan source is removed.
-- **Rejected:** lock a tanker during pre-foundation oil-platform travel; no cost or foundation exists yet, so ordinary retask remains safe and matches the approved original-game rule.
-- **Chosen:** reject non-cancel retasks while committed, using centralized eligibility. It is the smallest reversible seam and keeps the existing explicit cancel UX.
-- **Rollback trigger:** M01 cannot cancel/release the builder, or a normal harvesting worker becomes unselectable for its first build. Restore the last green checkpoint and report which eligibility caller bypasses or over-applies the predicate.
+- **Rejected:** lock the worker after placement; installed Wargus permits
+  unshifted Move/Stop/Harvest/Repair/Attack/Build to flush the unpaid travel
+  order.
+- **Rejected:** immediately create a paid foundation and auto-refund on retask;
+  that preserves the wrong phase boundary and creates unnecessary economy
+  churn.
+- **Chosen:** reproduce the original two-phase order and keep the existing 75%
+  paid-foundation cancellation path.
+- **Rollback trigger:** placement deducts before arrival, a retask leaves any
+  foundation/resource delta, arrival creates more than one foundation, an old
+  save loses an active foundation build, or paid cancellation stops returning
+  75%.
 
 ## Scope
 
 **In scope**:
 
 - `src/simulation/orders.ts`
+- `src/simulation/world.ts`
+- `src/wargus/saveGame.ts`
+- `src/main.ts` only for a smoke-mode, data-only M01 scenario hook
 - `scripts/verify-browser-command-card-session.mjs`
 - `scripts/verify-fixed-demo-random-ai.mjs`
 - `plans/evidence/011.md` (create during execution)
@@ -99,7 +135,7 @@ function isCommittedToConstruction(unit: WorldUnit): boolean {
 
 - Changing source construction timing or refunds
 - Multiple-builder construction
-- Resuming foundations whose builder died or disappeared
+- General multi-worker resumption after a builder dies or disappears
 - Movement/pathfinding changes from plan 012
 - AI attack timing or difficulty from plan 014
 - Mission objectives
@@ -114,39 +150,51 @@ function isCommittedToConstruction(unit: WorldUnit): boolean {
 
 ### Task 1: Establish the behavioral baseline
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
 
 Expected: exit 0 with no TypeScript errors.
 
-- [ ] Run `npm run verify:browser-command-card-session` and `npm run verify:fixed-demo-random-ai`.
+- [x] Run `npm run verify:browser-command-card-session` and `npm run verify:fixed-demo-random-ai`.
 
 Expected: both exit 0. If either is already red for an unrelated reason, STOP.
 
-### Task 2: Add one committed-builder predicate
+### Task 2: Defer payment and foundation creation until arrival
 
-- [ ] Add `isCommittedToConstruction` beside the builder eligibility helpers in `src/simulation/orders.ts`.
-- [ ] Make `canReceiveMoveOrders`, `isUsableBuilder`, and `isUsableSourceBuildActor` return false while the predicate is true.
-- [ ] Make harvest and repair eligibility delegate to the same commitment gate,
-  and make direct selected-unit commands (including Stop) reject a committed
-  builder before any order setter runs.
-- [ ] Keep a pre-foundation `build-oil-platform` travel order interruptible. The
-  worker becomes committed only after `startOilPlatformConstruction` spends the
-  cost, creates the platform, and replaces the travel order with `kind: "build"`.
-- [ ] Do not modify `issueCancelConstructionOrder`; it remains the only ordinary way to release the commitment early.
-
-Target shape:
-
-```ts
-function isUsableBuilder(unit: WorldUnit): boolean {
-  return unit.hitPoints > 0
-    && !unit.construction
-    && unit.speed > 0
-    && isWorker(unit)
-    && !isCommittedToConstruction(unit);
-}
-```
+- [ ] Extend the `WorldOrder` build member with `phase`, `buildingTypeId`,
+  `tileX`, `tileY`, and nullable `targetId` as specified above.
+- [ ] Replace immediate `placeBuilding` behavior with a planning helper that
+  stores the chosen tile and a path to touch range without spending resources,
+  incrementing unit serials, changing player stats, replacing on-top units, or
+  creating a foundation.
+- [ ] In `stepBuildOrder`, while `phase === "to-site"`, follow/replan the path.
+  On arrival re-run allow-list, source dependency, limit, affordability, and
+  placement checks against the current world.
+- [ ] Add `startBuildingFoundation` for the current spend/create/10%-HP/event
+  work. On success mutate the same order to `phase: "constructing"`; preserve
+  inside/outside builder behavior and queue semantics.
+- [ ] If arrival validation fails, clear the pending build and emit existing
+  failure feedback without spending. Never leave a live build order with no
+  target/path decision.
+- [ ] Keep `build-oil-platform` travel interruptible and unpaid. Its existing
+  arrival helper should produce the same `constructing` build-order shape.
+- [ ] Update queued builds and repair-to-finish construction to populate the
+  appropriate phase and metadata.
 
 **Verify**: `./node_modules/.bin/tsc --noEmit` -> exit 0.
+
+### Task 2a: Preserve both build phases across save/load
+
+- [ ] Normalize new `to-site` orders only when the building definition exists,
+  the target tile is in map bounds, and the saved path/point data are finite.
+- [ ] Normalize new `constructing` orders only when their paid foundation and
+  builder relationship are valid.
+- [ ] Treat old saves whose build order has a string `targetId` and no `phase`
+  as `constructing`, deriving building type/tile from the live foundation.
+- [ ] Update missing-reference pruning so `targetId: null` is valid only for a
+  well-formed `to-site` build.
+
+**Verify**: `npm run verify:save-schema` -> exit 0 with an added pending-build
+round-trip and the existing active-foundation compatibility case.
 
 ### Task 3: Remove AI busy-worker fallbacks
 
@@ -157,7 +205,7 @@ function isUsableBuilder(unit: WorldUnit): boolean {
 Target shape:
 
 ```ts
-const builder = workers.find((worker) => !worker.order && !isCommittedToConstruction(worker));
+const builder = workers.find((worker) => !worker.order);
 if (builder) {
   issueAiBuildBySourceRole(world, builder, playerId, "barracks", race);
 }
@@ -170,10 +218,17 @@ if (builder) {
 - [ ] Extend the construction-cancel fixture in `scripts/verify-browser-command-card-session.mjs`:
   1. Select a Peasant fixture.
   2. Place a Town Hall far enough away that the Peasant is still walking.
-  3. Attempt Move, Stop, Harvest, Repair, Attack, and a second build command before entry.
-  4. Confirm the first foundation remains, the Peasant's order still targets it, and no second foundation is created.
-  5. Select the first foundation and cancel it.
-  6. Confirm the Peasant becomes commandable and the existing 75% refund remains.
+  3. Confirm resources, unit count, serial, and player building stats do not
+     change while the unpaid `to-site` order exists.
+  4. In isolated resets, attempt Move, Stop, Harvest, Repair, Attack, and a
+     second Build before arrival. Confirm each legal unshifted retask replaces
+     the pending build without a foundation or resource delta.
+  5. Place once more and allow arrival. Confirm one 10%-HP Hall appears and the
+     exact cost is deducted at that moment.
+  6. Select the paid foundation and cancel it.
+  7. Confirm the Peasant becomes commandable and the existing 75% refund remains.
+- [ ] Add one smoke-mode-only, data-only M01 scenario hook in `src/main.ts` if
+  the existing fixture cannot expose those real order/resource transitions.
 - [ ] Extend `scripts/verify-fixed-demo-random-ai.mjs` only with stable guards for idle-only AI builder selection; do not encode exact line formatting.
 
 **Verify**: `npm run verify:browser-command-card-session` -> exits 0 and its success output includes the construction-retask scenario.
@@ -184,12 +239,14 @@ if (builder) {
 
 - [ ] Start the app with `npm run dev -- --port 5173 --strictPort`.
 - [ ] In the Codex in-app Browser, open `http://127.0.0.1:5173/?smoke=1&demoSeed=construction-lifecycle`.
-- [ ] Place a Town Hall, immediately attempt Move and a second building placement, then cancel the Hall foundation.
+- [ ] Place a distant Town Hall and immediately retask with Move. Confirm there
+  is no foundation/resource delta, then place again, allow arrival, and cancel
+  the paid Hall foundation.
 
 Expected observable behavior:
 
-- The original foundation is never stranded at 10%.
-- The retask is rejected with normal error feedback.
+- The pre-arrival retask succeeds and leaves no foundation or resource loss.
+- Arrival deducts the cost and creates exactly one 10% foundation.
 - Cancellation removes the foundation, releases the Peasant, and refunds 75%.
 - The one-Peasant/no-Hall start is unchanged.
 
@@ -198,6 +255,7 @@ Expected observable behavior:
 - [ ] Run `./node_modules/.bin/tsc --noEmit`.
 - [ ] Run `npm run verify:browser-command-card-session`.
 - [ ] Run `npm run verify:fixed-demo-random-ai`.
+- [ ] Run `npm run verify:save-schema`.
 - [ ] Run `git diff --check`.
 - [ ] Confirm `git status --short` lists only the in-scope source/verifier files and the plan index.
 - [ ] Write `plans/evidence/011.md` using the shared template, including M01 baseline/after snapshots and the reviewer decision.
@@ -205,8 +263,15 @@ Expected observable behavior:
 
 ## Done criteria
 
-- [ ] A worker attached to a paid foundation cannot be overwritten by Move, Stop, Harvest, Repair, Attack, or another build command.
-- [ ] Pre-foundation oil-platform travel remains interruptible; once the paid platform exists its ordinary `build` order is protected.
+- [ ] Ordinary building placement spends nothing and creates nothing until the
+  worker reaches the site.
+- [ ] Move, Stop, Harvest, Repair, Attack, and a second Build can safely replace
+  the unpaid travel order with no foundation or resource delta.
+- [ ] Arrival revalidates, deducts once, creates one 10% foundation, and hides
+  an inside-builder exactly as installed Wargus does.
+- [ ] Pre-foundation oil-platform travel remains interruptible and uses the same
+  arrival payment boundary.
+- [ ] Old active-foundation saves and new pending-build saves round-trip.
 - [ ] AI never selects a busy worker as a construction fallback.
 - [ ] Explicit construction cancellation still refunds 75% and releases the worker.
 - [ ] The fixed demo still starts with exactly one selected Peasant, no Hall, and high resources.
@@ -216,12 +281,17 @@ Expected observable behavior:
 
 ## STOP conditions
 
-- Preventing retasks also prevents cancelling the selected foundation.
-- More than the three centralized eligibility functions require bespoke committed-builder checks.
+- Any placement-time resource deduction, foundation creation, serial increment,
+  player-stat change, or replaced-on-top unit removal remains.
+- A legal unshifted pre-arrival retask is rejected or leaves a resource/unit delta.
 - AI construction cannot progress without stealing a worker and fixing that requires changing economy strategy.
-- Paid oil-platform construction does not convert the tanker to the ordinary protected `build` order shown in the approved preflight.
+- Arrival validation cannot be made atomic without changing costs or map rules.
+- Save compatibility requires dropping an old active-foundation build.
 - Any focused verification fails twice after a reasonable correction.
 
 ## Maintenance notes
 
-Reviewers should verify the commitment is a command-eligibility rule, not a special case hidden in the fixed demo. Future queued-building work must decide explicitly whether queueing happens before or after the current foundation completes; it must never silently replace the active foundation.
+Reviewers should verify the payment boundary in the simulation, not a special
+case hidden in the fixed demo. Future queued-building work must preserve the
+original distinction: queued placement is an unpaid intention; payment occurs
+only when that queued order reaches a valid site.

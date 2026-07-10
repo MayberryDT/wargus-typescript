@@ -35,7 +35,7 @@ plans before marking its own plan DONE.
 
 | ID | Plan | Seed / setup | Player action | Required observable result | Evidence |
 |---|---|---|---|---|---|
-| M01 | 011 | `construction-lifecycle`; one Peasant | Place Hall, immediately attempt Move and a second build, then cancel foundation | First foundation remains the committed target; retasks reject; cancel removes it, releases Peasant, refunds 75% | Before/after resources, unit/order snapshot, screenshot after rejected retask and after cancel |
+| M01 | 011 | `construction-lifecycle`; one Peasant | Place a distant Hall and retask before arrival; place again, allow arrival, then cancel foundation | Pre-arrival order is unpaid and safely replaceable with no foundation; arrival deducts once/creates 10%; cancel removes it, releases Peasant, refunds 75% | Resources/unit-count/order snapshot before arrival, at arrival, after retask, and after paid cancel |
 | M02 | 012 | fixture-assisted 3×1 land corridor | Order rear unit through a friendly blocker; move blocker away | Rear unit retains the order while blocked and reaches destination after clearance | Per-tick order kind/path length, final tile, no empty-path live order |
 | M03 | 012 | fixture with blocked target and isolated first ring tile | Click the blocked target | Unit reaches another valid ring tile instead of rejecting the command | Requested tile, candidate tiles, selected final tile/path length |
 | M04 | 012 | `formation-five`; five Footmen | Group-move to open ground, then through a base exit | Five distinct destination tiles; no silent order loss, permanent stack, or visible command hitch | Assigned/final tiles, order completion count, update-time sample |

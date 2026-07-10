@@ -44,3 +44,15 @@ Confirmed production graph at the installed Wargus commit:
 - Orc Barracks trains Catapult.
 - Gnomish Inventor trains Flying Machine and Dwarves.
 - Goblin Alchemist trains Zeppelin and Goblin Sappers.
+
+Confirmed construction lifecycle at the installed Stratagus commit:
+
+- A placement click creates an unpaid `COrder_Build`; no foundation exists
+  while the worker travels.
+- `COrder_Build::StartBuilding` deducts resources immediately before creating
+  the foundation at the site.
+- Ordinary unshifted Move, Stop, Harvest, Repair, Attack, or another Build
+  flushes the unpaid travel order safely.
+- Inside-builders are removed into the paid foundation; cancelling that
+  foundation releases the builder and returns 75%.
+- Oil-platform travel follows the same unpaid/interruptible phase boundary.
