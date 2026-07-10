@@ -1,6 +1,7 @@
 import { isUnitHiddenInConstruction, isUnitInsideResourceSource, type WorldState, type WorldUnit } from "./world";
 
 export type MovementKind = "land" | "naval" | "fly";
+type PassabilityBlockers = "all" | "path-planning" | "none";
 
 export function movementKindForUnit(unit: WorldUnit): MovementKind {
   if (unit.kind === "fly") {
@@ -13,48 +14,73 @@ export function movementKindForUnit(unit: WorldUnit): MovementKind {
 }
 
 export function isTilePassable(world: WorldState, x: number, y: number, movement: MovementKind, movingUnitId?: string, ignoreBlockers = false): boolean {
+  return Number.isFinite(tilePassabilityCost(world, x, y, movement, movingUnitId, ignoreBlockers ? "none" : "all"));
+}
+
+function tilePassabilityCost(world: WorldState, x: number, y: number, movement: MovementKind, movingUnitId: string | undefined, blockers: PassabilityBlockers): number {
   if (x < 0 || y < 0 || x >= world.map.width || y >= world.map.height) {
-    return false;
+    return Number.POSITIVE_INFINITY;
   }
   if (movement === "fly") {
-    return true;
+    return 1;
   }
 
   const tile = world.tiles[y * world.map.width + x] ?? 0;
   const sourceFlags = sourceTileFlags(world, tile);
+  let terrainPassable: boolean;
   if (sourceFlags) {
     if (movement === "naval") {
-      return (
+      terrainPassable = (
         (sourceFlags.has("water") || sourceFlags.has("coast"))
         && !sourceFlags.has("land")
         && !sourceFlags.has("unpassable")
-        && (ignoreBlockers || !isOccupiedByBlocker(world, x, y, movingUnitId))
       );
+    } else {
+      terrainPassable = sourceFlags.has("land") && !sourceFlags.has("unpassable") && !sourceFlags.has("forest") && !sourceFlags.has("rock") && !sourceFlags.has("wall");
     }
-    return sourceFlags.has("land") && !sourceFlags.has("unpassable") && !sourceFlags.has("forest") && !sourceFlags.has("rock") && !sourceFlags.has("wall") && (ignoreBlockers || !isOccupiedByBlocker(world, x, y, movingUnitId));
+  } else {
+    terrainPassable = movement === "naval" ? isWaterTile(tile) : isLandTile(tile);
   }
-  if (movement === "naval") {
-    return isWaterTile(tile) && (ignoreBlockers || !isOccupiedByBlocker(world, x, y, movingUnitId));
+  if (!terrainPassable) {
+    return Number.POSITIVE_INFINITY;
   }
-  if (!isLandTile(tile)) {
-    return false;
+  if (blockers === "none") {
+    return 1;
   }
-  return ignoreBlockers || !isOccupiedByBlocker(world, x, y, movingUnitId);
+  const occupants = blockingOccupantsAt(world, x, y, movingUnitId);
+  if (occupants.length === 0) {
+    return 1;
+  }
+  if (blockers === "all" || occupants.some((occupant) => !isActivelyMovingOccupant(occupant))) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return 5;
 }
 
 export function isUnitFootprintPassable(world: WorldState, centerTileX: number, centerTileY: number, unit: Pick<WorldUnit, "id" | "tileWidth" | "tileHeight" | "kind">, movement: MovementKind = movementKindForUnit(unit as WorldUnit), ignoreBlockers = false): boolean {
+  return Number.isFinite(unitFootprintPassabilityCost(world, centerTileX, centerTileY, unit, movement, ignoreBlockers ? "none" : "all"));
+}
+
+export function unitFootprintPathPlanningCost(world: WorldState, centerTileX: number, centerTileY: number, unit: WorldUnit, movement: MovementKind = movementKindForUnit(unit)): number {
+  return unitFootprintPassabilityCost(world, centerTileX, centerTileY, unit, movement, "path-planning");
+}
+
+function unitFootprintPassabilityCost(world: WorldState, centerTileX: number, centerTileY: number, unit: Pick<WorldUnit, "id" | "tileWidth" | "tileHeight" | "kind">, movement: MovementKind, blockers: PassabilityBlockers): number {
   const width = Math.max(1, Math.floor(unit.tileWidth));
   const height = Math.max(1, Math.floor(unit.tileHeight));
   const left = centerTileX - Math.floor(width / 2);
   const top = centerTileY - Math.floor(height / 2);
+  let cost = 1;
   for (let y = top; y < top + height; y += 1) {
     for (let x = left; x < left + width; x += 1) {
-      if (!isTilePassable(world, x, y, movement, unit.id, ignoreBlockers)) {
-        return false;
+      const tileCost = tilePassabilityCost(world, x, y, movement, unit.id, blockers);
+      if (!Number.isFinite(tileCost)) {
+        return Number.POSITIVE_INFINITY;
       }
+      cost = Math.max(cost, tileCost);
     }
   }
-  return true;
+  return cost;
 }
 
 export function worldToTile(world: WorldState, x: number, y: number): { x: number; y: number } {
@@ -86,13 +112,19 @@ export function isSourceHarvestableWoodTile(world: WorldState, tile: number): bo
   return sourceTileFlags(world, tile)?.has("forest") ?? isHarvestableWoodTile(tile);
 }
 
-function isOccupiedByBlocker(world: WorldState, tileX: number, tileY: number, movingUnitId?: string): boolean {
-  return world.units.some((unit) => {
+function blockingOccupantsAt(world: WorldState, tileX: number, tileY: number, movingUnitId?: string): WorldUnit[] {
+  return world.units.filter((unit) => {
     if (unit.id === movingUnitId || unit.hitPoints <= 0 || isUnitHiddenInConstruction(unit) || isUnitInsideResourceSource(unit) || unit.nonSolid) {
       return false;
     }
     return unitFootprintContainsTile(world, unit, tileX, tileY);
   });
+}
+
+// The TypeScript world has no Stratagus `Moving` flag. A live solid occupant is
+// considered actively moving only while a path-bearing order has a waypoint left.
+function isActivelyMovingOccupant(unit: WorldUnit): boolean {
+  return Boolean(unit.order && "path" in unit.order && unit.order.pathIndex < unit.order.path.length);
 }
 
 function unitFootprintContainsTile(world: WorldState, unit: WorldUnit, tileX: number, tileY: number): boolean {

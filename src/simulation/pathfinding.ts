@@ -1,9 +1,15 @@
 import type { WorldState, WorldUnit } from "./world";
-import { isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
+import { isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, unitFootprintPathPlanningCost, worldToTile } from "./passability";
 
 export interface PathPoint {
   x: number;
   y: number;
+}
+
+export interface PathSearchResult {
+  status: "ready" | "temporarily-blocked" | "unreachable";
+  path: PathPoint[];
+  goalRange: number | null;
 }
 
 interface NodeRecord {
@@ -28,26 +34,64 @@ const sourceDirections = [
 ];
 
 export function findPath(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathPoint[] {
-  const movement = movementKindForUnit(unit);
+  const result = findPathResult(world, unit, targetX, targetY);
+  return result.status === "ready" ? result.path : [];
+}
+
+export function findPathResult(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathSearchResult {
   const start = worldToTile(world, unit.x, unit.y);
-  const target = findNearestPassableTarget(world, worldToTile(world, targetX, targetY), unit, movement);
-  if (!target) {
-    return [];
+  const target = worldToTile(world, targetX, targetY);
+  const movement = movementKindForUnit(unit);
+  if (isUnitFootprintPassable(world, target.x, target.y, unit, movement, true)) {
+    const exactGoals = new Set([key(target.x, target.y)]);
+    const exactPath = searchPath(world, unit, start, exactGoals, target, "path-planning");
+    if (exactPath) {
+      return { status: "ready", path: exactPath, goalRange: 0 };
+    }
+    const terrainPath = searchPath(world, unit, start, exactGoals, target, "none");
+    if (terrainPath) {
+      return { status: "temporarily-blocked", path: terrainPath, goalRange: 0 };
+    }
+  }
+
+  const maxGoalRange = Math.max(world.map.width, world.map.height) - 1;
+  for (let goalRange = 1; goalRange <= maxGoalRange; goalRange += 1) {
+    const goals = reachableGoalKeysAtRange(world, unit, target, goalRange);
+    if (goals.size === 0) {
+      continue;
+    }
+    const path = searchPath(world, unit, start, goals, target, "path-planning");
+    if (path) {
+      return { status: "ready", path, goalRange };
+    }
+  }
+  return { status: "unreachable", path: [], goalRange: null };
+}
+
+function searchPath(
+  world: WorldState,
+  unit: WorldUnit,
+  start: { x: number; y: number },
+  goalKeys: Set<string>,
+  heuristicTarget: { x: number; y: number },
+  blockers: "path-planning" | "none"
+): PathPoint[] | null {
+  if (goalKeys.size === 0) {
+    return null;
   }
 
   const startKey = key(start.x, start.y);
-  const targetKey = key(target.x, target.y);
   const open = new Map<string, NodeRecord>();
   const closed = new Set<string>();
   const records = new Map<string, NodeRecord>();
-  const startDistance = sourceAStarManhattanDistance(start.x, start.y, target.x, target.y);
+  const startDistance = sourceAStarManhattanDistance(start.x, start.y, heuristicTarget.x, heuristicTarget.y);
   const startCostToGoal = startDistance << 3;
   open.set(startKey, { x: start.x, y: start.y, g: 1, h: startCostToGoal, distanceToGoal: startDistance, f: 1 + startCostToGoal, parent: null });
 
   while (open.size > 0) {
     const current = getBest(open);
     const currentKey = key(current.x, current.y);
-    if (currentKey === targetKey) {
+    if (goalKeys.has(currentKey)) {
       records.set(currentKey, current);
       return reconstruct(world, current, records);
     }
@@ -64,20 +108,21 @@ export function findPath(world: WorldState, unit: WorldUnit, targetX: number, ta
       if (parent && nx === parent.x && ny === parent.y) {
         continue;
       }
-      if (closed.has(nextKey) || !isUnitFootprintPassable(world, nx, ny, unit, movement)) {
+      const moveCost = footprintSearchCost(world, unit, nx, ny, blockers);
+      if (closed.has(nextKey) || !Number.isFinite(moveCost)) {
         continue;
       }
       if (direction.x !== 0 && direction.y !== 0) {
         const canCutCorner =
-          isUnitFootprintPassable(world, current.x + direction.x, current.y, unit, movement) &&
-          isUnitFootprintPassable(world, current.x, current.y + direction.y, unit, movement);
+          Number.isFinite(footprintSearchCost(world, unit, current.x + direction.x, current.y, blockers)) &&
+          Number.isFinite(footprintSearchCost(world, unit, current.x, current.y + direction.y, blockers));
         if (!canCutCorner) {
           continue;
         }
       }
 
-      const g = current.g + 1;
-      const distanceToGoal = sourceAStarManhattanDistance(nx, ny, target.x, target.y);
+      const g = current.g + moveCost;
+      const distanceToGoal = sourceAStarManhattanDistance(nx, ny, heuristicTarget.x, heuristicTarget.y);
       const costToGoal = distanceToGoal << 3;
       const existing = open.get(nextKey);
       if (existing && g >= existing.g) {
@@ -95,31 +140,37 @@ export function findPath(world: WorldState, unit: WorldUnit, targetX: number, ta
     }
   }
 
-  return [];
+  return null;
 }
 
-function findNearestPassableTarget(
+function footprintSearchCost(
   world: WorldState,
-  target: { x: number; y: number },
   unit: WorldUnit,
-  movement: ReturnType<typeof movementKindForUnit>
-): { x: number; y: number } | null {
-  if (isUnitFootprintPassable(world, target.x, target.y, unit, movement)) {
-    return target;
+  tileX: number,
+  tileY: number,
+  blockers: "path-planning" | "none"
+): number {
+  const movement = movementKindForUnit(unit);
+  if (blockers === "none") {
+    return isUnitFootprintPassable(world, tileX, tileY, unit, movement, true) ? 1 : Number.POSITIVE_INFINITY;
   }
-  for (let radius = 1; radius <= 12; radius += 1) {
-    for (let y = target.y - radius; y <= target.y + radius; y += 1) {
-      for (let x = target.x - radius; x <= target.x + radius; x += 1) {
-        if (Math.abs(x - target.x) !== radius && Math.abs(y - target.y) !== radius) {
-          continue;
-        }
-        if (isUnitFootprintPassable(world, x, y, unit, movement)) {
-          return { x, y };
-        }
+  return unitFootprintPathPlanningCost(world, tileX, tileY, unit, movement);
+}
+
+function reachableGoalKeysAtRange(world: WorldState, unit: WorldUnit, target: { x: number; y: number }, goalRange: number): Set<string> {
+  const movement = movementKindForUnit(unit);
+  const goals = new Set<string>();
+  for (let y = target.y - goalRange; y <= target.y + goalRange; y += 1) {
+    for (let x = target.x - goalRange; x <= target.x + goalRange; x += 1) {
+      if (Math.abs(x - target.x) !== goalRange && Math.abs(y - target.y) !== goalRange) {
+        continue;
+      }
+      if (isUnitFootprintPassable(world, x, y, unit, movement, true)) {
+        goals.add(key(x, y));
       }
     }
   }
-  return null;
+  return goals;
 }
 
 function getBest(open: Map<string, NodeRecord>): NodeRecord {

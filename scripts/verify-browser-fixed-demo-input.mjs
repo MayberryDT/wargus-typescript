@@ -23,6 +23,8 @@ const MAX_CAMERA_FRAME_MS = 120;
 const MAX_CAMERA_INTERNAL_UPDATE_MS = 25;
 const MAX_CAMERA_INTERNAL_RENDER_MS = 40;
 const MAX_CAMERA_MAP_DISPLAY_OBJECTS = 2600;
+const MAX_ROUTE_SEMANTICS_UPDATE_MS = 20;
+const MAX_ROUTE_SEMANTICS_RENDER_MS = 24;
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-fixed-demo-input-chrome-"));
 const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   detached: true,
@@ -73,6 +75,32 @@ try {
     await delay(500);
   }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.stage === \"economy\"", 10_000);
+  await waitForExpression(client, "typeof window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__ === \"function\"", 10_000);
+  const routeSemantics = await evalValue(client, "window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__()") ?? {};
+  if (
+    routeSemantics.ok !== true
+    || routeSemantics.m02?.retainedOrder !== true
+    || routeSemantics.m02?.retainedExactTarget !== true
+    || routeSemantics.m02?.movingBlockerReady !== true
+  ) {
+    throw new Error(`M02 route semantics should retain the exact move through stationary congestion and plan a costlier crossing through a moving blocker: ${JSON.stringify(routeSemantics)}`);
+  }
+  if (
+    routeSemantics.m03?.selectedTile?.x !== 4
+    || routeSemantics.m03?.selectedTile?.y !== 4
+    || routeSemantics.m03?.goalRange !== 1
+    || !(routeSemantics.m03?.pathLength > 0)
+  ) {
+    throw new Error(`M03 route semantics should reject the isolated first candidate and use the reachable tile in the minimum goal range: ${JSON.stringify(routeSemantics)}`);
+  }
+  if (
+    !(routeSemantics.performance?.blockedPathfindingMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    || !(routeSemantics.performance?.expansionPathfindingMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    || !(routeSemantics.performance?.averageUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
+    || !(routeSemantics.performance?.averageRenderMs <= MAX_ROUTE_SEMANTICS_RENDER_MS)
+  ) {
+    throw new Error(`M02/M03 route semantics exceeded the ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms update/pathfinding or ${MAX_ROUTE_SEMANTICS_RENDER_MS}ms render budget: ${JSON.stringify(routeSemantics.performance)}`);
+  }
   const loadedState = await readSmokeState(client);
   const loadedCounts = loadedState.ownedUnitCounts ?? {};
   const loadedResources = loadedState.visibilityPlayerResources ?? {};
@@ -135,7 +163,7 @@ try {
   if (pageErrors.length > 0) {
     throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
   }
-  console.log(`Browser fixed demo input verified (${MAP_PATH}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
+  console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
   await stopProcess(chrome);

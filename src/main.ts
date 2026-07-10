@@ -500,6 +500,7 @@ declare global {
     __WARGUS_TS_SELECT_SOURCE_TRAIN_FIXTURE__?: (producerTypeId: string, unitTypeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__?: (kind: "train" | "research" | "construction") => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__?: (mode: "move" | "stop" | "harvest" | "repair" | "attack" | "second-build" | "arrival") => Record<string, unknown>;
+    __WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__?: () => Record<string, unknown>;
     __WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__?: (casterTypeId: string, spellId: string) => ({ ok: boolean; error?: string; command?: string | null; instantCommand?: string | null; target?: BrowserSmokeOrderTarget | null } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_RESEARCH_FIXTURE__?: (typeId: string, upgradeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_CLEAR_SELECTION__?: () => ReturnType<typeof browserSmokeCommandResult>;
@@ -1709,6 +1710,116 @@ if (browserSmokeStateEnabled) {
     const cancelled = issueCancelConstructionOrder(fixtureWorld, foundation.id);
     const cancel = snapshot();
     return { ok: cancelled, costs, placement, before, planned, pending, pendingRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, validExplicitConstructingRoundtrip, invalidPhaseRoundtrip, emptyBuilderRoundtrip, otherBuilderRoundtrip, cancel };
+  };
+  window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__ = () => {
+    if (!world) {
+      return { ok: false, error: "missing world" };
+    }
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === "unit-footman");
+    if (!definition) {
+      return { ok: false, error: "missing footman definition" };
+    }
+    const createFixtureWorld = (width: number, height: number, landTiles: Array<{ x: number; y: number }>): WorldState => {
+      const fixtureWorld = structuredClone(world) as WorldState;
+      fixtureWorld.map.width = width;
+      fixtureWorld.map.height = height;
+      fixtureWorld.tileSize = 32;
+      fixtureWorld.tilesetTerrain = null;
+      fixtureWorld.tiles = Array.from({ length: width * height }, () => 0x080);
+      for (const tile of landTiles) {
+        fixtureWorld.tiles[tile.y * width + tile.x] = 0;
+      }
+      fixtureWorld.units = [];
+      fixtureWorld.aiStates.forEach((state) => { state.enabled = false; });
+      return fixtureWorld;
+    };
+    const unitAt = (fixtureWorld: WorldState, id: string, tileX: number, tileY: number): WorldUnit => createWorldUnit({
+      unit: definition,
+      id,
+      player: fixtureWorld.visibilityPlayer,
+      tileX,
+      tileY,
+      tileset: null
+    });
+    const tilePoint = (tileX: number, tileY: number): BrowserSmokeOrderTarget => ({
+      x: tileX * 32 + 16,
+      y: tileY * 32 + 16
+    });
+
+    const corridorTiles = Array.from({ length: 7 }, (_, x) => ({ x, y: 1 }));
+    const blockedWorld = createFixtureWorld(7, 3, corridorTiles);
+    const rear = unitAt(blockedWorld, "__smoke-fixture-m02-rear", 1, 1);
+    const stationaryBlocker = unitAt(blockedWorld, "__smoke-fixture-m02-blocker", 2, 1);
+    blockedWorld.units.push(rear, stationaryBlocker);
+    const corridorTarget = tilePoint(5, 1);
+    const blockedStartedAt = performance.now();
+    issueMoveOrder(blockedWorld, rear.id, corridorTarget.x, corridorTarget.y);
+    const blockedPathfindingMs = performance.now() - blockedStartedAt;
+    const blockedOrder = rear.order?.kind === "move" ? rear.order : null;
+
+    const movingWorld = createFixtureWorld(7, 3, corridorTiles);
+    const movingRear = unitAt(movingWorld, "__smoke-fixture-moving-rear", 1, 1);
+    const movingBlocker = unitAt(movingWorld, "__smoke-fixture-moving-blocker", 2, 1);
+    movingBlocker.order = {
+      kind: "move",
+      targetX: tilePoint(4, 1).x,
+      targetY: tilePoint(4, 1).y,
+      path: [tilePoint(2, 1), tilePoint(4, 1)],
+      pathIndex: 1
+    };
+    movingWorld.units.push(movingRear, movingBlocker);
+    issueMoveOrder(movingWorld, movingRear.id, corridorTarget.x, corridorTarget.y);
+    const movingOrder = movingRear.order?.kind === "move" ? movingRear.order : null;
+
+    const requestedTile = { x: 5, y: 3 };
+    const isolatedTile = { x: 4, y: 2 };
+    const reachableTile = { x: 4, y: 4 };
+    const expansionWorld = createFixtureWorld(7, 7, [
+      { x: 1, y: 3 },
+      { x: 1, y: 4 },
+      { x: 2, y: 4 },
+      { x: 3, y: 4 },
+      isolatedTile,
+      reachableTile
+    ]);
+    const expansionUnit = unitAt(expansionWorld, "__smoke-fixture-m03-unit", 1, 3);
+    expansionWorld.units.push(expansionUnit);
+    const expansionStartedAt = performance.now();
+    issueMoveOrder(expansionWorld, expansionUnit.id, tilePoint(requestedTile.x, requestedTile.y).x, tilePoint(requestedTile.x, requestedTile.y).y);
+    const expansionPathfindingMs = performance.now() - expansionStartedAt;
+    const expansionOrder = expansionUnit.order?.kind === "move" ? expansionUnit.order : null;
+    const selectedTile = expansionOrder ? {
+      x: Math.floor(expansionOrder.targetX / expansionWorld.tileSize),
+      y: Math.floor(expansionOrder.targetY / expansionWorld.tileSize)
+    } : null;
+    const goalRange = selectedTile
+      ? Math.max(Math.abs(selectedTile.x - requestedTile.x), Math.abs(selectedTile.y - requestedTile.y))
+      : null;
+
+    return {
+      ok: true,
+      m02: {
+        requestedTile: { x: 5, y: 1 },
+        retainedOrder: Boolean(blockedOrder),
+        retainedExactTarget: blockedOrder?.targetX === corridorTarget.x && blockedOrder.targetY === corridorTarget.y,
+        pathLength: blockedOrder?.path.length ?? 0,
+        movingBlockerReady: Boolean(movingOrder),
+        movingBlockerPathLength: movingOrder?.path.length ?? 0
+      },
+      m03: {
+        requestedTile,
+        isolatedTile,
+        selectedTile,
+        goalRange,
+        pathLength: expansionOrder?.path.length ?? 0
+      },
+      performance: {
+        blockedPathfindingMs,
+        expansionPathfindingMs,
+        averageUpdateMs: renderPerformance.averageUpdateMs,
+        averageRenderMs: renderPerformance.averageRenderMs
+      }
+    };
   };
   window.__WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__ = (casterTypeId, spellId) => {
     if (!world || !manifest) {

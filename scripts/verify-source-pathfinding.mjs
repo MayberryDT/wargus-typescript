@@ -66,47 +66,72 @@ expectIncludes("Stratagus action_move.cpp", sourceMove, [
 ]);
 
 expectIncludes("browser passability", passabilitySource, [
+  "type PassabilityBlockers = \"all\" | \"path-planning\" | \"none\"",
   "export function isTilePassable",
   "export function isUnitFootprintPassable",
+  "ignoreBlockers ? \"none\" : \"all\"",
+  "function tilePassabilityCost",
   "const width = Math.max(1, Math.floor(unit.tileWidth))",
   "const height = Math.max(1, Math.floor(unit.tileHeight))",
   "const left = centerTileX - Math.floor(width / 2)",
   "const top = centerTileY - Math.floor(height / 2)",
   "for (let y = top; y < top + height; y += 1)",
   "for (let x = left; x < left + width; x += 1)",
-  "isTilePassable(world, x, y, movement, unit.id, ignoreBlockers)",
-  "function unitFootprintContainsTile"
+  "export function unitFootprintPathPlanningCost",
+  "blockers === \"all\" || occupants.some((occupant) => !isActivelyMovingOccupant(occupant))",
+  "return 5",
+  "function blockingOccupantsAt",
+  "unit.hitPoints <= 0 || isUnitHiddenInConstruction(unit) || isUnitInsideResourceSource(unit) || unit.nonSolid",
+  "function unitFootprintContainsTile",
+  "function isActivelyMovingOccupant",
+  "unit.order && \"path\" in unit.order && unit.order.pathIndex < unit.order.path.length"
 ]);
 
 expectIncludes("browser pathfinding", pathfindingSource, [
-  "import { isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile }",
+  "unitFootprintPathPlanningCost",
   "export function findPath",
+  "return result.status === \"ready\" ? result.path : []",
+  "export function findPathResult",
+  "status: \"ready\" | \"temporarily-blocked\" | \"unreachable\"",
   "const sourceDirections = [",
   "{ x: 0, y: -1 }",
   "{ x: 1, y: -1 }",
   "{ x: -1, y: -1 }",
-  "const movement = movementKindForUnit(unit)",
-  "findNearestPassableTarget(world, worldToTile(world, targetX, targetY), unit, movement)",
+  "searchPath(world, unit, start, exactGoals, target, \"path-planning\")",
+  "searchPath(world, unit, start, exactGoals, target, \"none\")",
+  "return { status: \"temporarily-blocked\", path: terrainPath, goalRange: 0 }",
+  "const maxGoalRange = Math.max(world.map.width, world.map.height) - 1",
+  "reachableGoalKeysAtRange(world, unit, target, goalRange)",
+  "return { status: \"unreachable\", path: [], goalRange: null }",
   "g: 1",
   "startCostToGoal = startDistance << 3",
   "const parent = current.parent ? records.get(current.parent) : null",
   "if (parent && nx === parent.x && ny === parent.y)",
-  "isUnitFootprintPassable(world, nx, ny, unit, movement)",
-  "isUnitFootprintPassable(world, current.x + direction.x, current.y, unit, movement)",
-  "isUnitFootprintPassable(world, current.x, current.y + direction.y, unit, movement)",
-  "const g = current.g + 1",
+  "const moveCost = footprintSearchCost(world, unit, nx, ny, blockers)",
+  "footprintSearchCost(world, unit, current.x + direction.x, current.y, blockers)",
+  "footprintSearchCost(world, unit, current.x, current.y + direction.y, blockers)",
+  "const g = current.g + moveCost",
   "const costToGoal = distanceToGoal << 3",
   "sourceAStarNodeComesBefore",
   "function sourceAStarManhattanDistance",
-  "function findNearestPassableTarget",
-  "isUnitFootprintPassable(world, target.x, target.y, unit, movement)",
-  "Math.abs(x - target.x) !== radius && Math.abs(y - target.y) !== radius",
+  "function footprintSearchCost",
+  "function reachableGoalKeysAtRange",
+  "isUnitFootprintPassable(world, x, y, unit, movement, true)",
   "return simplifyPath(reversed.reverse())"
 ]);
 
+const movingOccupantHelper = passabilitySource.match(/function isActivelyMovingOccupant[\s\S]*?\n}/)?.[0] ?? "";
+if (movingOccupantHelper.includes(".speed")) {
+  errors.push("browser passability must not use unit speed as current-motion state");
+}
+if (pathfindingSource.includes("findNearestPassableTarget") || pathfindingSource.includes("radius <= 12")) {
+  errors.push("browser pathfinding must not keep the first-local-candidate or fixed-radius-12 goal search");
+}
+
 expectIncludes("orders path use", ordersSource, [
-  "import { findPath } from \"./pathfinding\"",
-  "const path = findPath(world, unit, clampedX, clampedY)",
+  "import { findPath, findPathResult } from \"./pathfinding\"",
+  "const path = findPathResult(world, unit, clampedX, clampedY).path",
+  "findPathResult(world, unit, clampedX, clampedY).status !== \"unreachable\"",
   "unit.order.path = findPath(world, unit, unit.order.targetX, unit.order.targetY)",
   "if (!isTilePassable(world, waypointTile.x, waypointTile.y, movementKindForUnit(unit), unit.id))",
   "const path = findPath(world, unit, target.x, target.y)"

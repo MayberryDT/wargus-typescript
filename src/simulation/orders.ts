@@ -3,7 +3,7 @@ import { sourceButtonAppliesTo, sourceButtonLabel } from "../wargus/buttons";
 import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
 import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
-import { findPath } from "./pathfinding";
+import { findPath, findPathResult } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
 
@@ -1017,7 +1017,7 @@ export function issueMoveOrder(world: WorldState, unitId: string, x: number, y: 
 
   const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
   const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
-  const path = findPath(world, unit, clampedX, clampedY);
+  const path = findPathResult(world, unit, clampedX, clampedY).path;
   unit.moveQueue = [];
   unit.order = {
     kind: "move",
@@ -1034,7 +1034,7 @@ export function canIssueMoveAt(world: WorldState, unit: WorldUnit, x: number, y:
   }
   const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
   const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
-  return findPath(world, unit, clampedX, clampedY).length > 0;
+  return findPathResult(world, unit, clampedX, clampedY).status !== "unreachable";
 }
 
 export function canIssueQueueMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
