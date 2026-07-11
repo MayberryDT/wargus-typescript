@@ -253,6 +253,11 @@ ten source-faithful advanced paths.
   canvas coordinate or waiting on a compound predicate.
 - [ ] Use 2x through the visible speed control only. Preserve 2x in every save
   segment and record the visible speed at each checkpoint.
+- [ ] Before F11, click the visible Pause control and assert the runtime is
+  paused. Capture the target tick only after that pause, then require the saved
+  slot tick to match it exactly. A tick observed while the game is still
+  running is only a lower bound and must not be compared for exact equality
+  with a later F11 save.
 - [ ] Give each segment one target milestone: one completed building, one Hall
   upgrade, one research conversion, or one spawned advanced output. If normal
   simulation has not completed it by the cutoff, save the in-progress state and
