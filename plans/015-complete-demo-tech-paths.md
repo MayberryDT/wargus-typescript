@@ -264,6 +264,12 @@ ten source-faithful advanced paths.
   When a setup segment must not advance simulation, issue one command, assert
   its queue/resource result, immediately pause with `Space`, and assert paused
   again before issuing the next command.
+- [ ] Keep queued supply diagnostic in supporting worker/army setup. The current
+  HUD displays `used + queued` and the current order gate reserves queued
+  demand, so four queued Peasants display `5/5`; do not require the original
+  completion-time `1/5` behavior in Plan 015 or treat `5/5` as correct source
+  behavior. Record used/queued/cap separately and leave the correction to Plan
+  016 as assigned.
 - [ ] Give each segment one target milestone: one completed building, one Hall
   upgrade, one research conversion, or one spawned advanced output. If normal
   simulation has not completed it by the cutoff, save the in-progress state and
