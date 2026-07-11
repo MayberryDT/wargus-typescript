@@ -247,29 +247,29 @@ try {
     expectCommands(fixture.commandCard, expectedIds, `${typeId} fixture command card`);
     expectValidSourceActions(fixture.commandCard, `${typeId} fixture command card`);
   }
-  await verifySourceUnloadTransportCommand();
-  await verifySourceOilTankerEconomyCommands();
-  await verifySourceTrainPrerequisiteCommands();
-  await verifySourceScoutPatrolCommands();
-  await verifySourcePendingActionCommands();
-  await verifySourceHarvestRallyCommands();
-  await verifySourceResearchCommands();
-  await verifySourceAutoCastToggle();
-  await verifySourceSpellCommands();
-  const sourceParity = await verifyAllFixtureSourceCommands();
+  await runOnFreshFixedDemo("transport unload", verifySourceUnloadTransportCommand);
+  await runOnFreshFixedDemo("oil tanker economy", verifySourceOilTankerEconomyCommands);
+  await runOnFreshFixedDemo("prerequisite training", verifySourceTrainPrerequisiteCommands);
+  await runOnFreshFixedDemo("scout patrol", verifySourceScoutPatrolCommands);
+  await runOnFreshFixedDemo("pending actions", verifySourcePendingActionCommands);
+  await runOnFreshFixedDemo("harvest rally", verifySourceHarvestRallyCommands);
+  await runOnFreshFixedDemo("research commands", verifySourceResearchCommands);
+  await runOnFreshFixedDemo("autocast", verifySourceAutoCastToggle);
+  await runOnFreshFixedDemo("spell commands", verifySourceSpellCommands);
+  const sourceParity = await runOnFreshFixedDemo("source parity", verifyAllFixtureSourceCommands);
   console.log(`Source command-card parity checked ${sourceParity.checkedTypes} types / ${sourceParity.expectedCommands} expected commands.`);
-  const sourceExecution = await verifyAllFixtureSourceCommandExecution();
+  const sourceExecution = await runOnFreshFixedDemo("source command execution", verifyAllFixtureSourceCommandExecution);
   console.log(`Source command click execution checked ${sourceExecution.executed} commands (${sourceExecution.skippedDisabled} disabled skipped).`);
   console.log(formatSkipSummary("Source command disabled click skips", sourceExecution.disabledSkips));
   const disabledClickClassification = assertExpectedDisabledSkips("Source command disabled click skips", sourceExecution.disabledSkips);
   console.log(formatDisabledSkipClassification("Source command disabled click skips classified", disabledClickClassification));
-  const sourceHotkeys = await verifyAllFixtureSourceCommandHotkeys();
+  const sourceHotkeys = await runOnFreshFixedDemo("source command hotkeys", verifyAllFixtureSourceCommandHotkeys);
   console.log(formatSkipSummary("Source command disabled hotkey skips", sourceHotkeys.disabledSkips));
   const disabledHotkeyClassification = assertExpectedDisabledSkips("Source command disabled hotkey skips", sourceHotkeys.disabledSkips);
   console.log(formatDisabledSkipClassification("Source command disabled hotkey skips classified", disabledHotkeyClassification));
   console.log(formatSkipSummary("Source command no-key hotkey skips", sourceHotkeys.noKeySkips));
   console.log(formatSkipSummary("Source command duplicate hotkey skips", sourceHotkeys.duplicateSkips));
-  await verifyAdvancedProducerBuildCommands();
+  await runOnFreshFixedDemo("advanced producers", verifyAdvancedProducerBuildCommands);
 
   completionMessage = `Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, advancedProducers=6, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`;
   }
@@ -292,6 +292,20 @@ async function selectUnitType(typeId) {
   }
   await waitForExpression(client, `window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitIds?.length === 1 && window.__WARGUS_TS_SMOKE_STATE__?.commandCard?.length > 0`, 5_000);
   return await readSmokeState(client);
+}
+
+async function runOnFreshFixedDemo(label, task) {
+  const loaded = await evalValue(client, `window.__WARGUS_TS_LOAD_MAP__(${JSON.stringify(MAP_PATH)})`);
+  if (loaded !== true) {
+    throw new Error(`Unable to reset fixed demo before ${label}: ${JSON.stringify(loaded)}`);
+  }
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false", 10_000);
+  if (await evalValue(client, "window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true")) {
+    await dispatchKey(client, "Enter", "Enter", 13);
+    await delay(500);
+  }
+  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
+  return await task();
 }
 
 async function selectFixtureUnitType(typeId) {
