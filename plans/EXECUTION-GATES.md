@@ -32,9 +32,11 @@ playable session:
 - F12 Load restores the saved world with the battle paused. A segment that must
   advance simulation clicks the visible `Run` control after loading; waiting
   while the control still says `Run` is a no-progress segment and is discarded.
-- Before F11, click the visible `Pause` control and assert the runtime is
-  paused. Capture the checkpoint tick after pausing so the post-save slot can
-  require exact tick equality without racing the running simulation.
+- Before F11, activate the visible `Pause` control or its documented `Space`
+  hotkey and assert the runtime is paused. Prefer `Space` after a canvas tap has
+  proved unreliable under rendering load. Capture the checkpoint tick after
+  pausing so the post-save slot can require exact tick equality without racing
+  the running simulation.
 - Timed coordinates are not sufficient proof that F12 Load or F11 Save applied.
   In the same bounded browser action, use read-only debugger evaluation to
   assert the expected slot JSON before mutation, assert the loaded smoke state
