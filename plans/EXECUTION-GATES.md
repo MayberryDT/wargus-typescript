@@ -29,6 +29,9 @@ playable session:
   UI between milestones. Each segment loads the last accepted save, performs
   one bounded milestone through visible controls, saves, closes the tab, stops
   the server, and verifies its ports are clear.
+- F12 Load restores the saved world with the battle paused. A segment that must
+  advance simulation clicks the visible `Run` control after loading; waiting
+  while the control still says `Run` is a no-progress segment and is discarded.
 - Never replay from the opening when an accepted save checkpoint exists. Keep
   checkpoint metadata in the plan evidence packet: starting milestone, ending
   milestone, wall time, source speed, resources, supply, and completed units.

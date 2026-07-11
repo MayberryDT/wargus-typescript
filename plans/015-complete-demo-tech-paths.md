@@ -222,6 +222,9 @@ ten source-faithful advanced paths.
   Start each segment by loading the prior accepted checkpoint through the real
   F12 Load Game UI, and end it by saving through F11 before closing the tab and
   stopping the server. The opening segment starts fresh because no save exists.
+- [ ] After F12 Load, click the visible `Run` control before any segment that
+  depends on elapsed simulation time. Confirm the control changes away from
+  `Run`; a paused wait does not advance the target milestone.
 - [ ] Use 2x through the visible speed control only. Preserve 2x in every save
   segment and record the visible speed at each checkpoint.
 - [ ] Give each segment one target milestone: one completed building, one Hall
