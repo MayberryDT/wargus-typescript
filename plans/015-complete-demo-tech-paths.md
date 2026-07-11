@@ -259,6 +259,11 @@ ten source-faithful advanced paths.
   after that pause, then require the saved slot tick to match it exactly. A tick
   observed while the game is still running is only a lower bound and must not
   be compared for exact equality with a later F11 save.
+- [ ] Account for fixed-demo command acknowledgement: a successful train,
+  build, research, or other acknowledged order may resume a loaded paused game.
+  When a setup segment must not advance simulation, issue one command, assert
+  its queue/resource result, immediately pause with `Space`, and assert paused
+  again before issuing the next command.
 - [ ] Give each segment one target milestone: one completed building, one Hall
   upgrade, one research conversion, or one spawned advanced output. If normal
   simulation has not completed it by the cutoff, save the in-progress state and

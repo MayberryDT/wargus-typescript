@@ -37,6 +37,10 @@ playable session:
   proved unreliable under rendering load. Capture the checkpoint tick after
   pausing so the post-save slot can require exact tick equality without racing
   the running simulation.
+- A successful acknowledged gameplay order may automatically resume the fixed
+  demo. A setup segment that intends to stay paused must reassert the paused
+  state after every issued order; if it resumed, use documented `Space` and
+  confirm `paused === true` before the next input or F11.
 - Timed coordinates are not sufficient proof that F12 Load or F11 Save applied.
   In the same bounded browser action, use read-only debugger evaluation to
   assert the expected slot JSON before mutation, assert the loaded smoke state
