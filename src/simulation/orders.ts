@@ -9634,6 +9634,7 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     if (isInResourceRange(world, unit)) {
       updateUnitFacing(unit, targetX - unit.x, targetY - unit.y);
       unit.order.phase = "gathering";
+      dropMismatchedHarvestCargo(unit, unit.order.resource);
       unit.order.gatherSeconds = sourceResourceGatherStepSeconds(world, unit, unit.order.resource);
       unit.order.returnSeconds = 0;
       unit.order.path = [];
@@ -9764,6 +9765,14 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
   }
   stepMoveOrder(world, unit, tickSeconds);
+}
+
+function dropMismatchedHarvestCargo(unit: WorldUnit, resource: "gold" | "wood" | "oil"): void {
+  if (unit.resourcesHeld <= 0 || unit.carriedResource === resource) {
+    return;
+  }
+  unit.resourcesHeld = 0;
+  unit.carriedResource = null;
 }
 
 function sourceResourceOrderDropoff(world: WorldState, unit: WorldUnit): WorldUnit | undefined {

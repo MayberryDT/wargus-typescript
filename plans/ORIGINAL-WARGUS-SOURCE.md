@@ -141,3 +141,13 @@ Wargus/Stratagus commits:
 - Source command status text omits duration. `Time Ns`, explicit `Build Hall`,
   `Provides N Food`, and the exact imported `ZTOP` display correction are
   deliberate TypeScript clarity enhancements, not original UI behavior.
+
+Confirmed resource-retask contract at the installed Stratagus commit:
+
+- `src/ui/mouse.cpp` sends a new resource-location command when a worker is
+  right-clicked onto a different terrain resource, even while it carries its
+  previous resource.
+- `src/action/action_resource.cpp` changes resource type when gathering starts
+  and calls `DropResource(unit)` first. The old carried cargo is discarded; it
+  is not delivered or converted. The worker then continues gathering the new
+  resource normally.
