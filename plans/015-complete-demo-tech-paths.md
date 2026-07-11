@@ -242,6 +242,15 @@ ten source-faithful advanced paths.
   record with a non-null `construction` object in the saved slot. The saved
   player-owned construction record is authoritative because smoke
   `ownedUnitCounts` intentionally excludes foundations.
+- [ ] Treat command-page navigation and command availability as separate
+  assertions. Before opening the Peasant basic page, require one enabled
+  `build-basic-page` command with displayed key `B`, source action `button`,
+  and source value `1`; issue that visible hotkey and then assert only
+  `commandPage === 1`. Inspect the resulting card separately and require one
+  enabled `source-build:unit-town-hall` command with displayed key `H`, source
+  action `build`, and source value `unit-town-hall` before issuing it. Record
+  the actual card and disabled reason on a mismatch instead of retrying a
+  canvas coordinate or waiting on a compound predicate.
 - [ ] Use 2x through the visible speed control only. Preserve 2x in every save
   segment and record the visible speed at each checkpoint.
 - [ ] Give each segment one target milestone: one completed building, one Hall
