@@ -130,14 +130,14 @@ tree implementation.
 
 ### Task 1: Confirm the current reachability gap
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:fixed-demo-random-ai`.
-- [ ] Run `npm run verify:browser-command-card-session`.
-- [ ] Run `npm run verify:browser-train-session`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:fixed-demo-random-ai`.
+- [x] Run `npm run verify:browser-command-card-session`.
+- [x] Run `npm run verify:browser-train-session`.
 
 Expected: all exit 0. These commands do not currently prove the missing producer path; that gap is what this plan adds.
 
-- [ ] Confirm each missing producer above exists in `public/wargus/manifest.json` with a build button and the expected train/research buttons.
+- [x] Confirm each missing producer above exists in `public/wargus/manifest.json` with a build button and the expected train/research buttons.
 
 Expected: all six producer definitions and their source-faithful unit buttons
 exist. If any definition or button is absent from the manifest, STOP; the work
@@ -145,9 +145,9 @@ is no longer a scenario allow-list fix.
 
 ### Task 2: Complete the fixed-demo allow list
 
-- [ ] Add the six missing producer type ids to `allowedUnitTypes` in `applyFixedBrowserDemoSetup`.
-- [ ] Place human entries beside the other human buildings and orc entries beside their counterparts.
-- [ ] Do not alter `demoUnits`, starting resources, or `allowedUpgradeTypes`.
+- [x] Add the six missing producer type ids to `allowedUnitTypes` in `applyFixedBrowserDemoSetup`.
+- [x] Place human entries beside the other human buildings and orc entries beside their counterparts.
+- [x] Do not alter `demoUnits`, starting resources, or `allowedUpgradeTypes`.
 
 Target additions:
 
@@ -168,29 +168,29 @@ Target additions:
 
 ### Task 3: Lock scenario reachability without duplicating the tech tree
 
-- [ ] Update `scripts/verify-fixed-demo-random-ai.mjs` to assert all six producer ids and all four Inventor/Alchemist output ids are present exactly once in the fixed-demo allow list.
-- [ ] Keep its one-Peasant, high-resource, randomized-start, and source-AI assertions unchanged.
-- [ ] Do not encode prerequisite logic in this static verifier; browser scenarios own behavior.
+- [x] Update `scripts/verify-fixed-demo-random-ai.mjs` to assert all six producer ids and all four Inventor/Alchemist output ids are present exactly once in the fixed-demo allow list.
+- [x] Keep its one-Peasant, high-resource, randomized-start, and source-AI assertions unchanged.
+- [x] Do not encode prerequisite logic in this static verifier; browser scenarios own behavior.
 
 **Verify**: `npm run verify:fixed-demo-random-ai` -> exits 0.
 
 ### Task 4: Exercise advanced build command cards
 
-- [ ] Extend the existing fixture matrix in `scripts/verify-browser-command-card-session.mjs` rather than creating a parallel command-card harness.
-- [ ] Use Peasant + completed Elven Lumber Mill to expose the advanced page while Inventor, Mage Tower, and Church remain dependency-disabled; add a completed Castle to the same fixture and assert all three become executable.
-- [ ] Mirror with Peon + completed Troll Lumber Mill, then add a completed Fortress for Alchemist, Temple, and Altar.
-- [ ] Assert the actual source command values before/after; do not hardcode a second dependency graph or bypass prerequisites.
+- [x] Extend the existing fixture matrix in `scripts/verify-browser-command-card-session.mjs` rather than creating a parallel command-card harness.
+- [x] Use Peasant + completed Elven Lumber Mill to expose the advanced page while Inventor, Mage Tower, and Church remain dependency-disabled; add a completed Castle to the same fixture and assert all three become executable.
+- [x] Mirror with Peon + completed Troll Lumber Mill, then add a completed Fortress for Alchemist, Temple, and Altar.
+- [x] Assert the actual source command values before/after; do not hardcode a second dependency graph or bypass prerequisites.
 
 **Verify**: `npm run verify:browser-command-card-session` -> exits 0 and reports six advanced producer commands.
 
 ### Task 5: Exercise production and conversion paths
 
-- [ ] After Plan 012/013 release `src/main.ts`, add one smoke-only
+- [x] After Plan 012/013 release `src/main.ts`, add one smoke-only
   `__WARGUS_TS_RUN_ADVANCED_TECH_PATH_FIXTURE__` that clones the loaded demo
   world, disables AI in the clone, prepares real prerequisites/resources, issues
   normal research/train orders, and advances fixed simulation steps. It must
   not mutate the live playable world or use wall-clock waits as game time.
-- [ ] Extend `scripts/verify-browser-train-session.mjs` with data-driven results from that fixture:
+- [x] Extend `scripts/verify-browser-train-session.mjs` with data-driven results from that fixture:
   - Church researches Paladin. Completion converts existing Knights to
     Paladins and unlocks direct Paladin training at the Barracks.
   - Altar researches Ogre Mage. Completion converts existing Ogres to Ogre
@@ -201,15 +201,15 @@ Target additions:
   - Orc Barracks trains Catapult.
   - Inventor trains Flying Machine and Dwarves.
   - Alchemist trains Zeppelin and Goblin Sappers.
-- [ ] For Paladin/Ogre Mage, verify both halves of the source mechanic:
+- [x] For Paladin/Ogre Mage, verify both halves of the source mechanic:
   research completion converts an existing Knight/Ogre, and the upgraded unit
   becomes directly trainable from the Barracks afterward. Do not expect a
   Church/Altar production queue.
-- [ ] For each directly trained unit, verify resource deduction, queue progress,
+- [x] For each directly trained unit, verify resource deduction, queue progress,
   completion, spawn, and stable deterministic ids/counts. Record supply
   snapshots, but do not assert queued reservation/release: demand is unchanged
   before spawn and increases only when the unit is created in source behavior.
-- [ ] For both conversions, preserve the existing Knight/Ogre unit id while its
+- [x] For both conversions, preserve the existing Knight/Ogre unit id while its
   type changes, then prove the separate Barracks Paladin/Ogre Mage command
   changes from blocked to executable after real research completion.
 
