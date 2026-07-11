@@ -270,6 +270,12 @@ ten source-faithful advanced paths.
   completion-time `1/5` behavior in Plan 015 or treat `5/5` as correct source
   behavior. Record used/queued/cap separately and leave the correction to Plan
   016 as assigned.
+- [ ] Recompute placement candidates from the loaded base at every building
+  milestone. Once multiple workers/buildings exist, select a visible idle
+  Peasant with the greatest clearance from current owned buildings and probe
+  bounded candidate rings inside the live map viewport. Do not reuse offsets
+  from the one-worker opening. If no candidate is accepted, close without F11
+  and record the worker/building screen points before another attempt.
 - [ ] Give each segment one target milestone: one completed building, one Hall
   upgrade, one research conversion, or one spawned advanced output. If normal
   simulation has not completed it by the cutoff, save the in-progress state and
