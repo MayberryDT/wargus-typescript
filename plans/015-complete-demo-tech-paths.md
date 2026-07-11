@@ -218,7 +218,17 @@ ten source-faithful advanced paths.
 
 ### Task 6: Perform the playable progression session
 
-- [ ] Start the fixed demo at 2x through the visible speed control only for the duration of this acceptance session.
+- [ ] Complete the progression as resumable segments of at most 30 seconds each.
+  Start each segment by loading the prior accepted checkpoint through the real
+  F12 Load Game UI, and end it by saving through F11 before closing the tab and
+  stopping the server. The opening segment starts fresh because no save exists.
+- [ ] Use 2x through the visible speed control only. Preserve 2x in every save
+  segment and record the visible speed at each checkpoint.
+- [ ] Give each segment one target milestone: one completed building, one Hall
+  upgrade, one research conversion, or one spawned advanced output. If normal
+  simulation has not completed it by the cutoff, save the in-progress state and
+  continue that same target in the next segment; only completion satisfies the
+  milestone. Do not keep the game open to combine milestones.
 - [ ] From one Peasant, build through Keep/Castle and produce at least one
   Paladin, Mage, Ballista, Flying Machine, and Dwarves.
 - [ ] Use an Orc fixture or deterministic AI observation to confirm Catapult,
@@ -231,6 +241,8 @@ Expected observable behavior:
   and the four deliberate Inventor/Alchemist additions are likewise usable.
 - No advanced button remains permanently disabled once its true prerequisites are completed.
 - Advanced units enter the normal production queue and spawn like existing units.
+- Every accepted segment has a matching save checkpoint and evidence row; an
+  interrupted unsaved segment is discarded rather than replayed continuously.
 
 ### Task 7: Close out
 

@@ -12,6 +12,32 @@ original behavior governs unless the user explicitly approves a deliberate
 departure. Record the exact runtime observation or installed source path in the
 evidence packet.
 
+## Resource-bounded execution
+
+These limits override any plan wording that implies one continuous browser or
+playable session:
+
+- Run no live game tab or browser verifier continuously for more than 30
+  seconds. Start the wall-clock budget when the game page begins loading, not
+  when the first assertion or interaction begins.
+- Run one low-priority project process at a time. Do not use parallel agents,
+  parallel suites, or simultaneous headless and in-app browsers.
+- Split any browser verifier that cannot finish inside 30 seconds into focused,
+  deterministic modes that reuse the same assertions. Do not weaken or remove
+  the original acceptance assertion to make a shard pass.
+- For player-visible progression, use the real F11 Save Game and F12 Load Game
+  UI between milestones. Each segment loads the last accepted save, performs
+  one bounded milestone through visible controls, saves, closes the tab, stops
+  the server, and verifies its ports are clear.
+- Never replay from the opening when an accepted save checkpoint exists. Keep
+  checkpoint metadata in the plan evidence packet: starting milestone, ending
+  milestone, wall time, source speed, resources, supply, and completed units.
+- A segment that is interrupted before its save is observational evidence only;
+  it cannot satisfy an acceptance row and must not be treated as resumable.
+- Static inspection, typechecking, and non-browser verifiers may run without a
+  browser, but still use the smallest focused command and low scheduler
+  priority. Broad suites remain final-integration gates only.
+
 ## Critical path and safe concurrency
 
 ```text
