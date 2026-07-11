@@ -229,6 +229,19 @@ ten source-faithful advanced paths.
   unit types/resources/speed before mutation, the matching loaded smoke state
   after F12, the target smoke state before F11, and the committed slot JSON
   after Save. A failed assertion closes without F11 and does not advance Task 6.
+- [ ] Build the checkpoint guard from stable save/load fields. Before F12,
+  capture the slot's `savedAt`, map path, tick, source speed, visibility-player
+  resources, visibility-player unit records, and total unit count. After F12,
+  require the same map, tick, source speed, resources, ready owned-unit counts,
+  and `unitCount === slot.world.units.length`. Do not hard-code a scenario-wide
+  unit total and do not use `selectedUnitTypes` as checkpoint identity.
+- [ ] For a construction target, compare against the just-loaded baseline:
+  require the exact resource delta, unchanged ready owned-unit counts, and one
+  additional live unit before F11. After F11, require a changed `savedAt`, the
+  target tick/speed/resources, and the expected visibility-player building
+  record with a non-null `construction` object in the saved slot. The saved
+  player-owned construction record is authoritative because smoke
+  `ownedUnitCounts` intentionally excludes foundations.
 - [ ] Use 2x through the visible speed control only. Preserve 2x in every save
   segment and record the visible speed at each checkpoint.
 - [ ] Give each segment one target milestone: one completed building, one Hall

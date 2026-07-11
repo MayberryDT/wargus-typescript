@@ -37,6 +37,13 @@ playable session:
   assert the expected slot JSON before mutation, assert the loaded smoke state
   before issuing gameplay input, assert the target smoke state before F11, and
   assert the new slot JSON after Save. On any mismatch, close without saving.
+- Derive checkpoint identity from the slot's map, tick, source speed,
+  visibility-player resources, and visibility-player unit records. A live
+  map-wide unit count may only be compared with the count captured from that
+  same slot; never hard-code it. `selectedUnitTypes` is selection state, and
+  smoke `ownedUnitCounts` excludes construction, so neither can prove that a
+  foundation exists. Prove construction from the post-F11 player-owned saved
+  unit record and its non-null `construction` state.
 - Never replay from the opening when an accepted save checkpoint exists. Keep
   checkpoint metadata in the plan evidence packet: starting milestone, ending
   milestone, wall time, source speed, resources, supply, and completed units.
