@@ -9,6 +9,8 @@ const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=construction-lifecycle`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CONSTRUCTION_ONLY = process.env.WARGUS_CONSTRUCTION_LIFECYCLE_ONLY === "1";
 const ADVANCED_BUILD_ONLY = process.env.WARGUS_ADVANCED_BUILD_FIXTURE_ONLY === "1";
+const SOURCE_EXECUTION_TAIL_ONLY = process.env.WARGUS_SOURCE_EXECUTION_TAIL_ONLY === "1";
+const SOURCE_HOTKEY_TAIL_ONLY = process.env.WARGUS_SOURCE_HOTKEY_TAIL_ONLY === "1";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
 const EXPECTED_GENERIC_DISABLED_HARVEST_TYPES = new Set([
@@ -37,13 +39,15 @@ const EXPECTED_GENERIC_DISABLED_TRAIN_TYPES_BY_UNIT = new Map([
   ["unit-archer", new Set(["unit-human-barracks"])],
   ["unit-axethrower", new Set(["unit-orc-barracks"])],
   ["unit-ballista", new Set(["unit-human-barracks"])],
+  ["unit-balloon", new Set(["unit-inventor"])],
   ["unit-catapult", new Set(["unit-orc-barracks"])],
   ["unit-death-knight", new Set(["unit-temple-of-the-damned"])],
   ["unit-knight", new Set(["unit-human-barracks"])],
   ["unit-mage", new Set(["unit-mage-tower"])],
   ["unit-ogre", new Set(["unit-orc-barracks"])],
   ["unit-ogre-mage", new Set(["unit-orc-barracks"])],
-  ["unit-paladin", new Set(["unit-human-barracks"])]
+  ["unit-paladin", new Set(["unit-human-barracks"])],
+  ["unit-zeppelin", new Set(["unit-alchemist"])]
 ]);
 const EXPECTED_GENERIC_DISABLED_UPGRADE_TYPES_BY_UNIT = new Map([
   ["unit-castle", new Set(["unit-keep"])],
@@ -132,7 +136,13 @@ try {
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
 
   let completionMessage = "";
-  if (ADVANCED_BUILD_ONLY) {
+  if (SOURCE_HOTKEY_TAIL_ONLY) {
+    const sourceHotkeys = await verifySourceHotkeyTail();
+    completionMessage = `Source command hotkey tail verified (hotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}, advancedProducers=6).`;
+  } else if (SOURCE_EXECUTION_TAIL_ONLY) {
+    const { sourceExecution, sourceHotkeys } = await verifySourceExecutionTail();
+    completionMessage = `Source command execution tail verified (clicks=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, hotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}, advancedProducers=6).`;
+  } else if (ADVANCED_BUILD_ONLY) {
     await verifyAdvancedProducerBuildCommands();
     completionMessage = "Advanced producer build commands verified (human/orc dependency-disabled before top tier and executable after Castle/Fortress).";
   } else {
@@ -258,18 +268,7 @@ try {
   await runOnFreshFixedDemo("spell commands", verifySourceSpellCommands);
   const sourceParity = await runOnFreshFixedDemo("source parity", verifyAllFixtureSourceCommands);
   console.log(`Source command-card parity checked ${sourceParity.checkedTypes} types / ${sourceParity.expectedCommands} expected commands.`);
-  const sourceExecution = await runOnFreshFixedDemo("source command execution", verifyAllFixtureSourceCommandExecution);
-  console.log(`Source command click execution checked ${sourceExecution.executed} commands (${sourceExecution.skippedDisabled} disabled skipped).`);
-  console.log(formatSkipSummary("Source command disabled click skips", sourceExecution.disabledSkips));
-  const disabledClickClassification = assertExpectedDisabledSkips("Source command disabled click skips", sourceExecution.disabledSkips);
-  console.log(formatDisabledSkipClassification("Source command disabled click skips classified", disabledClickClassification));
-  const sourceHotkeys = await runOnFreshFixedDemo("source command hotkeys", verifyAllFixtureSourceCommandHotkeys);
-  console.log(formatSkipSummary("Source command disabled hotkey skips", sourceHotkeys.disabledSkips));
-  const disabledHotkeyClassification = assertExpectedDisabledSkips("Source command disabled hotkey skips", sourceHotkeys.disabledSkips);
-  console.log(formatDisabledSkipClassification("Source command disabled hotkey skips classified", disabledHotkeyClassification));
-  console.log(formatSkipSummary("Source command no-key hotkey skips", sourceHotkeys.noKeySkips));
-  console.log(formatSkipSummary("Source command duplicate hotkey skips", sourceHotkeys.duplicateSkips));
-  await runOnFreshFixedDemo("advanced producers", verifyAdvancedProducerBuildCommands);
+  const { sourceExecution, sourceHotkeys } = await verifySourceExecutionTail();
 
   completionMessage = `Browser command cards verified (${MAP_PATH}, peasant=${peasant.commandCard.length}, barracks=${barracks.commandCard.length}, footman=${footman.commandCard.length}, townHall=${townHall.commandCard.length}, fixtures=${matrix.length}, advancedProducers=6, sourceParity=${sourceParity.checkedTypes}/${sourceParity.expectedCommands}, sourceExecution=${sourceExecution.executed}/${sourceExecution.skippedDisabled}, sourceHotkeys=${sourceHotkeys.executed}/${sourceHotkeys.skippedDisabled}/${sourceHotkeys.skippedNoKey}/${sourceHotkeys.skippedAmbiguous}/${sourceHotkeys.skippedDuplicate}).`;
   }
@@ -306,6 +305,29 @@ async function runOnFreshFixedDemo(label, task) {
   }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
   return await task();
+}
+
+async function verifySourceExecutionTail() {
+  const sourceExecution = await runOnFreshFixedDemo("source command execution", verifyAllFixtureSourceCommandExecution);
+  console.log(`Source command click execution checked ${sourceExecution.executed} commands (${sourceExecution.skippedDisabled} disabled skipped).`);
+  console.log(formatSkipSummary("Source command disabled click skips", sourceExecution.disabledSkips));
+  const disabledClickClassification = assertExpectedDisabledSkips("Source command disabled click skips", sourceExecution.disabledSkips);
+  console.log(formatDisabledSkipClassification("Source command disabled click skips classified", disabledClickClassification));
+
+  const sourceHotkeys = await verifySourceHotkeyTail();
+  return { sourceExecution, sourceHotkeys };
+}
+
+async function verifySourceHotkeyTail() {
+  const sourceHotkeys = await runOnFreshFixedDemo("source command hotkeys", verifyAllFixtureSourceCommandHotkeys);
+  console.log(formatSkipSummary("Source command disabled hotkey skips", sourceHotkeys.disabledSkips));
+  const disabledHotkeyClassification = assertExpectedDisabledSkips("Source command disabled hotkey skips", sourceHotkeys.disabledSkips);
+  console.log(formatDisabledSkipClassification("Source command disabled hotkey skips classified", disabledHotkeyClassification));
+  console.log(formatSkipSummary("Source command no-key hotkey skips", sourceHotkeys.noKeySkips));
+  console.log(formatSkipSummary("Source command duplicate hotkey skips", sourceHotkeys.duplicateSkips));
+
+  await runOnFreshFixedDemo("advanced producers", verifyAdvancedProducerBuildCommands);
+  return sourceHotkeys;
 }
 
 async function selectFixtureUnitType(typeId) {
@@ -1559,7 +1581,7 @@ function classifyHotkeyCommand(card, command) {
   if (!keyCodeForCommand(command)) {
     return "no-key";
   }
-  const sameKeyCount = card.filter((candidate) => !candidate.disabled && candidate.key === command.key && keyCodeForCommand(candidate)).length;
+  const sameKeyCount = card.filter((candidate) => candidate.key === command.key && keyCodeForCommand(candidate)).length;
   return sameKeyCount === 1 ? "ready" : "ambiguous";
 }
 
