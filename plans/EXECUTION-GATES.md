@@ -32,11 +32,19 @@ playable session:
 - F12 Load restores the saved world with the battle paused. A segment that must
   advance simulation clicks the visible `Run` control after loading; waiting
   while the control still says `Run` is a no-progress segment and is discarded.
+- Timed coordinates are not sufficient proof that F12 Load or F11 Save applied.
+  In the same bounded browser action, use read-only debugger evaluation to
+  assert the expected slot JSON before mutation, assert the loaded smoke state
+  before issuing gameplay input, assert the target smoke state before F11, and
+  assert the new slot JSON after Save. On any mismatch, close without saving.
 - Never replay from the opening when an accepted save checkpoint exists. Keep
   checkpoint metadata in the plan evidence packet: starting milestone, ending
   milestone, wall time, source speed, resources, supply, and completed units.
 - A segment that is interrupted before its save is observational evidence only;
   it cannot satisfy an acceptance row and must not be treated as resumable.
+- A previously observed milestone whose slot is later overwritten remains
+  observational evidence but is no longer a resumable acceptance checkpoint;
+  reconstruct and re-save it before advancing the progression chain.
 - Static inspection, typechecking, and non-browser verifiers may run without a
   browser, but still use the smallest focused command and low scheduler
   priority. Broad suites remain final-integration gates only.

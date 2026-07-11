@@ -225,6 +225,10 @@ ten source-faithful advanced paths.
 - [ ] After F12 Load, click the visible `Run` control before any segment that
   depends on elapsed simulation time. Confirm the control changes away from
   `Run`; a paused wait does not advance the target milestone.
+- [ ] Within the same bounded action, read-only assert the expected save-slot
+  unit types/resources/speed before mutation, the matching loaded smoke state
+  after F12, the target smoke state before F11, and the committed slot JSON
+  after Save. A failed assertion closes without F11 and does not advance Task 6.
 - [ ] Use 2x through the visible speed control only. Preserve 2x in every save
   segment and record the visible speed at each checkpoint.
 - [ ] Give each segment one target milestone: one completed building, one Hall
