@@ -283,6 +283,14 @@ ten source-faithful advanced paths.
   milestone. Do not keep the game open to combine milestones.
 - [ ] From one Peasant, build through Keep/Castle and produce at least one
   Paladin, Mage, Ballista, Flying Machine, and Dwarves.
+- [ ] When normal gathering is required, budget the complete remaining Human
+  showcase rather than only the next Castle payment. From the accepted
+  Stables-complete checkpoint (`1100/1050/4700`), Castle + Church + Mage Tower
+  + Inventor + Knight + Paladin research + Mage + Ballista + Flying Machine +
+  Dwarves costs `10500 gold / 3050 wood / 500 oil`. If front-loading gathering,
+  reach at least `11600 gold / 4100 wood` before spending. Castle adds one
+  supply, taking `5/9` to `5/10`, exactly enough for those five demanded
+  outputs; do not add another Farm unless the live source supply differs.
 - [ ] Use an Orc fixture or deterministic AI observation to confirm Catapult,
   Ogre Mage, Death Knight, Zeppelin, and Goblin Sappers through the mirrored
   Altar/Temple/Alchemist paths.
