@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 
-const source = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/action/action_attack.cpp", "utf8");
-const commandSource = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/action/command.cpp", "utf8");
+const originalSourceRoot = process.env.WARGUS_ORIGINAL_STRATAGUS_SOURCE
+  ?? "/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src";
+const source = readFileSync(path.join(originalSourceRoot, "src/action/action_attack.cpp"), "utf8");
+const commandSource = readFileSync(path.join(originalSourceRoot, "src/action/command.cpp"), "utf8");
 const ordersSource = readFileSync("src/simulation/orders.ts", "utf8");
 const worldSource = readFileSync("src/simulation/world.ts", "utf8");
 const saveSource = readFileSync("src/wargus/saveGame.ts", "utf8");

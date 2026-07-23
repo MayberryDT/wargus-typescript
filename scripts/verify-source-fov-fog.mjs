@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 
-const sourceFov = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/map/fov.cpp", "utf8");
-const sourceMapFog = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/map/map_fog.cpp", "utf8");
-const sourceFow = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/map/fow.cpp", "utf8");
+const originalSourceRoot = process.env.WARGUS_ORIGINAL_STRATAGUS_SOURCE
+  ?? "/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src";
+const sourceFov = readFileSync(path.join(originalSourceRoot, "src/map/fov.cpp"), "utf8");
+const sourceMapFog = readFileSync(path.join(originalSourceRoot, "src/map/map_fog.cpp"), "utf8");
+const sourceFow = readFileSync(path.join(originalSourceRoot, "src/map/fow.cpp"), "utf8");
 const worldSource = readFileSync("src/simulation/world.ts", "utf8");
 const renderWorldSource = readFileSync("src/view/renderWorld.ts", "utf8");
 const hudSource = readFileSync("src/view/renderHud.ts", "utf8");
