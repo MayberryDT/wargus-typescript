@@ -2,6 +2,17 @@
 
 Scope: this file applies to the entire repository.
 
+## Execution Host
+
+All future implementation, build, test, verifier, game-runtime, and browser work for this project must run on the SSH host `halla`, not on the local workstation.
+
+- Use an isolated checkout under `/home/halla/workspaces/` and confirm `hostname` is `halla` before starting project processes.
+- Keep local work limited to lightweight coordination, Git/artifact transfer, and reviewing results returned from Halla.
+- Before choosing ports or starting processes on Halla, inspect its current listeners and processes. Use unique unoccupied ports.
+- Do not stop, restart, reconfigure, or otherwise interfere with any pre-existing Halla automation, app, container, service, or process.
+- Track every project process started on Halla by its exact PID, and clean up only those exact PIDs. Never use broad `pkill`, `killall`, container-wide cleanup, or port-owner termination.
+- If Halla is unavailable, stop and report the blocker instead of falling back to resource-intensive local execution.
+
 ## Browser Automation
 
 When browser automation is needed, use the Codex in-app Browser plugin with the `iab` backend first.
