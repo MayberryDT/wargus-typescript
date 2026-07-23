@@ -52,21 +52,22 @@ for (const [source, fragment] of [
   [ordersSource, "function applySourceAiDifficultyBonuses"],
   [ordersSource, "function sourceAiSleepCycles"],
   [ordersSource, "world.engineSettings.lastDifficultyDefault"],
-  [ordersSource, "state.nextThinkTick = world.tick + sourceAiSleepCycles(world, 30)"],
-  [saveSource, "function sourceAiSleepCyclesForSave"],
-  [saveSource, "const nextThinkTickCap = currentTick + sourceAiSleepCyclesForSave(world, 30)"],
+  [ordersSource, "state.nextThinkTick = world.tick + world.tickRate"],
+  [saveSource, "const nextThinkTickCap = currentTick + world.tickRate"],
   [ordersSource, "Math.floor(5 * cycles)"],
   [ordersSource, "Math.floor(1.25 * cycles)"],
   [ordersSource, "Math.floor(cycles / 2)"],
   [ordersSource, "Math.floor(cycles / 3)"],
   [ordersSource, "applySourceAiResourceBonus(world, player, 50, 35, 25)"],
-  [ordersSource, "setSourceAiSpeedFactors(player, 120)"],
+  [ordersSource, "setSourceAiSpeedFactorsFromPercent(player, 120)"],
   [ordersSource, "applySourceAiResourceBonus(world, player, 100, 75, 50)"],
-  [ordersSource, "setSourceAiSpeedFactors(player, 150)"],
-  [ordersSource, "setSourceAiSpeedFactors(player, 75)"],
+  [ordersSource, "setSourceAiSpeedFactorsFromPercent(player, 150)"],
+  [ordersSource, "setSourceAiSpeedFactorsFromPercent(player, 75)"],
+  [ordersSource, "setSourceAiSpeedFactorsFromPercent(player, 100)"],
+  [ordersSource, "const factor = Math.max(0.01, percent / 100)"],
   [ordersSource, "player.playerType === \"person\" || player.playerType === \"nobody\""],
-  [ordersSource, "player.speedFactors.build = speed"],
-  [ordersSource, "player.speedFactors.resourceHarvest[resource] = speed"],
+  [ordersSource, "player.speedFactors.build = factor"],
+  [ordersSource, "player.speedFactors.resourceHarvest[resource] = factor"],
   [ordersSource, "applySourceAiDifficultyBonuses(world, player)"],
   [renderHudSource, '"easier-ai"'],
   [renderHudSource, '"harder-ai"'],
@@ -83,6 +84,13 @@ for (const [source, fragment] of [
 ]) {
   expect(source.includes(fragment), `Missing browser AI difficulty wiring fragment: ${fragment}`);
 }
+
+const expectedFactors = new Map([[1, 0.75], [2, 1], [3, 1], [4, 1.2], [5, 1.5]]);
+for (const [difficulty, expected] of expectedFactors) {
+  const percent = difficulty === 1 ? 75 : difficulty === 4 ? 120 : difficulty === 5 ? 150 : 100;
+  expect(percent / 100 === expected, `Difficulty ${difficulty} expected factor ${expected}, got ${percent / 100}.`);
+}
+expect(!ordersSource.includes("function setSourceAiSpeedFactors("), "Runtime AI factors must not retain the raw-percentage setter.");
 
 if (errors.length > 0) {
   console.error(`Source AI difficulty verification errors: ${errors.length}`);

@@ -6842,15 +6842,16 @@ function applySourceAiDifficultyBonuses(world: WorldState, player: WorldState["p
   if (player.playerType === "person" || player.playerType === "nobody") {
     return;
   }
+  setSourceAiSpeedFactorsFromPercent(player, 100);
   const difficulty = Math.floor(world.engineSettings.lastDifficultyDefault);
   if (difficulty === 4) {
     applySourceAiResourceBonus(world, player, 50, 35, 25);
-    setSourceAiSpeedFactors(player, 120);
+    setSourceAiSpeedFactorsFromPercent(player, 120);
   } else if (difficulty === 5) {
     applySourceAiResourceBonus(world, player, 100, 75, 50);
-    setSourceAiSpeedFactors(player, 150);
+    setSourceAiSpeedFactorsFromPercent(player, 150);
   } else if (difficulty === 1) {
-    setSourceAiSpeedFactors(player, 75);
+    setSourceAiSpeedFactorsFromPercent(player, 75);
   }
 }
 
@@ -6860,14 +6861,15 @@ function applySourceAiResourceBonus(world: WorldState, player: WorldState["playe
   addPlayerResource(world, player, "oil", oil);
 }
 
-function setSourceAiSpeedFactors(player: WorldState["players"][number], speed: number): void {
-  player.speedFactors.build = speed;
-  player.speedFactors.train = speed;
-  player.speedFactors.upgrade = speed;
-  player.speedFactors.research = speed;
+function setSourceAiSpeedFactorsFromPercent(player: WorldState["players"][number], percent: number): void {
+  const factor = Math.max(0.01, percent / 100);
+  player.speedFactors.build = factor;
+  player.speedFactors.train = factor;
+  player.speedFactors.upgrade = factor;
+  player.speedFactors.research = factor;
   for (const resource of ["gold", "wood", "oil"]) {
-    player.speedFactors.resourceHarvest[resource] = speed;
-    player.speedFactors.resourceReturn[resource] = speed;
+    player.speedFactors.resourceHarvest[resource] = factor;
+    player.speedFactors.resourceReturn[resource] = factor;
   }
 }
 
