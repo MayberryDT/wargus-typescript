@@ -162,56 +162,56 @@ endpoint outside `isInAttackRange` and preserve terrain-only temporary intent.
 
 ### Task 1: Establish the combat baseline
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:browser-combat-session`.
-- [ ] Run `npm run verify:source-attack-action`.
-- [ ] Run `npm run verify:source-fov-fog`.
-- [ ] Run `npm run verify:source-event-audio-pan`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:browser-combat-session`.
+- [x] Run `npm run verify:source-attack-action`.
+- [x] Run `npm run verify:source-fov-fog`.
+- [x] Run `npm run verify:source-event-audio-pan`.
 
 Expected: all exit 0. STOP on a pre-existing unrelated failure.
 
 ### Task 2: Recover attack-move from unreachable aggro
 
-- [ ] Add a private `sourceAttackTargetPathResult` that considers only
+- [x] Add a private `sourceAttackTargetPathResult` that considers only
   deterministic candidate centers inside weapon range, preserves Plan 012's
   `temporarily-blocked` route status, and returns `unreachable` only when no
   attack-range candidate is statically reachable.
-- [ ] Never accept a general Move range-expanded endpoint unless the endpoint
+- [x] Never accept a general Move range-expanded endpoint unless the endpoint
   is still inside weapon range/line-of-fire. Do not modify shared
   repair/harvest/build interaction-path behavior.
-- [ ] In `stepAttackMoveOrder`, reject an acquired target only when the combat
+- [x] In `stepAttackMoveOrder`, reject an acquired target only when the combat
   result is `unreachable`. Clear only `targetId`, rebuild the path to the
   attack-move destination already stored in `targetX/targetY`, and continue the
   original order.
-- [ ] Do not clear the whole attack-move order unless plan 012's static pathfinder says the original destination is itself unreachable.
-- [ ] A `temporarily-blocked` chase retains the target/order and waits through
+- [x] Do not clear the whole attack-move order unless plan 012's static pathfinder says the original destination is itself unreachable.
+- [x] A `temporarily-blocked` chase retains the target/order and waits through
   congestion; it is not static unreachability.
 
 **Verify**: `./node_modules/.bin/tsc --noEmit` -> exit 0.
 
 ### Task 3: Add source-like idle auto-chase and saved return
 
-- [ ] Add `autoReturn` to the attack member of `WorldOrder` in
+- [x] Add `autoReturn` to the attack member of `WorldOrder` in
   `src/simulation/world.ts`.
-- [ ] Update every explicit player/AI attack constructor to set
+- [x] Update every explicit player/AI attack constructor to set
   `autoReturn: null`.
-- [ ] In `stepDefensiveAutoAttack`, when an idle aggressive mobile unit finds a
+- [x] In `stepDefensiveAutoAttack`, when an idle aggressive mobile unit finds a
   reachable enemy inside reaction range, capture the unit's exact current point
   and issue an automatic attack with that saved return.
-- [ ] While automatic combat is active, retain a valid target when it is inside
+- [x] While automatic combat is active, retain a valid target when it is inside
   reaction range of the defender's current position or is attacking the
   defender from its own weapon range. Do not compare target/defender distance
   with the saved origin.
-- [ ] When the target dies, disappears, becomes invalid/unreachable, or leaves
+- [x] When the target dies, disappears, becomes invalid/unreachable, or leaves
   current reaction range without the attacked-by-target exception, issue an
   attack-move back to `autoReturn`. This return may acquire another enemy; once
   it reaches the saved point the unit becomes idle.
-- [ ] Narrow dead/unavailable-unit cleanup so an attack with non-null
+- [x] Narrow dead/unavailable-unit cleanup so an attack with non-null
   `autoReturn` is restored or left for the attack step; explicit attacks remain
   hard references and clear normally.
-- [ ] Keep defensive buildings firing only at weapon range and keep Hold
+- [x] Keep defensive buildings firing only at weapon range and keep Hold
   Position stationary.
-- [ ] Throttle acquisition with the existing `nextAutoActionTick`; do not scan
+- [x] Throttle acquisition with the existing `nextAutoActionTick`; do not scan
   every frame.
 
 **Verify**: `npm run verify:source-attack-action` -> exits 0 after it asserts
@@ -220,14 +220,14 @@ saved-return shape, current-position reaction retention, explicit attacks'
 
 ### Task 4: Preserve the automatic return across save/load
 
-- [ ] In `normalizeLoadedOrder`, normalize attack `autoReturn` when it is a
+- [x] In `normalizeLoadedOrder`, normalize attack `autoReturn` when it is a
   finite world point inside map bounds; otherwise use `null`.
-- [ ] Old saves without the field must load as explicit ordinary attacks.
-- [ ] Treat a non-null automatic return as a soft target reference during load:
+- [x] Old saves without the field must load as explicit ordinary attacks.
+- [x] Treat a non-null automatic return as a soft target reference during load:
   a missing, hidden, out-of-reaction, or unreachable target must survive long
   enough to restore the return rather than being erased by
   `orderReferencesMissingUnit` or explicit-attack visibility validation.
-- [ ] Ensure `hasInvalidLoadedAttackOrder` validates target/path as before and
+- [x] Ensure `hasInvalidLoadedAttackOrder` validates target/path as before and
   does not reject a valid return solely because the target is temporarily
   outside current visibility.
 
@@ -249,30 +249,30 @@ return targetId ? {
 
 ### Task 5: Separate projectile commitment from visibility and trajectory
 
-- [ ] Replace `canProjectileTrackTarget` with a committed-target validity
+- [x] Replace `canProjectileTrackTarget` with a committed-target validity
   predicate that does not read current visibility and never acquires a new
   target.
-- [ ] Preserve trajectory class: ordinary point-to-point arrows/axes keep their
+- [x] Preserve trajectory class: ordinary point-to-point arrows/axes keep their
   launch-time impact coordinates; only tracer-class projectiles update target
   coordinates in flight.
-- [ ] On impact, apply direct damage once when the stored target is still alive
+- [x] On impact, apply direct damage once when the stored target is still alive
   and compatible only for zero-range direct missiles such as Wargus arrows and
   axes. They keep the fixed launch point but damage that stored live target
   once even if it moved or entered fog.
-- [ ] For nonzero-range siege/cannon/area missiles, resolve at immutable
+- [x] For nonzero-range siege/cannon/area missiles, resolve at immutable
   `targetX/targetY` against compatible units at the fixed ground point; do not
   grant a moved stored target an unconditional direct hit. If a zero-range
   target died or became incompatible, discard that ordinary direct impact.
-- [ ] Do not re-run acquisition, fog visibility, or pre-launch selection rules
+- [x] Do not re-run acquisition, fog visibility, or pre-launch selection rules
   from the projectile step.
 
 **Verify**: `rg -n 'isUnitVisibleToPlayer\(world, target, projectile.player\)' src/simulation/orders.ts` -> no match inside projectile continuation/impact logic.
 
 ### Task 6: Restore already-cast area damage and source ownership rules
 
-- [ ] In `applySplashDamage`, `tickAreaDamageSpell`, and
+- [x] In `applySplashDamage`, `tickAreaDamageSpell`, and
   `tickWhirlwindSpell`, remove current-visibility filtering.
-- [ ] Reproduce the installed source matrix rather than the TypeScript
+- [x] Reproduce the installed source matrix rather than the TypeScript
   interpretation of the flag name:
   - Demolish damages every alive non-flying unit in range, including caster,
     owner, allies, enemies, and neutrals.
@@ -281,31 +281,31 @@ return targetId ? {
     `canHitOwner: false` excludes only the actual caster/source unit.
   - When a missile explicitly sets `friendlyFire: true`, exclude the source
     player's units as Stratagus does; allied players are still targetable.
-- [ ] Preserve radius, liveness, target-kind/CanTarget rules, damage/falloff,
+- [x] Preserve radius, liveness, target-kind/CanTarget rules, damage/falloff,
   and caster exclusion metadata. Do not reapply autocast/location-selection
   conditions to impact victims.
-- [ ] Do not change target selection before casting.
+- [x] Do not change target selection before casting.
 
 **Verify**: `npm run verify:source-fov-fog` -> exits 0 after its expectations distinguish acquisition visibility from committed damage.
 
 ### Task 7: Make visible enemy combat audible
 
-- [ ] Implement `isWorldEventAudibleToLocalPlayer` in `worldEventFeedback.ts`.
-- [ ] Record that visibility-gated enemy audio is the port's anti-leak policy,
+- [x] Implement `isWorldEventAudibleToLocalPlayer` in `worldEventFeedback.ts`.
+- [x] Record that visibility-gated enemy audio is the port's anti-leak policy,
   not original Stratagus sound behavior.
-- [ ] Return true for local-player events.
-- [ ] For enemy events with finite coordinates, return true only when the event position is currently visible to `world.visibilityPlayer`.
-- [ ] Use the predicate for generic `sound` events and enemy death sounds. Keep local help/alert messages ownership-gated.
-- [ ] Do not play coordinate-less enemy events; they could reveal hidden activity.
+- [x] Return true for local-player events.
+- [x] For enemy events with finite coordinates, return true only when the event position is currently visible to `world.visibilityPlayer`.
+- [x] Use the predicate for generic `sound` events and enemy death sounds. Keep local help/alert messages ownership-gated.
+- [x] Do not play coordinate-less enemy events; they could reveal hidden activity.
 
 **Verify**: `npm run verify:source-event-audio-pan` -> exits 0 and covers local, visible enemy, and hidden enemy cases.
 
 ### Task 8: Add playable combat scenarios
 
-- [ ] Extend the smoke-mode-only `runMechanicsScenario` hook begun in plan 012
+- [x] Extend the smoke-mode-only `runMechanicsScenario` hook begun in plan 012
   with deterministic M05–M07 setup/actions/results. Use the in-app Browser for
   primary acceptance; the existing shell-launched verifier remains a guardrail.
-- [ ] Extend `scripts/verify-browser-combat-session.mjs` with actual-world scenarios:
+- [x] Extend `scripts/verify-browser-combat-session.mjs` with actual-world scenarios:
   1. Launch an arrow, remove target visibility before impact, confirm HP still decreases once.
      Move the target laterally and confirm the fixed point-to-point destination
      does not turn into tracer motion; the zero-range stored target still takes
@@ -316,19 +316,19 @@ return targetId ? {
      the idle defender chases, attacks, and attack-moves back within one tile of
      its saved origin after combat ends.
   5. Confirm Hold Position does not chase.
-- [ ] Add a nonzero-range projectile control: move the stored target away from
+- [x] Add a nonzero-range projectile control: move the stored target away from
   the fixed ground impact and confirm only compatible units actually at the
   impact point are considered.
-- [ ] Add ownership fixtures for Demolish and one default area spell: own unit,
+- [x] Add ownership fixtures for Demolish and one default area spell: own unit,
   allied unit, enemy, neutral, caster/source. Assert the source matrix above.
-- [ ] Record at least one visible-enemy combat audio start and confirm a hidden enemy event does not increment playback.
+- [x] Record at least one visible-enemy combat audio start and confirm a hidden enemy event does not increment playback.
 
 **Verify**: `npm run verify:browser-combat-session` -> exits 0 and reports all five scenarios.
 
 ### Task 9: Perform the playable acceptance session
 
-- [ ] Run the fixed demo in the in-app Browser.
-- [ ] Attack-move a small Footman group past an enemy separated by terrain, then fight a visible Archer/Footman skirmish at a fog boundary.
+- [x] Run the fixed demo in the in-app Browser.
+- [x] Attack-move a small Footman group past an enemy separated by terrain, then fight a visible Archer/Footman skirmish at a fog boundary.
 
 Expected observable behavior:
 
@@ -340,27 +340,27 @@ Expected observable behavior:
 
 ### Task 10: Close out
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:browser-combat-session`.
-- [ ] Run `npm run verify:source-attack-action`.
-- [ ] Run `npm run verify:source-fov-fog`.
-- [ ] Run `npm run verify:source-event-audio-pan`.
-- [ ] Run `npm run verify:save-schema`.
-- [ ] Replay M02/M04 and record M05–M07 in `plans/evidence/013.md`; obtain a READY review decision.
-- [ ] Run `git diff --check` and confirm only in-scope files changed.
-- [ ] Update plan 013 to `DONE` in `plans/README.md`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:browser-combat-session`.
+- [x] Run `npm run verify:source-attack-action`.
+- [x] Run `npm run verify:source-fov-fog`.
+- [x] Run `npm run verify:source-event-audio-pan`.
+- [x] Run `npm run verify:save-schema`.
+- [x] Replay M02/M04 and record M05–M07 in `plans/evidence/013.md`; obtain a READY review decision.
+- [x] Run `git diff --check` and confirm only in-scope files changed.
+- [x] Update plan 013 to `DONE` in `plans/README.md`.
 
 ## Done criteria
 
-- [ ] Attack-move resumes after rejecting an unreachable aggro target.
-- [ ] Idle mobile attackers retain automatic targets by current reaction rules
+- [x] Attack-move resumes after rejecting an unreachable aggro target.
+- [x] Idle mobile attackers retain automatic targets by current reaction rules
   and resume an attack-move to their saved origin when combat ends.
-- [ ] Hold Position and defensive buildings retain their intended behavior.
-- [ ] Legal launched projectiles and active area effects are not cancelled by fog.
-- [ ] Visible enemy combat is audible without leaking fully hidden combat.
-- [ ] Old saves load attack orders with `autoReturn: null`.
-- [ ] Browser combat scenarios and manual fog-boundary skirmish pass.
-- [ ] M02 and M04–M07 evidence is recorded and plan 013 has a READY review decision.
+- [x] Hold Position and defensive buildings retain their intended behavior.
+- [x] Legal launched projectiles and active area effects are not cancelled by fog.
+- [x] Visible enemy combat is audible without leaking fully hidden combat.
+- [x] Old saves load attack orders with `autoReturn: null`.
+- [x] Browser combat scenarios and manual fog-boundary skirmish pass.
+- [x] M02 and M04–M07 evidence is recorded and plan 013 has a READY review decision.
 
 ## STOP conditions
 
