@@ -30,7 +30,13 @@ const checks = [
   [eventFeedbackSource, 'handlers.playUnitSound({ typeId: event.builderTypeId }, "work-complete", pan)'],
   [eventFeedbackSource, 'handlers.playSound(findGameSoundId(manifest, "work-complete", player?.race), pan)'],
   [eventFeedbackSource, 'handlers.playSound(findGameSoundId(manifest, "research-complete", player?.race), sourceWorldEventPan(world, event, handlers))'],
+  [eventFeedbackSource, "export function isWorldEventAudibleToLocalPlayer"],
+  [eventFeedbackSource, "if (isLocalPlayerEvent(world, event.player))"],
+  [eventFeedbackSource, 'if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y))'],
+  [eventFeedbackSource, "return isWorldPositionVisibleToPlayer(world, x, y, world.visibilityPlayer)"],
+  [eventFeedbackSource, 'if (isWorldEventAudibleToLocalPlayer(world, event))'],
   [eventFeedbackSource, 'handlers.playUnitSound({ typeId: event.typeId }, "dead", sourceWorldEventPan(world, event, handlers))'],
+  [eventFeedbackSource, 'event.kind === "unit-help"'],
   [eventFeedbackSource, 'handlers.playUnitSound({ typeId: event.typeId }, "help", sourceWorldEventPan(world, event, handlers))'],
   [eventFeedbackSource, "function sourceUnitHasSound"],
   [eventFeedbackSource, "function sourceWorldEventPan"],
@@ -57,4 +63,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log("Source event audio panning verified (unit-ready/help/dead plus work/research-complete cues carry world positions into Web Audio).");
+console.log("Source event audio panning verified (local and visible-enemy combat is audible with world pan; hidden and coordinate-less enemy combat stays silent).");

@@ -1,5 +1,5 @@
 import { selectionAfterWorldEvent } from "../simulation/orders";
-import type { WorldState } from "../simulation/world";
+import { isWorldPositionVisibleToPlayer, type WorldState } from "../simulation/world";
 import { isLocalPlayerEvent } from "../simulation/worldSelectors";
 import type { WargusManifest } from "../wargus/types";
 import { addAlertPingForUnit, addHudMessage, type HudMessageState } from "./hudMessages";
@@ -48,7 +48,7 @@ export function drainWorldEventsWithFeedback(
         addHudMessage(hudMessages, world, `${upgradeName(manifest, event.upgradeId)} complete`);
       }
     } else if (event.kind === "unit-dead") {
-      if (isLocalPlayerEvent(world, event.player)) {
+      if (isWorldEventAudibleToLocalPlayer(world, event)) {
         handlers.playUnitSound({ typeId: event.typeId }, "dead", sourceWorldEventPan(world, event, handlers));
       }
     } else if (event.kind === "unit-help") {
@@ -64,7 +64,7 @@ export function drainWorldEventsWithFeedback(
         addHudMessage(hudMessages, world, `${resourceName(world, event.resource)} depleted`);
       }
     } else if (event.kind === "sound") {
-      if (isLocalPlayerEvent(world, event.player)) {
+      if (isWorldEventAudibleToLocalPlayer(world, event)) {
         const player = world.players.find((candidate) => candidate.id === event.player);
         const pan = typeof event.x === "number" && typeof event.y === "number"
           ? handlers.soundPanForWorldPosition?.({ x: event.x, y: event.y })
@@ -75,6 +75,21 @@ export function drainWorldEventsWithFeedback(
   }
   world.events.length = 0;
   return nextSelectedUnitIds;
+}
+
+// Stratagus does not fog-gate combat audio. This port does so enemy sounds cannot reveal hidden activity.
+export function isWorldEventAudibleToLocalPlayer(
+  world: WorldState,
+  event: { player: number; x?: number; y?: number }
+): boolean {
+  if (isLocalPlayerEvent(world, event.player)) {
+    return true;
+  }
+  const { x, y } = event;
+  if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y)) {
+    return false;
+  }
+  return isWorldPositionVisibleToPlayer(world, x, y, world.visibilityPlayer);
 }
 
 function sourceWorldEventPan(
