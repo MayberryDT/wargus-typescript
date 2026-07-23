@@ -9484,10 +9484,10 @@ function stepProjectiles(world: WorldState, tickSeconds: number): void {
     }
     projectile.age += activeTickSeconds;
     const target = projectile.targetId ? findUnit(world, projectile.targetId) : undefined;
-    const canTrackTarget = canProjectileTrackTarget(world, projectile, target);
-    if (canTrackTarget) {
-      projectile.targetX = target.x;
-      projectile.targetY = target.y - Math.min(16, target.radius);
+    const committedTarget = canCommittedProjectileHitStoredTarget(projectile, target) ? target : undefined;
+    if (committedTarget && sourceProjectileTracksTarget(projectile)) {
+      projectile.targetX = committedTarget.x;
+      projectile.targetY = committedTarget.y - Math.min(16, committedTarget.radius);
     }
 
     const dx = projectile.targetX - projectile.x;
@@ -9495,22 +9495,17 @@ function stepProjectiles(world: WorldState, tickSeconds: number): void {
     const distance = Math.hypot(dx, dy);
     const step = projectile.speed * activeTickSeconds;
     if (distance <= Math.max(step, 4)) {
-      if (canTrackTarget) {
-        if (projectile.kind === "siege" || projectile.kind === "cannon") {
-          damageSiegeImpact(world, projectile, target);
-        } else {
-          applyProjectileDirectImpact(world, projectile, target);
-          damageProjectileSplash(world, projectile, target.id);
-          if (projectile.impactSoundId) {
-            emitSoundEvent(world, projectile.impactSoundId, projectile.player, projectile.targetX, projectile.targetY);
-          }
-          spawnProjectileImpactEffect(world, projectile);
-          if (continueSourceBouncingProjectile(world, projectile, target.id)) {
-            liveProjectiles.push(projectile);
-          }
-        }
-      } else if (projectile.kind === "siege" || projectile.kind === "cannon") {
+      if (projectile.range > 0 || projectile.kind === "siege" || projectile.kind === "cannon") {
         damageGroundImpact(world, projectile);
+      } else if (committedTarget) {
+        applyProjectileDirectImpact(world, projectile, committedTarget);
+        if (projectile.impactSoundId) {
+          emitSoundEvent(world, projectile.impactSoundId, projectile.player, projectile.targetX, projectile.targetY);
+        }
+        spawnProjectileImpactEffect(world, projectile);
+        if (continueSourceBouncingProjectile(world, projectile, committedTarget.id)) {
+          liveProjectiles.push(projectile);
+        }
       } else if (isSourcePointToPointBounceProjectile(projectile)) {
         damageGroundImpact(world, projectile);
         if (continueSourceBouncingProjectile(world, projectile, null)) {
@@ -9529,19 +9524,18 @@ function stepProjectiles(world: WorldState, tickSeconds: number): void {
   world.projectiles = liveProjectiles;
 }
 
-function canProjectileTrackTarget(world: WorldState, projectile: WorldProjectile, target: WorldUnit | undefined): target is WorldUnit {
-  const source = findUnit(world, projectile.sourceId);
-  if (source) {
-    return Boolean(target && canAttackTarget(source, target, world) && isUnitVisibleToPlayer(world, target, projectile.player));
-  }
+function canCommittedProjectileHitStoredTarget(projectile: WorldProjectile, target: WorldUnit | undefined): target is WorldUnit {
   return Boolean(
     target
     && target.hitPoints > 0
-    && projectileCanHitUnitBySourceOwnership(world, projectile, target)
-    && target.player !== 15
+    && !isUnitHiddenInConstruction(target)
+    && projectileCanHitUnitBySourceOwnership(projectile, target)
     && projectileCanStillHitKind(projectile, target)
-    && isUnitVisibleToPlayer(world, target, projectile.player)
   );
+}
+
+function sourceProjectileTracksTarget(projectile: WorldProjectile): boolean {
+  return projectile.className === "missile-class-tracer";
 }
 
 function projectileCanStillHitKind(projectile: WorldProjectile, target: WorldUnit): boolean {
@@ -9656,7 +9650,7 @@ function projectileCanBounceToTarget(world: WorldState, projectile: WorldProject
       && isUnitVisibleToPlayer(world, target, projectile.player);
   }
   return target.hitPoints > 0
-    && projectileCanHitUnitBySourceOwnership(world, projectile, target)
+    && projectileCanHitUnitBySourceOwnership(projectile, target)
     && projectileCanStillHitKind(projectile, target)
     && isUnitVisibleToPlayer(world, target, projectile.player);
 }
@@ -11712,7 +11706,7 @@ function detonateDemolitionUnit(world: WorldState, attacker: WorldUnit, spellId:
   const blastDamage = demolitionBlastDamage(world, spellId);
   clearDemolishableTerrainInBlast(world, attacker.x, attacker.y, blastRadius);
   for (const unit of world.units) {
-    if (unit.id === attacker.id || unit.hitPoints <= 0 || unit.kind === "fly") {
+    if (unit.hitPoints <= 0 || unit.kind === "fly") {
       continue;
     }
     const distance = Math.hypot(unit.x - attacker.x, unit.y - attacker.y);
@@ -11827,11 +11821,6 @@ function detonateClickExplosiveUnit(world: WorldState, unit: WorldUnit): void {
   emitSoundEvent(world, missile?.firedSound ?? definition?.sounds.dead ?? "explosion", unit.player, unit.x, unit.y);
 }
 
-function damageSiegeImpact(world: WorldState, projectile: WorldProjectile, directTarget: WorldUnit): void {
-  applyDamage(world, directTarget, projectileDamageAgainst(world, projectile, directTarget), projectile.player, projectile.sourceTypeId, projectile.sourceId);
-  damageGroundImpact(world, projectile, directTarget.id);
-}
-
 function applyProjectileDirectImpact(world: WorldState, projectile: WorldProjectile, target: WorldUnit): void {
   const damage = projectile.className === "missile-class-death-coil"
     ? projectile.damage
@@ -11866,7 +11855,7 @@ function damageProjectileSplash(world: WorldState, projectile: WorldProjectile, 
     return;
   }
   for (const unit of world.units) {
-    if (unit.id === ignoredUnitId || unit.player === 15 || unit.hitPoints <= 0 || unit.kind === "fly" || !projectileCanHitUnitBySourceOwnership(world, projectile, unit)) {
+    if (unit.id === ignoredUnitId || unit.hitPoints <= 0 || unit.kind === "fly" || !projectileCanHitUnitBySourceOwnership(projectile, unit)) {
       continue;
     }
     const splashDivisor = sourceSplashDivisorForProjectileUnit(world, projectile, unit);
@@ -11901,14 +11890,11 @@ function mapTileDistanceToUnit(world: WorldState, unit: WorldUnit, tileX: number
   return Math.floor(Math.hypot(dx, dy));
 }
 
-function projectileCanHitUnitBySourceOwnership(world: WorldState, projectile: WorldProjectile, unit: WorldUnit): boolean {
-  if (arePlayersEnemies(world, projectile.player, unit.player)) {
-    return true;
-  }
+function projectileCanHitUnitBySourceOwnership(projectile: WorldProjectile, unit: WorldUnit): boolean {
   if (unit.id === projectile.sourceId) {
     return projectile.canHitOwner;
   }
-  return projectile.friendlyFire;
+  return !projectile.friendlyFire || unit.player !== projectile.player;
 }
 
 function projectileDamageAgainst(world: WorldState, projectile: WorldProjectile, target: WorldUnit | null): number {
@@ -14346,12 +14332,9 @@ function isComputerControlledPlayer(world: Pick<WorldState, "aiStates">, playerI
   return world.aiStates.some((state) => state.player === playerId && state.enabled);
 }
 
-function applySplashDamage(world: WorldState, caster: WorldUnit, x: number, y: number, radius: number, centerDamage: number, edgeDamage: number, predicate?: (unit: WorldUnit) => boolean): void {
+function applySplashDamage(world: WorldState, caster: WorldUnit, x: number, y: number, radius: number, centerDamage: number, edgeDamage: number, missileId: string | null): void {
   for (const unit of world.units) {
-    if (unit.player === 15 || unit.hitPoints <= 0 || !isUnitVisibleToPlayer(world, unit, caster.player)) {
-      continue;
-    }
-    if (predicate && !predicate(unit)) {
+    if (unit.hitPoints <= 0 || !sourceMissileCanHitUnitByOwnership(world, missileId, caster.player, unit, caster.id)) {
       continue;
     }
     const distance = Math.hypot(unit.x - x, unit.y - y);
@@ -14384,7 +14367,7 @@ function applyFireballImpact(world: WorldState, caster: WorldUnit, x: number, y:
     radius,
     centerDamage,
     Math.max(1, Math.round(centerDamage / splashFactor)),
-    (unit) => unitMatchesSourceSpellConditionsForPlayer(world, spellId, caster.player, unit)
+    missile?.id ?? null
   );
   addSourceMissileImpactEffect(world, missile?.impactMissile ?? null, caster.player, x, y, radius, spellId, caster.typeId, caster.id);
   if (missile?.impactSound) {
@@ -15146,13 +15129,7 @@ function tickAreaDamageSpell(world: WorldState, effect: NonNullable<WorldState["
       ?? (effect.kind === "blizzard" ? 10 : 10);
     const edgeDamage = Math.max(1, Math.floor(centerDamage / 3));
     for (const unit of world.units) {
-      if (unit.player === 15 || unit.hitPoints <= 0) {
-        continue;
-      }
-      if (!isUnitVisibleToPlayer(world, unit, effect.player)) {
-        continue;
-      }
-      if (!unitMatchesSourceSpellConditionsForPlayer(world, spellId, effect.player, unit)) {
+      if (unit.hitPoints <= 0) {
         continue;
       }
       if (!sourceMissileCanHitUnitByOwnership(world, effect.missileId ?? null, effect.player, unit, effect.sourceUnitId ?? null)) {
@@ -15182,10 +15159,7 @@ function tickWhirlwindSpell(world: WorldState, effect: NonNullable<WorldState["s
   const splashRadius = sourceMissileSplashRadius(world, effect.missileId ?? null, world.tileSize * 2);
   for (const unit of world.units) {
     if (
-      unit.player === 15
-      || unit.hitPoints <= 0
-      || !isUnitVisibleToPlayer(world, unit, effect.player)
-      || !unitMatchesSourceSpellConditionsForPlayer(world, spellId, effect.player, unit)
+      unit.hitPoints <= 0
       || !sourceMissileCanHitUnitByOwnership(world, effect.missileId ?? null, effect.player, unit, effect.sourceUnitId ?? null)
       || Math.hypot(unit.x - effect.x, unit.y - effect.y) > splashRadius + unit.radius
     ) {
@@ -15248,13 +15222,10 @@ function sourceMissileDamageRoll(world: WorldState, missileId: string | null | u
 
 function sourceMissileCanHitUnitByOwnership(world: WorldState, missileId: string | null | undefined, player: number, unit: WorldUnit, sourceUnitId: string | null = null): boolean {
   const missile = missileDefinitionForId(world, missileId ?? null);
-  if (arePlayersEnemies(world, player, unit.player)) {
-    return true;
-  }
   if (sourceUnitId && unit.id === sourceUnitId) {
     return missile?.canHitOwner === true;
   }
-  return missile?.friendlyFire === true;
+  return missile?.friendlyFire !== true || unit.player !== player;
 }
 
 function emitSourceMissileImpactSound(world: WorldState, missileId: string | null | undefined, player: number, x?: number, y?: number): void {
