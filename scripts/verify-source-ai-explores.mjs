@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-const sourceRoot = "/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src";
+const sourceRoot = `${process.env.WARGUS_ORIGINAL_STRATAGUS_SOURCE ?? "/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src"}/src`;
 const sourceUnitHeader = readFileSync(`${sourceRoot}/include/unit.h`, "utf8");
 const sourceSettingsHeader = readFileSync(`${sourceRoot}/include/settings.h`, "utf8");
 const sourceAiResource = readFileSync(`${sourceRoot}/ai/ai_resource.cpp`, "utf8");

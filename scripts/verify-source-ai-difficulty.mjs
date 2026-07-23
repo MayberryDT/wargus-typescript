@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
-const sourceAi = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/wargus/scripts/ai.lua", "utf8");
+const sourceWargusRoot = process.env.WARGUS_ORIGINAL_SOURCE ?? "/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/wargus";
+const sourceAi = readFileSync(`${sourceWargusRoot}/scripts/ai.lua`, "utf8");
 const ordersSource = readFileSync("src/simulation/orders.ts", "utf8");
 const renderHudSource = readFileSync("src/view/renderHud.ts", "utf8");
 const sourceUiHelpersSource = readFileSync("src/view/sourceUiHelpers.ts", "utf8");
