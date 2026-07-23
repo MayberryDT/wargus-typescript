@@ -1,307 +1,124 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
-const PORT = 5201;
-const DEBUG_PORT = 9228;
+const PORT = Number(process.env.WARGUS_BROWSER_COMBAT_PORT ?? 54252);
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
-const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
-const CANDIDATE_MAPS = (process.env.WARGUS_BROWSER_COMBAT_MAPS ?? process.env.WARGUS_BROWSER_COMBAT_MAP ?? [
-  "maps/ladder/Garden of war BNE.pud.smp.gz",
-  "campaigns/human/level02h.smp.gz",
-  "campaigns/human-exp/levelx01h.smp.gz",
-  "campaigns/orc/level01o.smp.gz",
-  "campaigns/orc/level02o.smp.gz",
-  "campaigns/orc-exp/levelx01o.smp.gz"
-].join(",")).split(",").map((map) => map.trim()).filter(Boolean);
-const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-combat-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
-  stdio: ["pipe", "ignore", "ignore"]
-});
-let chrome = null;
-let client = null;
+const SESSION_LIMIT_MS = 25_000;
+let server = null;
+let browserServer = null;
+let browser = null;
+let browserPids = [];
 
 try {
-  await waitForHttp(URL, 20_000);
-  chrome = spawn(CHROME, [
-    "--headless=new",
-    "--disable-gpu",
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    `--user-data-dir=${chromeProfile}`,
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    "about:blank"
-  ], { detached: true, stdio: "ignore" });
-  await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
-  const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
-  client = await connectDevTools(target.webSocketDebuggerUrl);
-  const pageErrors = [];
-  client.on("Runtime.exceptionThrown", (params) => {
-    pageErrors.push(params.exceptionDetails?.text ?? params.exceptionDetails?.exception?.description ?? "unknown page exception");
+  const { chromium } = await loadPlaywright();
+  server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
+    cwd: process.cwd(),
+    stdio: "ignore"
   });
-  await client.send("Page.enable");
-  await client.send("Runtime.enable");
-  await client.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-  await client.send("Page.navigate", { url: URL });
-  await client.waitFor("Page.loadEventFired", 20_000);
-  await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
-  await waitForExpression(client, "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\" && typeof window.__WARGUS_TS_ISSUE_FIRST_ATTACK__ === \"function\" && typeof window.__WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__ === \"function\" && typeof window.__WARGUS_TS_UNIT_HIT_POINTS__ === \"function\" && typeof window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__ === \"function\"", 20_000);
-
-  const failures = [];
-  let verified = false;
-  for (const mapPath of CANDIDATE_MAPS) {
-    try {
-      const result = await verifyCombatMap(client, mapPath);
-      if (pageErrors.length > 0) {
-        throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
-      }
-      console.log(`Browser combat session verified (${mapPath}, target=${result.targetId}, hp=${result.beforeHp}->${result.afterHp}, order=${result.orderKind}, tick=${result.tick}).`);
-      verified = true;
-      break;
-    } catch (error) {
-      failures.push(`${mapPath}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  await waitForHttp(URL, 5_000);
+  browserServer = await chromium.launchServer({
+    executablePath: process.env.CHROME_BIN || undefined,
+    headless: true,
+    args: ["--disable-background-networking", "--disable-extensions", "--disable-dev-shm-usage", "--no-proxy-server"]
+  });
+  browserPids = processTreePids(browserServer.process().pid);
+  browser = await chromium.connect(browserServer.wsEndpoint());
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  if (context.pages().length !== 1) {
+    throw new Error(`Expected one browser tab, found ${context.pages().length}.`);
   }
-  if (!verified) {
-    throw new Error(`Unable to verify browser combat session on candidate maps:\n${failures.join("\n")}`);
-  }
+  const result = await withTimeout(runCombatScenarios(page), SESSION_LIMIT_MS, "Plan 013 browser session exceeded 25 seconds");
+  assertCombatScenarios(result);
+  console.log(`Browser combat session verified (one tab; M05 unreachable=${result.m05.unreachable.rejectedUnreachable}, auto-return=${result.m05.automatic.finalReturnDistance.toFixed(1)}, hold=${result.m05.hold.movedDistance.toFixed(1)}; M06 projectile=${result.m06.committedProjectile.directDamage}, ground=${result.m06.fixedGroundControl.impactOccupantDamage}, area=${JSON.stringify(result.m06.areaThroughFog.deltas)}, demolish=${JSON.stringify(result.m06.demolishOwnership)}, audio=${result.m06.audio.visibleEnemyPlaybackStarts}/${result.m06.audio.hiddenEnemyPlaybackStarts}; M07 target=${result.m07.automatic.targetId}, return=${result.m07.automatic.returnDistance.toFixed(1)}, explicit=${String(result.m07.explicit.autoReturn)}).`);
 } finally {
-  client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
-  cleanupDedicatedProcesses();
-  rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+  if (browserServer?.process()?.pid) {
+    browserPids = [...new Set([...browserPids, ...processTreePids(browserServer.process().pid)])];
+  }
+  try { await Promise.race([browser?.close(), delay(1_500)]); } catch { /* Exact PID cleanup follows. */ }
+  try { await Promise.race([browserServer?.close(), delay(1_500)]); } catch { /* Exact PID cleanup follows. */ }
+  stopExactPids(browserPids);
+  if (server?.pid) {
+    stopExactPids(processTreePids(server.pid));
+  }
 }
 
-async function verifyCombatMap(client, mapPath) {
-  const loaded = await evalValue(client, `window.__WARGUS_TS_LOAD_MAP__(${JSON.stringify(mapPath)})`);
-  if (loaded !== true) {
-    throw new Error(`unable to load map: ${JSON.stringify(loaded)}`);
-  }
-  await dismissOverlays(client);
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
-  const naturalPair = await waitForExpressionValue(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedAttackerWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetId)", 10_000);
-  if (!naturalPair) {
-    const fixture = await evalValue(client, "window.__WARGUS_TS_SELECT_SOURCE_PENDING_ACTION_FIXTURE__('attack')");
-    if (!fixture?.ok) {
-      throw new Error(`unable to create combat fixture after natural combat pair was unavailable: fixture=${JSON.stringify(fixture)} smoke=${JSON.stringify(await readSmokeState(client))}`);
+async function loadPlaywright() {
+  try {
+    return await import("playwright");
+  } catch (error) {
+    if (!process.env.PLAYWRIGHT_MODULE) {
+      throw new Error(`Playwright is unavailable; set PLAYWRIGHT_MODULE to its index.mjs path (${error instanceof Error ? error.message : String(error)}).`);
     }
-    await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedAttackerWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetWorldPoint && window.__WARGUS_TS_SMOKE_STATE__?.firstAttackTargetId)", 10_000);
+    return import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
   }
-  const before = await readSmokeState(client);
-  const targetId = before.firstAttackTargetId;
-  const beforeHp = before.firstAttackTargetHitPoints;
-  if (!targetId || !Number.isFinite(beforeHp) || beforeHp <= 0) {
-    throw new Error(`invalid combat pair before attack: ${JSON.stringify(before)}`);
-  }
-  const issued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIRST_ATTACK__()");
-  if (issued !== true) {
-    throw new Error(`unable to issue first attack order: ${JSON.stringify(await readSmokeState(client))}`);
-  }
-  await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind === \"attack\"", 10_000);
-  const damageState = await waitForDamage(client, targetId, beforeHp, 60_000);
-  const save = await evalValue(client, "window.__WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__()");
-  if (!save?.ok || save.saveRoundtripOk !== true || !Number.isFinite(save.tick) || save.tick < damageState.tick) {
-    throw new Error(`combat active-world save/load roundtrip failed: ${JSON.stringify(save)}`);
-  }
-  return {
-    targetId,
-    beforeHp,
-    afterHp: damageState.hitPoints,
-    orderKind: damageState.state.firstSelectedOrderKind,
-    tick: damageState.tick
-  };
 }
 
-async function waitForDamage(client, targetId, beforeHp, timeoutMs) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const [hitPoints, state] = await Promise.all([
-      evalValue(client, `window.__WARGUS_TS_UNIT_HIT_POINTS__(${JSON.stringify(targetId)})`),
-      readSmokeState(client)
-    ]);
-    if (hitPoints === null || hitPoints < beforeHp) {
-      return { hitPoints, tick: state.tick, state };
+async function runCombatScenarios(page) {
+  await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 10_000 });
+  await page.waitForFunction(() => Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded), null, { timeout: 8_000 });
+  await page.waitForFunction(() => typeof window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__ === "function", null, { timeout: 3_000 });
+  return page.evaluate(() => ({
+    m05: window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__("M05"),
+    m06: window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__("M06"),
+    m07: window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__("M07")
+  }));
+}
+
+function assertCombatScenarios({ m05, m06, m07 }) {
+  const failures = [];
+  if (!m05?.ok || !m05.unreachable?.rejectedUnreachable || !(m05.unreachable?.destinationProgress > 0)) failures.push(`M05 unreachable attack-move: ${JSON.stringify(m05?.unreachable)}`);
+  if (!m05?.automatic?.automaticOrderSeen || !m05.automatic?.targetDamaged || !(m05.automatic?.finalReturnDistance <= 32)) failures.push(`M05 auto chase/return: ${JSON.stringify(m05?.automatic)}`);
+  if (m05?.hold?.movedDistance !== 0) failures.push(`M05 Hold Position: ${JSON.stringify(m05?.hold)}`);
+  if (!m06?.ok || !(m06.committedProjectile?.directDamage > 0) || m06.committedProjectile?.tracerMotion !== false) failures.push(`M06 committed projectile: ${JSON.stringify(m06?.committedProjectile)}`);
+  if (m06?.fixedGroundControl?.movedTargetDamage !== 0 || !(m06.fixedGroundControl?.impactOccupantDamage > 0)) failures.push(`M06 fixed ground control: ${JSON.stringify(m06?.fixedGroundControl)}`);
+  const area = m06?.areaThroughFog?.deltas;
+  if (m06?.areaThroughFog?.visibleTileCount !== 0 || area?.caster !== 0 || ![area?.own, area?.allied, area?.enemy, area?.neutral].every((damage) => damage > 0)) failures.push(`M06 area ownership/fog: ${JSON.stringify(m06?.areaThroughFog)}`);
+  const demolish = m06?.demolishOwnership;
+  if (![demolish?.caster, demolish?.own, demolish?.allied, demolish?.enemy, demolish?.neutral].every((damage) => damage > 0)) failures.push(`M06 demolish ownership: ${JSON.stringify(demolish)}`);
+  if (m06?.audio?.visibleEnemyPlaybackStarts !== 1 || m06.audio?.hiddenEnemyPlaybackStarts !== 0 || m06.audio?.coordinateLessEnemyPlaybackStarts !== 0) failures.push(`M06 visible/hidden audio: ${JSON.stringify(m06?.audio)}`);
+  if (!m07?.ok || !m07.automatic?.targetId || !m07.automatic?.autoReturn || !(m07.automatic?.returnDistance <= 32) || m07.explicit?.autoReturn !== null) failures.push(`M07 saved return/explicit attack: ${JSON.stringify(m07)}`);
+  if (failures.length > 0) {
+    throw new Error(failures.join("\n"));
+  }
+}
+
+function processTreePids(rootPid) {
+  const rows = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter(([pid, parentPid]) => Number.isInteger(pid) && Number.isInteger(parentPid));
+  const result = [rootPid];
+  for (let index = 0; index < result.length; index += 1) {
+    for (const [pid, parentPid] of rows) {
+      if (parentPid === result[index] && !result.includes(pid)) result.push(pid);
     }
-    await delay(500);
   }
-  throw new Error(`timed out waiting for combat damage; target=${targetId}, beforeHp=${beforeHp}, smoke=${JSON.stringify(await readSmokeState(client))}`);
+  return result;
 }
 
-async function dismissOverlays(client) {
-  for (let index = 0; index < 2; index += 1) {
-    const state = await readSmokeState(client);
-    if (state?.titleScreenOpen !== true && state?.briefingOpen !== true) {
-      return;
-    }
-    await dispatchKey(client, "Enter");
-    await delay(index === 0 ? 300 : 500);
+function stopExactPids(pids) {
+  for (const pid of [...pids].reverse()) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* Already exited. */ }
   }
-}
-
-async function evalValue(client, expression) {
-  const result = await client.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-  if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text ?? `Evaluation failed: ${expression}`);
-  }
-  return result.result?.value ?? null;
-}
-
-async function readSmokeState(client) {
-  return await evalValue(client, "window.__WARGUS_TS_PUBLISH_SMOKE__?.(); window.__WARGUS_TS_SMOKE_STATE__");
-}
-
-async function waitForExpression(client, expression, timeoutMs) {
-  if (await waitForExpressionValue(client, expression, timeoutMs)) {
-    return;
-  }
-  throw new Error(`Timed out waiting for browser expression: ${expression}; smoke=${JSON.stringify(await readSmokeState(client))}`);
-}
-
-async function waitForExpressionValue(client, expression, timeoutMs) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const result = await client.send("Runtime.evaluate", { expression, returnByValue: true });
-    if (result.result?.value === true) {
-      return true;
-    }
-    await delay(250);
-  }
-  return false;
-}
-
-async function dispatchKey(client, code) {
-  const key = code === "Enter" ? "Enter" : code;
-  const windowsVirtualKeyCode = code === "Enter" ? 13 : 0;
-  await client.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode });
-  await client.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode });
 }
 
 async function waitForHttp(url, timeoutMs) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(url);
-      if (response.ok) {
-        return;
-      }
-    } catch {
-      // Retry until ready.
-    }
-    await delay(250);
+      if ((await fetch(url)).ok) return;
+    } catch { /* Retry until the dedicated server is ready. */ }
+    await delay(100);
   }
-  throw new Error(`Timed out waiting for ${url}`);
+  throw new Error(`Timed out waiting for ${url}.`);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${url}`);
-  }
-  return response.json();
-}
-
-async function waitForPageTarget(url, timeoutMs) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const targets = await fetchJson(url);
-    const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
-    if (page) {
-      return page;
-    }
-    await delay(250);
-  }
-  throw new Error("Timed out waiting for a Chrome page target.");
-}
-
-async function connectDevTools(url) {
-  const socket = new WebSocket(url);
-  const pending = new Map();
-  const listeners = new Map();
-  let nextId = 1;
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve, { once: true });
-    socket.addEventListener("error", reject, { once: true });
-  });
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      message.error ? reject(new Error(message.error.message)) : resolve(message.result ?? {});
-      return;
-    }
-    for (const handler of listeners.get(message.method) ?? []) {
-      handler(message.params ?? {});
-    }
-  });
-  return {
-    on(method, handler) {
-      listeners.set(method, [...(listeners.get(method) ?? []), handler]);
-    },
-    send(method, params = {}) {
-      const id = nextId++;
-      socket.send(JSON.stringify({ id, method, params }));
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-      });
-    },
-    waitFor(method, timeoutMs) {
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${method}`)), timeoutMs);
-        listeners.set(method, [...(listeners.get(method) ?? []), (params) => {
-          clearTimeout(timeout);
-          resolve(params);
-        }]);
-      });
-    },
-    close() {
-      try {
-        socket.close();
-      } catch {
-        // Already closed.
-      }
-    }
-  };
-}
-
-async function stopProcess(process) {
-  if (!process || process.exitCode !== null || process.signalCode !== null) {
-    return;
-  }
+async function withTimeout(promise, timeoutMs, message) {
+  let timeout;
   try {
-    globalThis.process.kill(-process.pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill("SIGTERM");
-    } catch {
-      // Already exited.
-    }
-  }
-  await delay(750);
-  if (process.exitCode !== null || process.signalCode !== null) {
-    return;
-  }
-  try {
-    globalThis.process.kill(-process.pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Already exited.
-    }
-  }
-}
-
-function cleanupDedicatedProcesses() {
-  for (const pattern of [`--remote-debugging-port=${DEBUG_PORT}`, `--port ${PORT} --strictPort`]) {
-    try {
-      execFileSync("pkill", ["-f", "--", pattern], { stdio: "ignore" });
-    } catch {
-      // Best-effort cleanup.
-    }
+    return await Promise.race([promise, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(message)), timeoutMs); })]);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

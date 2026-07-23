@@ -7,7 +7,7 @@ import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER
 import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, loadSavedGameJson, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
-import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
+import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
 import { availableCommands, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type ModernHudLayoutDebug } from "./view/renderHud";
@@ -37,7 +37,7 @@ import { createUnitAtlasLazyLoadState, ensureMissingUnitAtlases, resetUnitAtlasL
 import { createSaveCommandState, saveCurrentAutosave as saveAutosaveForContext, type SaveCommandContext } from "./view/saveCommands";
 import { applyControlGroupKey, clearControlGroupRecallState, createControlGroupRecallState } from "./view/controlGroupInput";
 import { executeHudCommandForSelection } from "./view/hudCommandExecution";
-import { drainWorldEventsWithFeedback } from "./view/worldEventFeedback";
+import { drainWorldEventsWithFeedback, isWorldEventAudibleToLocalPlayer } from "./view/worldEventFeedback";
 import { executeSelectionHotkey, type SelectionHotkeyResult } from "./view/selectionHotkeys";
 import { applySourceCheatKey, createSourceCheatInputState, resetSourceCheatInputState } from "./view/sourceCheatInput";
 import { executeMapCommandForRuntime } from "./view/mapCommands";
@@ -504,6 +504,7 @@ declare global {
     __WARGUS_TS_SELECT_SOURCE_CANCEL_FIXTURE__?: (kind: "train" | "research" | "construction") => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__?: (mode: "move" | "stop" | "harvest" | "repair" | "attack" | "second-build" | "arrival") => Record<string, unknown>;
     __WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__?: () => Record<string, unknown>;
+    __WARGUS_TS_RUN_MECHANICS_SCENARIO__?: (scenario: "M05" | "M06" | "M07") => Record<string, unknown>;
     __WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__?: (casterTypeId: string, spellId: string) => ({ ok: boolean; error?: string; command?: string | null; instantCommand?: string | null; target?: BrowserSmokeOrderTarget | null } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_RESEARCH_FIXTURE__?: (typeId: string, upgradeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_CLEAR_SELECTION__?: () => ReturnType<typeof browserSmokeCommandResult>;
@@ -2017,6 +2018,39 @@ if (browserSmokeStateEnabled) {
     const cancelled = issueCancelConstructionOrder(fixtureWorld, foundation.id);
     const cancel = snapshot();
     return { ok: cancelled, costs, placement, before, planned, pending, pendingRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, validExplicitConstructingRoundtrip, invalidPhaseRoundtrip, emptyBuilderRoundtrip, otherBuilderRoundtrip, cancel };
+  };
+  window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__ = (scenario) => {
+    if (!world) {
+      return { ok: false, error: "missing world", scenario };
+    }
+    const result = runPlan013CombatScenario(world, scenario);
+    if (scenario !== "M06") {
+      return result;
+    }
+    const audioWorld = structuredClone(world) as WorldState;
+    audioWorld.engineSettings.fogOfWarEnabled = true;
+    audioWorld.visibleTiles.fill(0);
+    const visibleTile = { x: 1, y: 1 };
+    const hiddenTile = { x: Math.max(2, audioWorld.map.width - 2), y: Math.max(2, audioWorld.map.height - 2) };
+    audioWorld.visibleTiles[visibleTile.y * audioWorld.map.width + visibleTile.x] = 1;
+    const enemyPlayer = audioWorld.players.find((player) => player.id !== audioWorld.visibilityPlayer && player.id !== 15)?.id ?? (audioWorld.visibilityPlayer === 0 ? 1 : 0);
+    const localEvent = { player: audioWorld.visibilityPlayer };
+    const visibleEnemyEvent = { player: enemyPlayer, x: (visibleTile.x + 0.5) * audioWorld.tileSize, y: (visibleTile.y + 0.5) * audioWorld.tileSize };
+    const hiddenEnemyEvent = { player: enemyPlayer, x: (hiddenTile.x + 0.5) * audioWorld.tileSize, y: (hiddenTile.y + 0.5) * audioWorld.tileSize };
+    const coordinateLessEnemyEvent = { player: enemyPlayer };
+    const audible = {
+      local: isWorldEventAudibleToLocalPlayer(audioWorld, localEvent),
+      visibleEnemy: isWorldEventAudibleToLocalPlayer(audioWorld, visibleEnemyEvent),
+      hiddenEnemy: isWorldEventAudibleToLocalPlayer(audioWorld, hiddenEnemyEvent),
+      coordinateLessEnemy: isWorldEventAudibleToLocalPlayer(audioWorld, coordinateLessEnemyEvent)
+    };
+    const audio = {
+      ...audible,
+      visibleEnemyPlaybackStarts: Number(audible.visibleEnemy),
+      hiddenEnemyPlaybackStarts: Number(audible.hiddenEnemy),
+      coordinateLessEnemyPlaybackStarts: Number(audible.coordinateLessEnemy)
+    };
+    return { ...result, ok: result.ok === true && audible.local && audible.visibleEnemy && !audible.hiddenEnemy && !audible.coordinateLessEnemy, audio };
   };
   window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__ = () => {
     if (!world) {

@@ -18809,3 +18809,332 @@ function costValue(costs: string[], resource: string): number {
   const index = costs.indexOf(resource);
   return index >= 0 ? Number(costs[index + 1]) : 0;
 }
+
+export function runPlan013CombatScenario(sourceWorld: WorldState, scenario: "M05" | "M06" | "M07"): Record<string, unknown> {
+  if (scenario === "M05") {
+    return runPlan013M05(sourceWorld);
+  }
+  if (scenario === "M06") {
+    return runPlan013M06(sourceWorld);
+  }
+  return runPlan013M07(sourceWorld);
+}
+
+function plan013FixtureWorld(sourceWorld: WorldState, width = 12, height = 9): WorldState {
+  const fixture = structuredClone(sourceWorld) as WorldState;
+  fixture.map = { ...fixture.map, width, height };
+  fixture.tileSize = 32;
+  fixture.tilesetTerrain = null;
+  fixture.tiles = Array.from({ length: width * height }, () => 0);
+  fixture.terrainVersion += 1;
+  fixture.units = [];
+  fixture.corpses = [];
+  fixture.projectiles = [];
+  fixture.pendingAttacks = [];
+  fixture.spellEffects = [];
+  fixture.events = [];
+  fixture.exploredTiles = new Uint8Array(width * height);
+  fixture.visibleTiles = new Uint8Array(width * height);
+  fixture.visibilityReveals = [];
+  fixture.lastSeenBuildings = [];
+  fixture.accumulator = 0;
+  fixture.elapsed = 0;
+  fixture.tick = 0;
+  fixture.matchState = { status: "playing", winner: null, endedTick: null };
+  fixture.victoryRequirements = [];
+  fixture.victoryRequirementGroups = [];
+  fixture.defeatRequirements = [];
+  fixture.timedVictoryTriggers = [];
+  fixture.aiStates.forEach((state) => { state.enabled = false; });
+  return fixture;
+}
+
+function plan013FixturePlayers(world: WorldState): { local: number; enemy: number; allied: number; neutral: number } {
+  const local = world.visibilityPlayer;
+  const candidates = world.players.map((player) => player.id).filter((id) => id !== local && id !== 15);
+  const enemy = candidates[0] ?? (local === 0 ? 1 : 0);
+  const allied = candidates[1] ?? (enemy === 1 ? 2 : 1);
+  world.diplomacy = world.diplomacy.filter((rule) => !(
+    (rule.player === local && (rule.otherPlayer === enemy || rule.otherPlayer === allied))
+    || (rule.otherPlayer === local && (rule.player === enemy || rule.player === allied))
+  ));
+  world.diplomacy.push(
+    { player: local, otherPlayer: enemy, state: "enemy" },
+    { player: enemy, otherPlayer: local, state: "enemy" },
+    { player: local, otherPlayer: allied, state: "allied" },
+    { player: allied, otherPlayer: local, state: "allied" }
+  );
+  return { local, enemy, allied, neutral: 15 };
+}
+
+function plan013FixtureUnit(world: WorldState, typeId: string, id: string, player: number, tileX: number, tileY: number): WorldUnit {
+  const definition = world.unitDefinitions.find((candidate) => candidate.id === typeId)
+    ?? world.unitDefinitions.find((candidate) => candidate.id === "unit-footman")
+    ?? world.unitDefinitions.find((candidate) => candidate.canAttack);
+  if (!definition) {
+    throw new Error(`Plan 013 fixture missing unit definition: ${typeId}`);
+  }
+  const unit = createWorldUnit({ unit: definition, id, player, tileX, tileY, tileset: null });
+  unit.sightRangeTiles = Math.max(unit.sightRangeTiles, 10);
+  unit.nextAutoActionTick = 0;
+  return unit;
+}
+
+function plan013Tick(world: WorldState, count = 1): void {
+  for (let index = 0; index < count; index += 1) {
+    if (world.matchState.status !== "playing") {
+      world.matchState = { status: "playing", winner: null, endedTick: null };
+    }
+    simulateWorld(world, 1 / sourceDefaultGameSpeed(world));
+  }
+}
+
+function runPlan013M05(sourceWorld: WorldState): Record<string, unknown> {
+  const unreachableWorld = plan013FixtureWorld(sourceWorld);
+  const unreachablePlayers = plan013FixturePlayers(unreachableWorld);
+  for (let y = 0; y < unreachableWorld.map.height; y += 1) {
+    unreachableWorld.tiles[y * unreachableWorld.map.width + 3] = 0x080;
+    unreachableWorld.tiles[y * unreachableWorld.map.width + 4] = 0x080;
+  }
+  const mover = plan013FixtureUnit(unreachableWorld, "unit-footman", "__plan013-m05-mover", unreachablePlayers.local, 1, 2);
+  mover.baseSpeed = 1024;
+  mover.speed = 1024;
+  const isolated = plan013FixtureUnit(unreachableWorld, "unit-grunt", "__plan013-m05-isolated", unreachablePlayers.enemy, 5, 2);
+  isolated.canAttack = false;
+  isolated.baseSpeed = 0;
+  isolated.speed = 0;
+  unreachableWorld.units = [mover, isolated];
+  updateVisibility(unreachableWorld);
+  const destination = tileToWorldCenter(unreachableWorld, 1, 7);
+  const issued = issueAttackMoveOrder(unreachableWorld, mover.id, destination.x, destination.y);
+  let acquiredUnreachable = false;
+  let rejectedUnreachable = false;
+  for (let index = 0; index < 90 && mover.order; index += 1) {
+    plan013Tick(unreachableWorld);
+    if (mover.order?.kind === "attack-move" && mover.order.targetId === isolated.id) {
+      acquiredUnreachable = true;
+    }
+    if (acquiredUnreachable && mover.order?.kind === "attack-move" && mover.order.targetId === null) {
+      rejectedUnreachable = true;
+    }
+  }
+  if (acquiredUnreachable && !mover.order && Math.hypot(mover.x - destination.x, mover.y - destination.y) <= unreachableWorld.tileSize) {
+    rejectedUnreachable = true;
+  }
+
+  const autoWorld = plan013FixtureWorld(sourceWorld);
+  const autoPlayers = plan013FixturePlayers(autoWorld);
+  const defender = plan013FixtureUnit(autoWorld, "unit-footman", "__plan013-m05-defender", autoPlayers.local, 2, 3);
+  defender.baseSpeed = 1024;
+  defender.speed = 1024;
+  defender.basicDamage = 999;
+  defender.piercingDamage = 999;
+  const attacker = plan013FixtureUnit(autoWorld, "unit-grunt", "__plan013-m05-target", autoPlayers.enemy, 5, 3);
+  attacker.canAttack = false;
+  attacker.baseSpeed = 0;
+  attacker.speed = 0;
+  attacker.hitPoints = 1;
+  const origin = { x: defender.x, y: defender.y };
+  autoWorld.units = [defender, attacker];
+  updateVisibility(autoWorld);
+  let automaticOrderSeen = false;
+  let savedReturn: { x: number; y: number } | null = null;
+  let maximumDistance = 0;
+  let targetDamaged = false;
+  for (let index = 0; index < 180; index += 1) {
+    plan013Tick(autoWorld);
+    maximumDistance = Math.max(maximumDistance, Math.hypot(defender.x - origin.x, defender.y - origin.y));
+    if (defender.order?.kind === "attack" && defender.order.autoReturn) {
+      automaticOrderSeen = true;
+      savedReturn = { ...defender.order.autoReturn };
+    }
+    if (attacker.hitPoints <= 0) {
+      targetDamaged = true;
+    }
+    if (targetDamaged && !defender.order && Math.hypot(defender.x - origin.x, defender.y - origin.y) <= autoWorld.tileSize) {
+      break;
+    }
+  }
+  const finalReturnDistance = Math.hypot(defender.x - origin.x, defender.y - origin.y);
+
+  const holdWorld = plan013FixtureWorld(sourceWorld);
+  const holdPlayers = plan013FixturePlayers(holdWorld);
+  const holder = plan013FixtureUnit(holdWorld, "unit-footman", "__plan013-m05-holder", holdPlayers.local, 2, 3);
+  const holdTarget = plan013FixtureUnit(holdWorld, "unit-grunt", "__plan013-m05-hold-target", holdPlayers.enemy, 5, 3);
+  holdTarget.canAttack = false;
+  holdTarget.speed = 0;
+  const holdOrigin = { x: holder.x, y: holder.y };
+  holder.order = { kind: "hold", targetId: null, anchorX: holder.x, anchorY: holder.y };
+  holdWorld.units = [holder, holdTarget];
+  updateVisibility(holdWorld);
+  plan013Tick(holdWorld, 45);
+
+  return {
+    ok: issued && rejectedUnreachable && automaticOrderSeen && targetDamaged && finalReturnDistance <= autoWorld.tileSize && holder.x === holdOrigin.x && holder.y === holdOrigin.y,
+    unreachable: {
+      issued,
+      acquiredUnreachable,
+      rejectedUnreachable,
+      destinationProgress: mover.y - tileToWorldCenter(unreachableWorld, 1, 2).y,
+      finalOrderKind: mover.order?.kind ?? null
+    },
+    automatic: { automaticOrderSeen, savedReturn, origin, maximumDistance, targetDamaged, finalReturnDistance, finalOrderKind: defender.order?.kind ?? null },
+    hold: { movedDistance: Math.hypot(holder.x - holdOrigin.x, holder.y - holdOrigin.y), targetId: holder.order?.kind === "hold" ? holder.order.targetId : null }
+  };
+}
+
+function plan013Projectile(source: WorldUnit, target: WorldUnit, overrides: Partial<WorldProjectile>): WorldProjectile {
+  return {
+    id: "__plan013-projectile",
+    sourceId: source.id,
+    targetId: target.id,
+    sourceTypeId: source.typeId,
+    player: source.player,
+    x: target.x - 1,
+    y: target.y,
+    originX: source.x,
+    originY: source.y,
+    targetX: target.x,
+    targetY: target.y,
+    speed: 512,
+    damage: 7,
+    missileId: null,
+    className: "missile-class-point-to-point",
+    impactSoundId: null,
+    impactMissileId: null,
+    splashFactor: 0,
+    range: 0,
+    canHitOwner: false,
+    friendlyFire: false,
+    canTargetLand: true,
+    canTargetSea: false,
+    canTargetAir: false,
+    bouncesRemaining: 0,
+    hitUnitIds: [],
+    drawLevel: 0,
+    kind: "arrow",
+    age: 0,
+    delaySeconds: 0,
+    ttlSeconds: null,
+    ...overrides
+  };
+}
+
+function plan013HitPointDeltas(before: Record<string, number>, units: WorldUnit[]): Record<string, number> {
+  return Object.fromEntries(units.map((unit) => [unit.id, (before[unit.id] ?? unit.hitPoints) - unit.hitPoints]));
+}
+
+function runPlan013M06(sourceWorld: WorldState): Record<string, unknown> {
+  const projectileWorld = plan013FixtureWorld(sourceWorld);
+  const players = plan013FixturePlayers(projectileWorld);
+  const source = plan013FixtureUnit(projectileWorld, "unit-archer", "__plan013-m06-source", players.local, 2, 2);
+  const target = plan013FixtureUnit(projectileWorld, "unit-grunt", "__plan013-m06-target", players.enemy, 6, 2);
+  projectileWorld.units = [source, target];
+  const launchPoint = { x: target.x, y: target.y };
+  const direct = plan013Projectile(source, target, {});
+  target.y += projectileWorld.tileSize * 2;
+  projectileWorld.visibleTiles.fill(0);
+  projectileWorld.projectiles = [direct];
+  const directBefore = target.hitPoints;
+  stepProjectiles(projectileWorld, 1 / sourceDefaultGameSpeed(projectileWorld));
+  const directDamage = directBefore - target.hitPoints;
+
+  const groundTarget = plan013FixtureUnit(projectileWorld, "unit-grunt", "__plan013-m06-ground-target", players.enemy, 7, 3);
+  const groundVictim = plan013FixtureUnit(projectileWorld, "unit-grunt", "__plan013-m06-ground-victim", players.enemy, 7, 3);
+  projectileWorld.units = [source, groundTarget, groundVictim];
+  const groundPoint = { x: groundTarget.x, y: groundTarget.y };
+  const ground = plan013Projectile(source, groundTarget, { id: "__plan013-ground", x: groundPoint.x - 1, y: groundPoint.y, targetX: groundPoint.x, targetY: groundPoint.y, range: 2, kind: "siege" });
+  groundTarget.y += projectileWorld.tileSize * 3;
+  projectileWorld.projectiles = [ground];
+  const groundTargetBefore = groundTarget.hitPoints;
+  const groundVictimBefore = groundVictim.hitPoints;
+  stepProjectiles(projectileWorld, 1 / sourceDefaultGameSpeed(projectileWorld));
+
+  const ownershipWorld = plan013FixtureWorld(sourceWorld);
+  const ownershipPlayers = plan013FixturePlayers(ownershipWorld);
+  const caster = plan013FixtureUnit(ownershipWorld, "unit-mage", "caster", ownershipPlayers.local, 5, 4);
+  const own = plan013FixtureUnit(ownershipWorld, "unit-footman", "own", ownershipPlayers.local, 5, 4);
+  const allied = plan013FixtureUnit(ownershipWorld, "unit-footman", "allied", ownershipPlayers.allied, 5, 4);
+  const enemy = plan013FixtureUnit(ownershipWorld, "unit-grunt", "enemy", ownershipPlayers.enemy, 5, 4);
+  const neutral = plan013FixtureUnit(ownershipWorld, "unit-critter", "neutral", ownershipPlayers.neutral, 5, 4);
+  const areaUnits = [caster, own, allied, enemy, neutral];
+  ownershipWorld.units = areaUnits;
+  ownershipWorld.visibleTiles.fill(0);
+  const beforeArea = Object.fromEntries(areaUnits.map((unit) => [unit.id, unit.hitPoints]));
+  const areaMissile = sourceSpellMissileId(ownershipWorld, "spell-blizzard");
+  applySplashDamage(ownershipWorld, caster, caster.x, caster.y, ownershipWorld.tileSize * 2, 9, 3, areaMissile);
+  const areaDeltas = plan013HitPointDeltas(beforeArea, areaUnits);
+
+  const demolishWorld = plan013FixtureWorld(sourceWorld);
+  const demolishPlayers = plan013FixturePlayers(demolishWorld);
+  const demolisher = plan013FixtureUnit(demolishWorld, "unit-dwarves", "caster", demolishPlayers.local, 5, 4);
+  const demolishOwn = plan013FixtureUnit(demolishWorld, "unit-footman", "own", demolishPlayers.local, 5, 4);
+  const demolishAllied = plan013FixtureUnit(demolishWorld, "unit-footman", "allied", demolishPlayers.allied, 5, 4);
+  const demolishEnemy = plan013FixtureUnit(demolishWorld, "unit-grunt", "enemy", demolishPlayers.enemy, 5, 4);
+  const demolishNeutral = plan013FixtureUnit(demolishWorld, "unit-critter", "neutral", demolishPlayers.neutral, 5, 4);
+  const demolishUnits = [demolisher, demolishOwn, demolishAllied, demolishEnemy, demolishNeutral];
+  demolishWorld.units = demolishUnits;
+  const beforeDemolish = Object.fromEntries(demolishUnits.map((unit) => [unit.id, unit.hitPoints]));
+  detonateDemolitionUnit(demolishWorld, demolisher);
+  const demolishDeltas = plan013HitPointDeltas(beforeDemolish, demolishUnits);
+
+  return {
+    ok: directDamage > 0
+      && groundTarget.hitPoints === groundTargetBefore
+      && groundVictim.hitPoints < groundVictimBefore
+      && areaDeltas.caster === 0
+      && [areaDeltas.own, areaDeltas.allied, areaDeltas.enemy, areaDeltas.neutral].every((damage) => damage > 0)
+      && [demolishDeltas.caster, demolishDeltas.own, demolishDeltas.allied, demolishDeltas.enemy, demolishDeltas.neutral].every((damage) => damage > 0),
+    committedProjectile: { directDamage, fixedLaunchPoint: launchPoint, targetAfterMove: { x: target.x, y: target.y }, tracerMotion: false, remainingProjectiles: projectileWorld.projectiles.length },
+    fixedGroundControl: { movedTargetDamage: groundTargetBefore - groundTarget.hitPoints, impactOccupantDamage: groundVictimBefore - groundVictim.hitPoints, groundPoint },
+    areaThroughFog: { visibleTileCount: ownershipWorld.visibleTiles.reduce((sum, value) => sum + value, 0), deltas: areaDeltas },
+    demolishOwnership: demolishDeltas
+  };
+}
+
+function runPlan013M07(sourceWorld: WorldState): Record<string, unknown> {
+  const world = plan013FixtureWorld(sourceWorld);
+  const players = plan013FixturePlayers(world);
+  const defender = plan013FixtureUnit(world, "unit-footman", "__plan013-m07-defender", players.local, 2, 3);
+  defender.baseSpeed = 1024;
+  defender.speed = 1024;
+  const target = plan013FixtureUnit(world, "unit-grunt", "__plan013-m07-target", players.enemy, 5, 3);
+  target.canAttack = false;
+  target.speed = 0;
+  world.units = [defender, target];
+  updateVisibility(world);
+  const origin = { x: defender.x, y: defender.y };
+  let automaticTargetId: string | null = null;
+  let autoReturn: { x: number; y: number } | null = null;
+  let reactionDistance = 0;
+  for (let index = 0; index < 90; index += 1) {
+    plan013Tick(world);
+    if (defender.order?.kind === "attack" && defender.order.autoReturn) {
+      automaticTargetId = defender.order.targetId;
+      autoReturn = { ...defender.order.autoReturn };
+      reactionDistance = Math.hypot(target.x - defender.x, target.y - defender.y);
+      break;
+    }
+  }
+  target.hitPoints = 0;
+  for (let index = 0; index < 120 && (defender.order || Math.hypot(defender.x - origin.x, defender.y - origin.y) > world.tileSize); index += 1) {
+    plan013Tick(world);
+  }
+  const returnDistance = Math.hypot(defender.x - origin.x, defender.y - origin.y);
+
+  const explicitWorld = plan013FixtureWorld(sourceWorld);
+  const explicitPlayers = plan013FixturePlayers(explicitWorld);
+  const explicitAttacker = plan013FixtureUnit(explicitWorld, "unit-footman", "__plan013-m07-explicit", explicitPlayers.local, 2, 3);
+  const explicitTarget = plan013FixtureUnit(explicitWorld, "unit-grunt", "__plan013-m07-explicit-target", explicitPlayers.enemy, 4, 3);
+  explicitWorld.units = [explicitAttacker, explicitTarget];
+  updateVisibility(explicitWorld);
+  const explicitIssued = issueAttackOrder(explicitWorld, explicitAttacker.id, explicitTarget.id);
+  const explicitAutoReturn = explicitAttacker.order?.kind === "attack" ? explicitAttacker.order.autoReturn : undefined;
+
+  return {
+    ok: automaticTargetId === target.id && autoReturn?.x === origin.x && autoReturn.y === origin.y && returnDistance <= world.tileSize && explicitIssued && explicitAutoReturn === null,
+    automatic: { targetId: automaticTargetId, autoReturn, origin, reactionDistance, returnDistance, finalOrderKind: defender.order?.kind ?? null },
+    explicit: { issued: explicitIssued, autoReturn: explicitAutoReturn ?? null, orderKind: explicitAttacker.order?.kind ?? null },
+    saveContract: { legacyMissingAutoReturnDefaultsToNull: true, verifier: "verify:save-schema" }
+  };
+}
