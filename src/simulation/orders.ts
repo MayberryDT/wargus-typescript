@@ -2513,6 +2513,7 @@ export function issueAttackOrder(world: WorldState, unitId: string, targetId: st
     targetId,
     targetX: target.x,
     targetY: target.y,
+    autoReturn: null,
     path,
     pathIndex: path.length > 1 ? 1 : 0
   };
@@ -5929,6 +5930,7 @@ function stepAttackMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
   if (unit.order?.kind !== "attack-move") {
     return;
   }
+  const order = unit.order;
   let target = unit.order.targetId ? findUnit(world, unit.order.targetId) : undefined;
   if (!canContinueAttackingTarget(world, unit, target)) {
     target = findNearestEnemyInAggroRange(world, unit);
@@ -5946,8 +5948,20 @@ function stepAttackMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
       return;
     }
     if (world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-      unit.order.path = sourceAttackTargetPath(world, unit, target);
-      unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+      const result = sourceAttackTargetPathResult(world, unit, target);
+      if (result.status === "unreachable") {
+        order.targetId = null;
+        const destination = findPathResult(world, unit, order.targetX, order.targetY);
+        if (destination.status === "unreachable") {
+          unit.order = null;
+          startNextQueuedMove(world, unit);
+          return;
+        }
+        order.path = destination.path;
+      } else {
+        order.path = result.path;
+      }
+      order.pathIndex = order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
     return;
@@ -9197,6 +9211,7 @@ function issueRallyOrderToTrainedUnit(world: WorldState, producer: WorldUnit, tr
       targetId: enemy.id,
       targetX: enemy.x,
       targetY: enemy.y,
+      autoReturn: null,
       path,
       pathIndex: path.length > 1 ? 1 : 0
     };
@@ -9235,9 +9250,18 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   if (unit.order?.kind !== "attack") {
     return;
   }
+  const order = unit.order;
   const target = findUnit(world, unit.order.targetId);
-  if (!canContinueAttackingTarget(world, unit, target)) {
+  if (order.autoReturn) {
+    if (!canContinueAutomaticAttackTarget(world, unit, target)) {
+      restoreAutomaticAttackReturn(world, unit, order.autoReturn);
+      return;
+    }
+  } else if (!canContinueAttackingTarget(world, unit, target)) {
     unit.order = null;
+    return;
+  }
+  if (!target) {
     return;
   }
 
@@ -9265,12 +9289,43 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   }
 
   if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-    unit.order.path = sourceAttackTargetPath(world, unit, target);
+    const result = sourceAttackTargetPathResult(world, unit, target);
+    if (result.status === "unreachable" && order.autoReturn) {
+      restoreAutomaticAttackReturn(world, unit, order.autoReturn);
+      return;
+    }
+    unit.order.path = result.path;
     unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
   }
   if (unit.order.path.length > 0) {
     stepMoveOrder(world, unit, tickSeconds);
   }
+}
+
+function canContinueAutomaticAttackTarget(world: WorldState, unit: WorldUnit, target: WorldUnit | undefined): target is WorldUnit {
+  if (!canContinueAttackingTarget(world, unit, target)) {
+    return false;
+  }
+  const reactionRange = sourceReactionRangeForUnit(world, unit);
+  const insideCurrentReactionRange = Math.hypot(target.x - unit.x, target.y - unit.y) <= reactionRange + target.radius;
+  const targetIsAttackingDefender = sourceUnitHasGoal(target, unit.id) && isInAttackRange(target, unit, world);
+  return insideCurrentReactionRange || targetIsAttackingDefender;
+}
+
+function restoreAutomaticAttackReturn(world: WorldState, unit: WorldUnit, autoReturn: { x: number; y: number }): void {
+  const result = findPathResult(world, unit, autoReturn.x, autoReturn.y);
+  if (result.status === "unreachable") {
+    unit.order = null;
+    return;
+  }
+  unit.order = {
+    kind: "attack-move",
+    targetId: null,
+    targetX: autoReturn.x,
+    targetY: autoReturn.y,
+    path: result.path,
+    pathIndex: result.path.length > 1 ? 1 : 0
+  };
 }
 
 function stepDefensiveAutoAttack(world: WorldState, unit: WorldUnit): void {
@@ -9281,14 +9336,29 @@ function stepDefensiveAutoAttack(world: WorldState, unit: WorldUnit): void {
   if (!target) {
     return;
   }
-  if (isInAttackRange(unit, target, world)) {
+  if (isDefensiveBuilding(unit)) {
     if (canLaunchAttackNow(unit, target)) {
       launchAttack(world, unit, target);
       unit.attackCooldown = attackCooldownForUnit(world, unit);
     } else {
       turnSideAttackTowardTarget(unit, target, sourceSideAttackFacingSeconds(world));
     }
+    return;
   }
+  const result = sourceAttackTargetPathResult(world, unit, target);
+  if (result.status === "unreachable") {
+    return;
+  }
+  unit.moveQueue = [];
+  unit.order = {
+    kind: "attack",
+    targetId: target.id,
+    targetX: target.x,
+    targetY: target.y,
+    autoReturn: { x: unit.x, y: unit.y },
+    path: result.path,
+    pathIndex: result.path.length > 1 ? 1 : 0
+  };
 }
 
 function attackCooldownForUnit(world: WorldState, unit: WorldUnit): number {
@@ -10306,6 +10376,7 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
         targetId: attackTarget.id,
         targetX: attackTarget.x,
         targetY: attackTarget.y,
+        autoReturn: null,
         path,
         pathIndex: path.length > 1 ? 1 : 0
       };
@@ -10603,14 +10674,55 @@ function sourceUnitInteractionPath(world: WorldState, unit: WorldUnit, target: W
   return point ? findPath(world, unit, point.x, point.y) : [];
 }
 
-function sourceAttackTargetPath(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
+interface AttackTargetPathResult {
+  status: "ready" | "temporarily-blocked" | "unreachable";
+  path: Array<{ x: number; y: number }>;
+}
+
+function sourceAttackTargetPathResult(world: WorldState, unit: WorldUnit, target: WorldUnit): AttackTargetPathResult {
   if (isInAttackRange(unit, target, world)) {
-    return [];
+    return { status: "ready", path: [] };
   }
-  if (isBuildingLike(target)) {
-    return sourceUnitInteractionPath(world, unit, target, unit.attackRange);
+  const bounds = unitFootprintBounds(world, target);
+  const rangeTiles = Math.max(1, Math.ceil((unit.attackRange + target.radius) / world.tileSize) + 1);
+  const candidates: Array<{ x: number; y: number; distance: number }> = [];
+  for (let tileY = Math.max(0, bounds.minTileY - rangeTiles); tileY <= Math.min(world.map.height - 1, bounds.maxTileY + rangeTiles); tileY += 1) {
+    for (let tileX = Math.max(0, bounds.minTileX - rangeTiles); tileX <= Math.min(world.map.width - 1, bounds.maxTileX + rangeTiles); tileX += 1) {
+      const point = tileToWorldCenter(world, tileX, tileY);
+      if (!isAttackTargetInRangeFromPosition(world, unit, target, point.x, point.y)) {
+        continue;
+      }
+      candidates.push({ ...point, distance: distanceSquared(unit, point) });
+    }
   }
-  return findPath(world, unit, target.x, target.y);
+  candidates.sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x);
+  let temporarilyBlocked: AttackTargetPathResult | null = null;
+  for (const candidate of candidates) {
+    const result = findPathResult(world, unit, candidate.x, candidate.y);
+    const endpoint = result.path.at(-1);
+    if (result.status === "unreachable" || !endpoint || !isAttackTargetInRangeFromPosition(world, unit, target, endpoint.x, endpoint.y)) {
+      continue;
+    }
+    if (result.status === "ready") {
+      return result;
+    }
+    temporarilyBlocked ??= result;
+  }
+  return temporarilyBlocked ?? { status: "unreachable", path: [] };
+}
+
+function sourceAttackTargetPath(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
+  return sourceAttackTargetPathResult(world, unit, target).path;
+}
+
+function isAttackTargetInRangeFromPosition(world: WorldState, unit: WorldUnit, target: WorldUnit, x: number, y: number): boolean {
+  const distance = isBuildingLike(target)
+    ? distanceToUnitFootprint(world, target, x, y)
+    : Math.hypot(target.x - x, target.y - y);
+  return canAttackTarget(unit, target, world)
+    && distance <= unit.attackRange + (isBuildingLike(target) ? 0 : target.radius)
+    && distance >= minimumAttackDistanceForTarget(unit, target)
+    && isSourceInsideAttackLineClearFromPoint(world, x, y, target);
 }
 
 function sourceOrderTargetPath(world: WorldState, unit: WorldUnit): Array<{ x: number; y: number }> {
@@ -10641,6 +10753,18 @@ function sourceOrderTargetPath(world: WorldState, unit: WorldUnit): Array<{ x: n
   if (unit.order.kind === "attack") {
     const target = findUnit(world, unit.order.targetId);
     return target ? sourceAttackTargetPath(world, unit, target) : [];
+  }
+  if (unit.order.kind === "attack-move") {
+    const target = unit.order.targetId ? findUnit(world, unit.order.targetId) : undefined;
+    if (target) {
+      const result = sourceAttackTargetPathResult(world, unit, target);
+      if (result.status !== "unreachable") {
+        return result.path;
+      }
+      unit.order.targetId = null;
+    }
+    const destination = findPathResult(world, unit, unit.order.targetX, unit.order.targetY);
+    return destination.status === "unreachable" ? [] : destination.path;
   }
   return findPath(world, unit, unit.order.targetX, unit.order.targetY);
 }
@@ -11863,10 +11987,14 @@ function isGroundTargetInRange(world: WorldState, unit: WorldUnit, targetX: numb
 }
 
 function isSourceInsideAttackLineClear(world: WorldState, unit: WorldUnit, target: Pick<WorldUnit, "x" | "y">): boolean {
+  return isSourceInsideAttackLineClearFromPoint(world, unit.x, unit.y, target);
+}
+
+function isSourceInsideAttackLineClearFromPoint(world: WorldState, sourceX: number, sourceY: number, target: Pick<WorldUnit, "x" | "y">): boolean {
   if (!world.engineSettings.insideDefault) {
     return true;
   }
-  const start = worldToTile(world, unit.x, unit.y);
+  const start = worldToTile(world, sourceX, sourceY);
   const goal = worldToTile(world, target.x, target.y);
   let x = start.x;
   let y = start.y;
@@ -15374,6 +15502,9 @@ function clearReferencesToUnavailableUnits(world: WorldState, unavailableUnitIds
       unit.order.attackTargetId = null;
     }
     if (!unit.order) {
+      continue;
+    }
+    if (unit.order.kind === "attack" && unit.order.autoReturn && unavailableUnitIds.has(unit.order.targetId)) {
       continue;
     }
     if (isSoftCombatTargetOrder(unit.order) && unit.order.targetId && unavailableUnitIds.has(unit.order.targetId)) {

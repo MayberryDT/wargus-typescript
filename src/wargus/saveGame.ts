@@ -2002,7 +2002,10 @@ function orderReferencesMissingUnit(order: WorldState["units"][number]["order"],
   if (order.kind === "build") {
     return order.phase === "constructing" && (!order.targetId || !liveUnitIds.has(order.targetId));
   }
-  if (order.kind === "attack" || order.kind === "repair" || order.kind === "load-transport" || order.kind === "follow" || order.kind === "defend" || order.kind === "build-oil-platform") {
+  if (order.kind === "attack") {
+    return order.autoReturn === null && !liveUnitIds.has(order.targetId);
+  }
+  if (order.kind === "repair" || order.kind === "load-transport" || order.kind === "follow" || order.kind === "defend" || order.kind === "build-oil-platform") {
     return !liveUnitIds.has(order.targetId);
   }
   return order.kind === "harvest" && order.targetId !== null && !liveUnitIds.has(order.targetId);
@@ -2063,6 +2066,15 @@ function hasInvalidLoadedAttackOrder(world: WorldState, unit: WorldState["units"
   const order = unit.order;
   if (order?.kind !== "attack") {
     return false;
+  }
+  if (order.autoReturn) {
+    const pathIsValid = order.path.every((point) => isLoadedMapPoint(world, point.x, point.y))
+      && (order.path.length === 0 ? order.pathIndex === 0 : order.pathIndex >= 0 && order.pathIndex < order.path.length);
+    return !canRestoreMovingOrderForUnit(unit)
+      || !unit.canAttack
+      || !isLoadedMapPoint(world, order.autoReturn.x, order.autoReturn.y)
+      || !isLoadedMapPoint(world, order.targetX, order.targetY)
+      || !pathIsValid;
   }
   const target = world.units.find((candidate) => candidate.id === order.targetId);
   return !target || !canIssueAttackTargetWithPath(world, unit, target);
@@ -3656,7 +3668,15 @@ function normalizeLoadedOrder(world: WorldState, order: unknown, unit: WorldStat
   }
   if (kind === "attack") {
     const targetId = typeof record.targetId === "string" ? record.targetId : "";
-    return targetId ? { kind, targetId, targetX, targetY, path, pathIndex } : null;
+    return targetId ? {
+      kind,
+      targetId,
+      targetX,
+      targetY,
+      autoReturn: normalizeWorldPointOrNull(world, record.autoReturn),
+      path,
+      pathIndex
+    } : null;
   }
   if (kind === "attack-move") {
     return {
@@ -3939,6 +3959,24 @@ function normalizeWorldPoint(world: WorldState, x: number, y: number): { x: numb
     x: Math.max(0, Math.min(world.map.width * world.tileSize - 1, x)),
     y: Math.max(0, Math.min(world.map.height * world.tileSize - 1, y))
   };
+}
+
+function normalizeWorldPointOrNull(world: WorldState, value: unknown): { x: number; y: number } | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const x = finiteNullableNumber(record.x);
+  const y = finiteNullableNumber(record.y);
+  if (
+    x === null || y === null
+    || x < 0 || y < 0
+    || x >= world.map.width * world.tileSize
+    || y >= world.map.height * world.tileSize
+  ) {
+    return null;
+  }
+  return { x, y };
 }
 
 function normalizeAnchorPoint(world: WorldState, x: unknown, y: unknown, unit: WorldState["units"][number]): { anchorX: number; anchorY: number } {

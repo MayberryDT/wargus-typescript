@@ -546,6 +546,7 @@ export type WorldOrder =
       targetId: string;
       targetX: number;
       targetY: number;
+      autoReturn: { x: number; y: number } | null;
       path: WorldPathPoint[];
       pathIndex: number;
     }
