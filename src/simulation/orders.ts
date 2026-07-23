@@ -2,7 +2,7 @@ import type { WargusAllowRule, WargusButton, WargusMissile, WargusSpell, WargusU
 import { sourceButtonAppliesTo, sourceButtonLabel } from "../wargus/buttons";
 import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
-import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
+import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, isWorldPositionVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath, findPathResult } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
@@ -6386,7 +6386,7 @@ function stepAiPlayers(world: WorldState): void {
     applySourceAiDifficultyBonuses(world, player);
     advanceSourceAiScript(world, player.id, state);
     runLandAttackAi(world, player.id, state);
-    state.nextThinkTick = world.tick + sourceAiSleepCycles(world, 30);
+    state.nextThinkTick = world.tick + world.tickRate;
   }
 }
 
@@ -6403,10 +6403,12 @@ type SourceAiInstruction =
   | { kind: "wait-force"; id: number }
   | { kind: "attack-force"; id: number }
   | { kind: "upgrade-to"; role: SourceAiBuildRole }
-  | { kind: "research"; id: string };
+  | { kind: "research"; humanId: string; orcId: string };
+
+type SourceAiInstructionResult = "advance" | "block";
 
 const SOURCE_AI_LAND_ATTACK_SCRIPT: SourceAiInstruction[] = [
-  { kind: "sleep", cycles: 120 },
+  { kind: "sleep", cycles: 0 },
   { kind: "need", role: "town-center" },
   { kind: "set", role: "worker", count: 1 },
   { kind: "wait", role: "town-center" },
@@ -6416,6 +6418,10 @@ const SOURCE_AI_LAND_ATTACK_SCRIPT: SourceAiInstruction[] = [
   { kind: "set", role: "worker", count: 8 },
   { kind: "wait", role: "barracks" },
   { kind: "set", role: "blacksmith", count: 1 },
+  { kind: "research", humanId: "upgrade-sword1", orcId: "upgrade-battle-axe1" },
+  { kind: "research", humanId: "upgrade-human-shield1", orcId: "upgrade-orc-shield1" },
+  { kind: "research", humanId: "upgrade-sword2", orcId: "upgrade-battle-axe2" },
+  { kind: "research", humanId: "upgrade-human-shield2", orcId: "upgrade-orc-shield2" },
   { kind: "force", id: 1, attack: true, targets: [{ role: "soldier", count: 1 }] },
   { kind: "wait-force", id: 1 },
   { kind: "attack-force", id: 1 },
@@ -6460,7 +6466,7 @@ const SOURCE_AI_LAND_ATTACK_SCRIPT: SourceAiInstruction[] = [
 ];
 
 const SOURCE_AI_AIR_ATTACK_SCRIPT: SourceAiInstruction[] = [
-  { kind: "sleep", cycles: 120 },
+  { kind: "sleep", cycles: 0 },
   { kind: "need", role: "town-center" },
   { kind: "set", role: "worker", count: 1 },
   { kind: "wait", role: "town-center" },
@@ -6502,15 +6508,12 @@ const SOURCE_AI_AIR_ATTACK_SCRIPT: SourceAiInstruction[] = [
 
 function advanceSourceAiScript(world: WorldState, playerId: number, state: WorldAiState): void {
   const script = sourceAiScriptForState(state);
-  if (!script || world.tick < state.sourceScriptSleepUntilTick) {
+  if (!script) {
     return;
   }
-  for (let steps = 0; steps < 8; steps += 1) {
-    if (state.sourceScriptIndex >= script.length) {
-      state.sourceScriptIndex = Math.max(0, script.length - 8);
-    }
+  for (let steps = 0; steps < script.length && state.sourceScriptIndex < script.length; steps += 1) {
     const instruction = script[state.sourceScriptIndex];
-    if (!instruction || !applySourceAiInstruction(world, playerId, state, instruction)) {
+    if (!instruction || applySourceAiInstruction(world, playerId, state, instruction) === "block") {
       return;
     }
     state.sourceScriptIndex += 1;
@@ -6527,70 +6530,91 @@ function sourceAiScriptForState(state: WorldAiState): SourceAiInstruction[] | nu
   return null;
 }
 
-function applySourceAiInstruction(world: WorldState, playerId: number, state: WorldAiState, instruction: SourceAiInstruction): boolean {
+function applySourceAiInstruction(world: WorldState, playerId: number, state: WorldAiState, instruction: SourceAiInstruction): SourceAiInstructionResult {
   const race = world.players.find((player) => player.id === playerId)?.race;
   switch (instruction.kind) {
-    case "sleep":
-      state.sourceScriptSleepUntilTick = world.tick + sourceAiSleepCycles(world, instruction.cycles);
-      return true;
+    case "sleep": {
+      const sleepTicks = sourceAiSleepCycles(world, instruction.cycles);
+      if (instruction.cycles <= 0 || sleepTicks <= 0) {
+        state.sourceScriptSleepUntilTick = 0;
+        return "advance";
+      }
+      if (state.sourceScriptSleepUntilTick <= 0) {
+        state.sourceScriptSleepUntilTick = world.tick + sleepTicks;
+        return "block";
+      }
+      if (world.tick < state.sourceScriptSleepUntilTick) {
+        return "block";
+      }
+      state.sourceScriptSleepUntilTick = 0;
+      return "advance";
+    }
     case "need":
-    case "upgrade-to":
       addSourceAiBuildNeed(state, instruction.role);
-      return sourceAiRoleCount(world, playerId, instruction.role) > 0 || issueSourceAiNeedNow(world, playerId, instruction.role, race);
+      return "advance";
+    case "upgrade-to":
+      addSourceAiUpgradeNeed(state, instruction.role);
+      return "advance";
     case "set":
       applySourceAiSet(world, playerId, state, instruction.role, instruction.count);
-      return true;
+      return "advance";
     case "wait":
-      return sourceAiRoleCount(world, playerId, instruction.role) > 0;
+      return sourceAiRoleCount(world, playerId, instruction.role) > 0 ? "advance" : "block";
     case "force":
       setSourceAiForce(world, playerId, state, instruction.id, instruction.attack, instruction.targets);
-      return true;
+      return "advance";
     case "force-role":
       state.sourceScriptForceRoles = [...state.sourceScriptForceRoles.filter((entry) => entry.id !== instruction.id), { id: instruction.id, role: instruction.role }];
-      return true;
+      return "advance";
     case "wait-force":
-      return sourceAiForceReady(world, playerId, state, instruction.id);
+      return sourceAiForceReady(world, playerId, state, instruction.id) ? "advance" : "block";
     case "attack-force":
-      selectSourceAiAttackForce(state, instruction.id);
-      state.nextAttackTick = Math.min(state.nextAttackTick, world.tick);
-      return true;
-    case "research":
-      if (!state.researchOrder.includes(instruction.id)) {
-        state.researchOrder = [...state.researchOrder, instruction.id];
+      launchSourceAiAttackForce(world, playerId, state, instruction.id);
+      return "advance";
+    case "research": {
+      const upgradeId = race === "orc" ? instruction.orcId : instruction.humanId;
+      if (!state.researchOrder.includes(upgradeId)) {
+        state.researchOrder = [...state.researchOrder, upgradeId];
       }
-      return true;
+      return "advance";
+    }
     default:
-      return true;
+      return "advance";
   }
 }
 
 function addSourceAiBuildNeed(state: WorldAiState, role: SourceAiBuildRole): void {
-  const targetRole = role === "guard-tower" || role === "cannon-tower" ? "tower" : role;
-  if (!state.buildOrder.includes(targetRole)) {
-    state.buildOrder = [...state.buildOrder, targetRole];
-  }
+  const targetRole = sourceAiBaseBuildRole(role);
+  state.buildOrder = [...state.buildOrder, targetRole];
 }
 
-function issueSourceAiNeedNow(world: WorldState, playerId: number, role: SourceAiBuildRole, race: string | null | undefined): boolean {
-  const builder = world.units.find((unit) => unit.player === playerId && isUsableBuilder(unit) && !unit.order);
-  if (!builder) {
-    return false;
-  }
-  return issueAiBuildBySourceRole(world, builder, playerId, role === "guard-tower" || role === "cannon-tower" ? "tower" : role, race);
+function addSourceAiUpgradeNeed(state: WorldAiState, role: SourceAiBuildRole): void {
+  state.buildOrder = [...state.buildOrder, role];
+}
+
+function sourceAiBaseBuildRole(role: SourceAiBuildRole): SourceAiBuildRole {
+  return role === "guard-tower" || role === "cannon-tower" ? "tower" : role;
 }
 
 function applySourceAiSet(world: WorldState, playerId: number, state: WorldAiState, role: SourceAiRole, count: number): void {
   if (role === "worker") {
-    state.workerTarget = Math.max(state.workerTarget ?? 1, count);
+    state.workerTarget = Math.max(0, Math.floor(count));
     return;
   }
   if (isSourceAiBuildRole(role)) {
-    for (let index = sourceAiRoleDesiredBuildCount(state, role); index < count; index += 1) {
-      addSourceAiBuildNeed(state, role);
-    }
+    setSourceAiBuildNeed(state, role, count);
     return;
   }
   setSourceAiForce(world, playerId, state, 1, true, [{ role, count }]);
+}
+
+function setSourceAiBuildNeed(state: WorldAiState, role: SourceAiBuildRole, desiredCount: number): void {
+  const targetRole = sourceAiBaseBuildRole(role);
+  const count = Math.max(0, Math.floor(desiredCount));
+  state.buildOrder = [
+    ...state.buildOrder.filter((candidate) => candidate !== targetRole),
+    ...Array.from({ length: count }, () => targetRole)
+  ];
 }
 
 function setSourceAiForce(world: WorldState, playerId: number, state: WorldAiState, id: number, attack: boolean, targets: Array<{ role: SourceAiUnitRole; count: number }>): void {
@@ -6601,7 +6625,7 @@ function setSourceAiForce(world: WorldState, playerId: number, state: WorldAiSta
   }));
   state.sourceScriptForces = [
     ...state.sourceScriptForces.filter((force) => force.id !== id),
-    { id, attack, targets: mappedTargets }
+    { id, attack, targets: mappedTargets, assignedUnitIds: [] }
   ];
   if (attack) {
     state.attackForceIds = [...state.attackForceIds.filter((forceId) => forceId !== id), id];
@@ -6613,18 +6637,34 @@ function setSourceAiForce(world: WorldState, playerId: number, state: WorldAiSta
   }
 }
 
-function selectSourceAiAttackForce(state: WorldAiState, id: number): void {
+function launchSourceAiAttackForce(world: WorldState, playerId: number, state: WorldAiState, id: number): void {
   const force = state.sourceScriptForces.find((candidate) => candidate.id === id);
   if (!force) {
     return;
   }
-  const targets = force.targets
-    .filter((target): target is { role: string; count: number; unitTypeId: string } => Boolean(target.unitTypeId))
-    .map((target) => ({ unitTypeId: target.unitTypeId, count: target.count }));
-  state.attackForceIds = [id];
-  state.attackUnitTargets = targets;
-  state.attackWaveUnitTargets = targets.length > 0 ? [targets] : [];
-  state.attackForceSize = Math.max(1, force.targets.reduce((sum, target) => sum + target.count, 0));
+  assignSourceAiForceUnits(world, playerId, state, force);
+  const unitIds = force.assignedUnitIds.filter((unitId) => {
+    const unit = findUnit(world, unitId);
+    if (!unit || unit.hitPoints <= 0) {
+      return false;
+    }
+    const target = findPrimaryEnemyTargetForUnit(world, playerId, unit);
+    if (target) {
+      return issueAttackOrder(world, unit.id, target.id);
+    }
+    const pressurePoint = findAiPressurePointForUnit(world, playerId, unit);
+    if (pressurePoint) {
+      issueAttackMoveOrder(world, unit.id, pressurePoint.x, pressurePoint.y);
+    }
+    return true;
+  });
+  const launchLimit = sourceAiScriptForState(state)?.filter((instruction) => instruction.kind === "attack-force").length ?? 0;
+  state.sourceScriptLaunches = [
+    ...state.sourceScriptLaunches,
+    { sourceForceId: id, unitIds, launchedTick: world.tick }
+  ].slice(-Math.max(1, launchLimit));
+  state.sourceScriptForces = state.sourceScriptForces.filter((candidate) => candidate.id !== id);
+  state.sourceScriptForceRoles = state.sourceScriptForceRoles.filter((entry) => entry.id !== id);
 }
 
 function sourceAiForceReady(world: WorldState, playerId: number, state: WorldAiState, id: number): boolean {
@@ -6632,17 +6672,61 @@ function sourceAiForceReady(world: WorldState, playerId: number, state: WorldAiS
   if (!force) {
     return true;
   }
+  assignSourceAiForceUnits(world, playerId, state, force);
   return force.targets.every((target) => {
     if (target.count <= 0 || !target.unitTypeId) {
       return true;
     }
-    return isSourceAiUnitRole(target.role)
-      && countSourceAiCombatRole(world, playerId, target.role, target.unitTypeId) >= sourceAiDifficultyForceCount(world, target.count);
+    const role = target.role;
+    const unitTypeId = target.unitTypeId;
+    return isSourceAiUnitRole(role) && force.assignedUnitIds
+      .map((unitId) => findUnit(world, unitId))
+      .filter((unit): unit is WorldUnit => Boolean(unit && unit.hitPoints > 0))
+      .filter((unit) => sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId))
+      .length >= sourceAiDifficultyForceCount(world, target.count);
   });
 }
 
-function sourceAiRoleDesiredBuildCount(state: WorldAiState, role: SourceAiBuildRole): number {
-  return state.buildOrder.filter((candidate) => candidate === role).length;
+function assignSourceAiForceUnits(world: WorldState, playerId: number, state: WorldAiState, force: WorldAiState["sourceScriptForces"][number]): void {
+  const unavailable = new Set([
+    ...state.sourceScriptLaunches.flatMap((launch) => launch.unitIds),
+    ...state.sourceScriptForces.filter((candidate) => candidate.id !== force.id).flatMap((candidate) => candidate.assignedUnitIds)
+  ]);
+  const assigned = new Set(force.assignedUnitIds.filter((unitId) => {
+    const unit = findUnit(world, unitId);
+    return Boolean(unit && unit.player === playerId && unit.hitPoints > 0 && !unavailable.has(unitId));
+  }));
+  const candidates = world.units
+    .filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !unit.construction && !isWorker(unit) && canReceiveMoveOrders(unit) && !unavailable.has(unit.id))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const target of force.targets) {
+    if (!target.unitTypeId || !isSourceAiUnitRole(target.role)) {
+      continue;
+    }
+    const desired = sourceAiDifficultyForceCount(world, target.count);
+    const role = target.role;
+    const unitTypeId = target.unitTypeId;
+    let present = [...assigned]
+      .map((unitId) => findUnit(world, unitId))
+      .filter((unit): unit is WorldUnit => Boolean(unit && sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId)))
+      .length;
+    for (const unit of candidates) {
+      if (present >= desired) break;
+      if (!assigned.has(unit.id) && sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId)) {
+        assigned.add(unit.id);
+        present += 1;
+      }
+    }
+  }
+  force.assignedUnitIds = [...assigned];
+}
+
+function sourceAiUnitMatchesForceTarget(world: WorldState, unit: WorldUnit, role: SourceAiUnitRole, unitTypeId: string): boolean {
+  if (unit.typeId === unitTypeId) {
+    return true;
+  }
+  const definition = world.unitDefinitions.find((candidate) => candidate.id === unit.typeId);
+  return Boolean(definition && sourceAiUnitDefinitionMatchesRole(definition, role));
 }
 
 function isSourceAiBuildRole(role: SourceAiRole): role is SourceAiBuildRole {
@@ -6787,7 +6871,7 @@ function setSourceAiSpeedFactors(player: WorldState["players"][number], speed: n
   }
 }
 
-function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttackTick: number; strategy?: "land" | "sea" | "air"; attackForceSize?: number; attackForceIds?: number[]; forceSizes?: number[]; attackWaveSizes?: number[]; attackWaveUnitTargets?: Array<Array<{ unitTypeId: string; count: number }>>; nextAttackWaveIndex?: number; defendForceSize?: number; attackDelayTicks?: number; attackUnitTargets?: Array<{ unitTypeId: string; count: number }>; buildOrder?: string[]; buildDepots?: boolean; preferredAttackUnitTypes?: string[]; workerTarget?: number; tankerTarget?: number; transportTarget?: number; collectWeights?: { gold: number; wood: number; oil: number } | null; researchOrder?: string[] }): void {
+function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiState): void {
   const units = world.units.filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !isUnitHiddenInConstruction(unit));
   const workers = units.filter(isWorker);
   const completedUnits = units.filter((unit) => !unit.construction);
@@ -6815,7 +6899,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   const attackUnitTargets = sourceAiDifficultyUnitTargets(world, currentAiAttackUnitTargets(state, attackForceId));
 
   if (townCenters.length === 0 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "town-center", race);
     }
@@ -6860,35 +6944,35 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
 
   const supply = getPlayerSupply(world, playerId);
   if (supply.cap - supply.used - supply.queued <= 2) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "supply", race);
     }
   }
 
   if (barracks.length === 0 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "barracks", race);
     }
   }
 
   if (barracks.length > 0 && lumberMills.length === 0 && army.length >= 2 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "lumber-mill", race);
     }
   }
 
   if (barracks.length > 0 && blacksmiths.length === 0 && army.length >= 3 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "blacksmith", race);
     }
   }
 
   if (barracks.length > 0 && advancedProducers.length === 0 && army.length >= (state.strategy === "air" ? 2 : 4) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (!hasTownCenterTier(world, playerId, 2)) {
       const hall = halls.find((candidate) => canAiUpgradeTownCenter(world, candidate));
       if (hall) {
@@ -6907,49 +6991,49 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   }
 
   if (hasTownCenterTier(world, playerId, 2) && holyProducers.length === 0 && army.length >= 5 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "holy", race);
     }
   }
 
   if (hasTownCenterTier(world, playerId, 2) && casterProducers.length === 0 && army.length >= 5 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "caster", race);
     }
   }
 
   if (hasOilOnMap(world) && shipyards.length === 0 && hasTownCenterTier(world, playerId, 2) && army.length >= (state.strategy === "sea" ? 2 : 5) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "shipyard", race);
     }
   }
 
   if (shipyards.length > 0 && foundries.length === 0 && army.length >= (state.strategy === "sea" ? 2 : 7) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "foundry", race);
     }
   }
 
   if ((state.buildDepots ?? true) && shipyards.length > 0 && refineries.length === 0 && tankers.length > 0 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "refinery", race);
     }
   }
 
   if (hasTownCenterTier(world, playerId, 3) && airProducers.length === 0 && army.length >= (state.strategy === "air" ? 3 : 7) && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "air", race);
     }
   }
 
   if (hasTownCenterTier(world, playerId, 3) && demolitionProducers.length === 0 && army.length >= 6 && workers.length > 0) {
-    const builder = workers.find((worker) => !worker.order);
+    const builder = workers.find(sourceAiBuilderAvailable);
     if (builder) {
       issueAiBuildBySourceRole(world, builder, playerId, "demolition", race);
     }
@@ -7077,6 +7161,10 @@ function runLandAttackAi(world: WorldState, playerId: number, state: { nextAttac
   sendAiScoutFlyers(world, playerId, scoutFlyers);
 
   castAiCombatSpell(world, playerId, casters);
+
+  if (state.sourceScriptId) {
+    return;
+  }
 
   const attackForceSize = currentAiAttackForceSize(world, state);
   const attackCandidates = armyForAiStrategy(army, state.strategy ?? "land");
@@ -7243,7 +7331,7 @@ function issueSourceAiBuildNeeds(world: WorldState, playerId: number, buildOrder
     desiredByRole.set(role, (desiredByRole.get(role) ?? 0) + 1);
   }
   const buildings = world.units.filter((unit) => unit.player === playerId && isSourceAiBuilding(unit) && unit.hitPoints > 0);
-  const builders = world.units.filter((unit) => unit.player === playerId && isUsableBuilder(unit) && !unit.order);
+  const builders = world.units.filter((unit) => unit.player === playerId && sourceAiBuilderAvailable(unit));
   for (const [role, desired] of desiredByRole) {
     if (!buildDepots && isSourceAiDepotRole(role)) {
       continue;
@@ -7258,10 +7346,48 @@ function issueSourceAiBuildNeeds(world: WorldState, playerId: number, buildOrder
     if (!builder) {
       return;
     }
-    if (issueAiBuildBySourceRole(world, builder, playerId, role, race)) {
+    if (sourceAiCanAffordBuildNeed(world, playerId, role, race) && issueAiBuildBySourceRole(world, builder, playerId, role, race)) {
       return;
     }
   }
+}
+
+function sourceAiBuilderAvailable(unit: WorldUnit): boolean {
+  if (!isUsableBuilder(unit)) {
+    return false;
+  }
+  if (!unit.order) {
+    return true;
+  }
+  return unit.order.kind === "harvest" && unit.order.phase === "to-resource";
+}
+
+function sourceAiCanAffordBuildNeed(world: WorldState, playerId: number, role: string, race: string | null | undefined): boolean {
+  const player = world.players.find((candidate) => candidate.id === playerId);
+  const need = sourceAiBuildNeedForRole(world, playerId, role, race);
+  if (!player || !need) {
+    return false;
+  }
+  const definition = world.unitDefinitions.find((candidate) => need.matches(candidate))
+    ?? world.unitDefinitions.find((candidate) => candidate.id === need.fallback);
+  if (!definition) {
+    return false;
+  }
+  const available = { ...player.resources };
+  for (const unit of world.units) {
+    const order = unit.order;
+    if (unit.player !== playerId || order?.kind !== "build" || order.phase !== "to-site") {
+      continue;
+    }
+    const pending = world.unitDefinitions.find((candidate) => candidate.id === order.buildingTypeId);
+    for (let index = 0; pending && index < pending.costs.length - 1; index += 2) {
+      const resource = pending.costs[index];
+      if (resource !== "time") {
+        available[resource] = (available[resource] ?? 0) - Number(pending.costs[index + 1]);
+      }
+    }
+  }
+  return canAfford(available, definition.costs);
 }
 
 function isSourceAiDepotRole(role: string): boolean {
@@ -8616,16 +8742,24 @@ function sourceTileDistanceBetweenUnits(left: WorldUnit, right: WorldUnit): numb
 }
 
 function findAiPressurePointForUnit(world: WorldState, playerId: number, unit: WorldUnit): { x: number; y: number } | null {
-  const enemyStarts = world.players
-    .filter((player) => arePlayersEnemies(world, playerId, player.id))
-    .map((player) => ({ x: player.startX, y: player.startY }));
   const knownEnemyBuildings = world.units
     .filter((candidate) => arePlayersEnemies(world, playerId, candidate.player)
       && candidate.hitPoints > 0
       && isBuildingLike(candidate)
       && isUnitVisibleToPlayer(world, candidate, playerId))
     .map((candidate) => ({ x: candidate.x, y: candidate.y }));
-  const candidates = [...enemyStarts, ...knownEnemyBuildings]
+  const unexploredCandidates: Array<{ x: number; y: number; score: number }> = [];
+  const stride = Math.max(4, Math.floor(Math.min(world.map.width, world.map.height) / 10));
+  for (let tileY = 1; tileY < world.map.height - 1; tileY += stride) {
+    for (let tileX = 1; tileX < world.map.width - 1; tileX += stride) {
+      const point = tileToWorldCenter(world, tileX, tileY);
+      if (isWorldPositionVisibleToPlayer(world, point.x, point.y, playerId)) {
+        continue;
+      }
+      unexploredCandidates.push({ ...point, score: distanceSquared(unit, point) + Math.abs(deterministicHash(`${playerId}:${tileX}:${tileY}`)) % 97 });
+    }
+  }
+  const candidates = [...knownEnemyBuildings, ...unexploredCandidates.sort((left, right) => left.score - right.score)]
     .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
     .sort((a, b) => distanceSquared(unit, a) - distanceSquared(unit, b));
   return candidates.find((point) => unit.kind === "fly" || findPath(world, unit, point.x, point.y).length > 0) ?? null;
@@ -18818,6 +18952,77 @@ export function runPlan013CombatScenario(sourceWorld: WorldState, scenario: "M05
     return runPlan013M06(sourceWorld);
   }
   return runPlan013M07(sourceWorld);
+}
+
+export function runPlan014AiScriptFixture(sourceWorld: WorldState): Record<string, unknown> {
+  const sourceState = sourceWorld.aiStates.find((state) => state.enabled);
+  if (!sourceState) {
+    return { ok: false, error: "missing enabled AI state" };
+  }
+  const world = structuredClone(sourceWorld) as WorldState;
+  world.engineSettings.lastDifficultyDefault = 3;
+  world.matchState = { status: "playing", winner: null, endedTick: null };
+  world.tick = 0;
+  world.events = [];
+  world.projectiles = [];
+  world.pendingAttacks = [];
+  world.spellEffects = [];
+  world.aiStates.forEach((state) => { state.enabled = false; });
+  const state = world.aiStates.find((candidate) => candidate.player === sourceState.player)!;
+  state.enabled = true;
+  state.strategy = "land";
+  state.sourceScriptId = "wc2-land-attack";
+  state.sourceScriptIndex = 0;
+  state.sourceScriptSleepUntilTick = 0;
+  state.sourceScriptForces = [];
+  state.sourceScriptLaunches = [];
+  state.sourceScriptForceRoles = [];
+  state.buildOrder = [];
+  state.researchOrder = [];
+  const player = world.players.find((candidate) => candidate.id === state.player);
+  const race = player?.race === "orc" ? "orc" : "human";
+  const unit = (typeId: string, id: string, playerId: number, tileX: number, tileY: number): WorldUnit => {
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === typeId);
+    if (!definition) throw new Error(`Plan 014 fixture missing ${typeId}`);
+    return createWorldUnit({ unit: definition, id, player: playerId, tileX, tileY, tileset: null });
+  };
+  const workerTypeId = race === "orc" ? "unit-peon" : "unit-peasant";
+  const hallTypeId = race === "orc" ? "unit-great-hall" : "unit-town-hall";
+  const barracksTypeId = race === "orc" ? "unit-orc-barracks" : "unit-human-barracks";
+  const blacksmithTypeId = race === "orc" ? "unit-orc-blacksmith" : "unit-human-blacksmith";
+  const soldierTypeId = race === "orc" ? "unit-grunt" : "unit-footman";
+  const enemyPlayer = world.visibilityPlayer === state.player
+    ? world.players.find((candidate) => candidate.id !== state.player && candidate.id !== 15)?.id ?? 1
+    : world.visibilityPlayer;
+  const units: WorldUnit[] = [
+    unit(workerTypeId, "__plan014-worker", state.player, 2, 2),
+    unit(hallTypeId, "__plan014-hall", state.player, 3, 3),
+    unit(barracksTypeId, "__plan014-barracks", state.player, 5, 3),
+    unit(blacksmithTypeId, "__plan014-blacksmith", state.player, 7, 3),
+    unit(enemyPlayer === world.visibilityPlayer ? "unit-town-hall" : hallTypeId, "__plan014-enemy", enemyPlayer, 10, 6)
+  ];
+  for (let index = 0; index < 21; index += 1) {
+    units.push(unit(soldierTypeId, `__plan014-soldier-${String(index).padStart(2, "0")}`, state.player, 4 + (index % 5), 5 + Math.floor(index / 5)));
+  }
+  world.units = units;
+  updateVisibility(world);
+  advanceSourceAiScript(world, state.player, state);
+  const launchSizes = state.sourceScriptLaunches.map((launch) => launch.unitIds.length);
+  const launchedIds = state.sourceScriptLaunches.flatMap((launch) => launch.unitIds);
+  const barracksDesired = state.buildOrder.filter((role) => role === "barracks").length;
+  return {
+    ok: JSON.stringify(launchSizes.slice(0, 3)) === JSON.stringify([1, 4, 16])
+      && new Set(launchedIds).size === launchedIds.length
+      && barracksDesired === 2,
+    sourceScriptIndex: state.sourceScriptIndex,
+    launchSizes,
+    launches: state.sourceScriptLaunches,
+    uniqueLaunchedIds: new Set(launchedIds).size,
+    barracksDesired,
+    buildOrder: state.buildOrder,
+    researchOrder: state.researchOrder,
+    activeForces: state.sourceScriptForces.map((force) => ({ id: force.id, assignedUnitIds: force.assignedUnitIds }))
+  };
 }
 
 function plan013FixtureWorld(sourceWorld: WorldState, width = 12, height = 9): WorldState {

@@ -67,7 +67,10 @@ expect(world, "sourceScriptId", "World AI state should persist source script ide
 expect(world, "setup?.state?.disableStartingHalls !== true", "World creation should respect fixed demo one-peasant mode by skipping fallback halls.");
 expect(world, "sourceScriptIndex", "World AI state should persist source script cursor.");
 expect(world, "sourceScriptForces", "World AI state should persist source force definitions.");
+expect(world, "assignedUnitIds: string[]", "World AI force slots should persist deterministic assigned unit ids.");
+expect(world, "sourceScriptLaunches", "World AI state should persist bounded detached launch history.");
 expect(saveGame, "normalizeAiSourceScriptForces", "Save-game normalization should preserve source AI force state.");
+expect(saveGame, "normalizeAiSourceScriptLaunches", "Save-game normalization should preserve detached source AI launches.");
 expect(saveGame, "normalizeAiSourceScriptForceRoles", "Save-game normalization should preserve source AI force roles.");
 
 expect(orders, "SOURCE_AI_LAND_ATTACK_SCRIPT", "Orders should include a source-style land attack script.");
@@ -79,6 +82,11 @@ if (/workers\.find\(\(worker\) => !worker\.order\)\s*\?\?\s*workers\[0\]/.test(o
 expect(orders, "SOURCE_AI_AIR_ATTACK_SCRIPT", "Orders should include a source-style air attack script.");
 expect(orders, "advanceSourceAiScript", "AI step should advance source scripts.");
 expect(orders, "attack-force", "Source AI runner should support scripted attack waves.");
+expect(orders, "launchSourceAiAttackForce", "Source AI attack-force should launch and detach assigned ids immediately.");
+expect(orders, "state.sourceScriptForces = state.sourceScriptForces.filter", "Launched source force slots should clear before later declarations.");
+expect(orders, "state.sourceScriptLaunches.flatMap", "Later source forces should exclude every previously launched id.");
+expect(orders, "state.sourceScriptId", "Source-script players should bypass the legacy mutable wave selector after economic management.");
+reject(orders, "const enemyStarts = world.players", "Source AI pressure should not know enemy start coordinates.");
 expect(orders, "wait-force", "Source AI runner should support blocking until a force is ready.");
 expect(orders, "wc2-air-attack", "Source AI runner should recognize wc2-air-attack.");
 expect(orders, "wc2-land-attack", "Source AI runner should recognize wc2-land-attack.");

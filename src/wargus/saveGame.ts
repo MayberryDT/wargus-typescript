@@ -1186,7 +1186,7 @@ function normalizeAiStates(value: unknown, world: WorldState, currentTick = worl
     const attackDelayTicks = Math.max(30, Math.floor(finiteNumberOr(record.attackDelayTicks, fallback?.attackDelayTicks ?? 35 * 30)));
     const attackDelayRuntimeTicks = sourceOrderRetryTicksForSave(world, attackDelayTicks);
     const fallbackNextAttackTick = fallback?.nextAttackTick ?? currentTick + sourceOrderRetryTicksForSave(world, 20 * 30);
-    const nextThinkTickCap = currentTick + sourceAiSleepCyclesForSave(world, 30);
+    const nextThinkTickCap = currentTick + world.tickRate;
     const nextAttackTickCap = Math.max(fallbackNextAttackTick, currentTick + Math.max(sourceSecondTicks, attackDelayRuntimeTicks));
     states.push({
       player,
@@ -1195,7 +1195,8 @@ function normalizeAiStates(value: unknown, world: WorldState, currentTick = worl
       sourceScriptId: typeof record.sourceScriptId === "string" ? record.sourceScriptId : fallback?.sourceScriptId ?? null,
       sourceScriptIndex: Math.max(0, Math.floor(finiteNumberOr(record.sourceScriptIndex, fallback?.sourceScriptIndex ?? 0))),
       sourceScriptSleepUntilTick: Math.max(0, Math.floor(finiteNumberOr(record.sourceScriptSleepUntilTick, fallback?.sourceScriptSleepUntilTick ?? 0))),
-      sourceScriptForces: normalizeAiSourceScriptForces(record.sourceScriptForces, fallback?.sourceScriptForces ?? []),
+      sourceScriptForces: normalizeAiSourceScriptForces(record.sourceScriptForces, fallback?.sourceScriptForces ?? [], world),
+      sourceScriptLaunches: normalizeAiSourceScriptLaunches(record.sourceScriptLaunches, fallback?.sourceScriptLaunches ?? []),
       sourceScriptForceRoles: normalizeAiSourceScriptForceRoles(record.sourceScriptForceRoles, fallback?.sourceScriptForceRoles ?? []),
       attackForceSize: Math.max(3, Math.floor(finiteNumberOr(record.attackForceSize, fallback?.attackForceSize ?? 3))),
       attackForceIds: normalizeNonNegativeIntegerArray(record.attackForceIds, fallback?.attackForceIds ?? []),
@@ -1223,13 +1224,13 @@ function normalizeAiStates(value: unknown, world: WorldState, currentTick = worl
   for (const playerId of aiPlayerIds) {
     if (!seen.has(playerId)) {
       const fallback = fallbackByPlayer.get(playerId);
-      states.push(fallback ?? { player: playerId, enabled: true, strategy: "land", sourceScriptId: null, sourceScriptIndex: 0, sourceScriptSleepUntilTick: 0, sourceScriptForces: [], sourceScriptForceRoles: [], attackForceSize: 3, attackForceIds: [], forceSizes: [], attackWaveSizes: [], attackWaveUnitTargets: [], nextAttackWaveIndex: 0, defendForceSize: 0, attackDelayTicks: 35 * 30, attackUnitTargets: [], buildOrder: [], buildDepots: true, preferredAttackUnitTypes: [], workerTarget: 7, tankerTarget: 1, transportTarget: 0, collectWeights: null, researchOrder: [], nextThinkTick: world.tick + 1, nextAttackTick: world.tick + sourceOrderRetryTicksForSave(world, 20 * 30) });
+      states.push(fallback ?? { player: playerId, enabled: true, strategy: "land", sourceScriptId: null, sourceScriptIndex: 0, sourceScriptSleepUntilTick: 0, sourceScriptForces: [], sourceScriptLaunches: [], sourceScriptForceRoles: [], attackForceSize: 3, attackForceIds: [], forceSizes: [], attackWaveSizes: [], attackWaveUnitTargets: [], nextAttackWaveIndex: 0, defendForceSize: 0, attackDelayTicks: 35 * 30, attackUnitTargets: [], buildOrder: [], buildDepots: true, preferredAttackUnitTypes: [], workerTarget: 7, tankerTarget: 1, transportTarget: 0, collectWeights: null, researchOrder: [], nextThinkTick: world.tick + 1, nextAttackTick: world.tick + sourceOrderRetryTicksForSave(world, 20 * 30) });
     }
   }
   return states;
 }
 
-function normalizeAiSourceScriptForces(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptForces"]): WorldState["aiStates"][number]["sourceScriptForces"] {
+function normalizeAiSourceScriptForces(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptForces"], world: WorldState): WorldState["aiStates"][number]["sourceScriptForces"] {
   if (!Array.isArray(value)) {
     return fallback;
   }
@@ -1261,10 +1262,38 @@ function normalizeAiSourceScriptForces(value: unknown, fallback: WorldState["aiS
       return {
         id: Math.max(0, Math.floor(finiteNumberOr(record.id, 0))),
         attack: record.attack === true,
-        targets
+        targets,
+        assignedUnitIds: normalizeExistingUnitIds(record.assignedUnitIds, world)
       };
     })
     .filter((entry): entry is WorldState["aiStates"][number]["sourceScriptForces"][number] => Boolean(entry));
+}
+
+function normalizeAiSourceScriptLaunches(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptLaunches"]): WorldState["aiStates"][number]["sourceScriptLaunches"] {
+  const source = Array.isArray(value) ? value : fallback;
+  return source.map((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+    const record = entry as Record<string, unknown>;
+    return {
+      sourceForceId: Math.max(0, Math.floor(finiteNumberOr(record.sourceForceId, 0))),
+      unitIds: normalizeStringIds(record.unitIds),
+      launchedTick: Math.max(0, Math.floor(finiteNumberOr(record.launchedTick, 0)))
+    };
+  }).filter((entry): entry is WorldState["aiStates"][number]["sourceScriptLaunches"][number] => Boolean(entry));
+}
+
+function normalizeExistingUnitIds(value: unknown, world: WorldState): string[] {
+  const liveIds = new Set(world.units.filter((unit) => unit.hitPoints > 0).map((unit) => unit.id));
+  return normalizeStringIds(value).filter((unitId) => liveIds.has(unitId));
+}
+
+function normalizeStringIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0))];
 }
 
 function normalizeAiSourceScriptForceRoles(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptForceRoles"]): WorldState["aiStates"][number]["sourceScriptForceRoles"] {
@@ -1287,26 +1316,6 @@ function normalizeAiSourceScriptForceRoles(value: unknown, fallback: WorldState[
       };
     })
     .filter((entry): entry is WorldState["aiStates"][number]["sourceScriptForceRoles"][number] => Boolean(entry));
-}
-
-function sourceAiSleepCyclesForSave(world: WorldState, cycles: number): number {
-  const difficulty = Math.floor(world.engineSettings.lastDifficultyDefault);
-  if (difficulty === 1) {
-    return Math.max(1, Math.floor(5 * cycles));
-  }
-  if (difficulty === 2) {
-    return Math.max(1, Math.floor(1.25 * cycles));
-  }
-  if (difficulty === 3) {
-    return Math.max(1, Math.floor(cycles));
-  }
-  if (difficulty === 4) {
-    return Math.max(1, Math.floor(cycles / 2));
-  }
-  if (difficulty === 5) {
-    return Math.max(1, Math.floor(cycles / 3));
-  }
-  return Math.max(1, Math.floor(cycles));
 }
 
 function sourceOrderRetryTicksForSave(world: WorldState, sourceCycles: number): number {

@@ -861,7 +861,8 @@ export interface WorldAiState {
   sourceScriptId: string | null;
   sourceScriptIndex: number;
   sourceScriptSleepUntilTick: number;
-  sourceScriptForces: Array<{ id: number; attack: boolean; targets: Array<{ role: string; count: number; unitTypeId: string | null }> }>;
+  sourceScriptForces: Array<{ id: number; attack: boolean; targets: Array<{ role: string; count: number; unitTypeId: string | null }>; assignedUnitIds: string[] }>;
+  sourceScriptLaunches: Array<{ sourceForceId: number; unitIds: string[]; launchedTick: number }>;
   sourceScriptForceRoles: Array<{ id: number; role: string }>;
   attackForceSize: number;
   attackForceIds: number[];
@@ -1131,6 +1132,7 @@ export function createInitialWorld(map: WargusMap, sourceUnits: WargusUnit[], se
         sourceScriptIndex: 0,
         sourceScriptSleepUntilTick: 0,
         sourceScriptForces: [],
+        sourceScriptLaunches: [],
         sourceScriptForceRoles: [],
         attackForceSize: aiAttackForceSizeForPlayer(setup, player.ai),
         attackForceIds: aiAttackForceIdsForPlayer(setup, player.ai),

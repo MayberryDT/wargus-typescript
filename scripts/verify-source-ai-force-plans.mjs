@@ -605,6 +605,64 @@ for (const fragment of [
   }
 }
 
+for (const fragment of [
+  "state.nextThinkTick = world.tick + world.tickRate",
+  'type SourceAiInstructionResult = "advance" | "block"',
+  "steps < script.length && state.sourceScriptIndex < script.length",
+  'applySourceAiInstruction(world, playerId, state, instruction) === "block"',
+  '{ kind: "sleep", cycles: 0 }',
+  'state.sourceScriptSleepUntilTick = world.tick + sleepTicks',
+  'return sourceAiRoleCount(world, playerId, instruction.role) > 0 ? "advance" : "block"',
+  'return sourceAiForceReady(world, playerId, state, instruction.id) ? "advance" : "block"',
+  'humanId: "upgrade-sword1", orcId: "upgrade-battle-axe1"',
+  'humanId: "upgrade-human-shield1", orcId: "upgrade-orc-shield1"',
+  'humanId: "upgrade-sword2", orcId: "upgrade-battle-axe2"',
+  'humanId: "upgrade-human-shield2", orcId: "upgrade-orc-shield2"',
+  "function addSourceAiUpgradeNeed",
+  "function setSourceAiBuildNeed",
+  "state.workerTarget = Math.max(0, Math.floor(count))",
+  "function sourceAiBuilderAvailable",
+  'unit.order.kind === "harvest" && unit.order.phase === "to-resource"',
+  "function sourceAiCanAffordBuildNeed",
+  'order?.kind !== "build" || order.phase !== "to-site"',
+  "assignedUnitIds: []",
+  "function assignSourceAiForceUnits",
+  "state.sourceScriptLaunches.flatMap",
+  "function launchSourceAiAttackForce",
+  "launchedTick: world.tick",
+  "state.sourceScriptForces = state.sourceScriptForces.filter",
+  "if (state.sourceScriptId)",
+  "const unexploredCandidates"
+]) {
+  if (!ordersSource.includes(fragment)) {
+    error(`Plan 014-A source interpreter missing fragment: ${fragment}`);
+  }
+}
+
+for (const forbidden of [
+  "for (let steps = 0; steps < 8; steps += 1)",
+  "state.sourceScriptIndex = Math.max(0, script.length - 8)",
+  'issueSourceAiNeedNow(',
+  "const enemyStarts = world.players"
+]) {
+  if (ordersSource.includes(forbidden)) {
+    error(`Plan 014-A retained obsolete behavior: ${forbidden}`);
+  }
+}
+
+for (const fragment of [
+  "const nextThinkTickCap = currentTick + world.tickRate",
+  "record.sourceScriptLaunches",
+  "normalizeAiSourceScriptLaunches",
+  "record.assignedUnitIds",
+  "normalizeExistingUnitIds",
+  "function normalizeStringIds"
+]) {
+  if (!saveSource.includes(fragment)) {
+    error(`Plan 014-A save normalization missing fragment: ${fragment}`);
+  }
+}
+
 const sourceAiBuildNeedsBody = ordersSource.match(/function issueSourceAiBuildNeeds[\s\S]*?\n}\n\nfunction isSourceAiDepotRole/)?.[0] ?? "";
 if (sourceAiBuildNeedsBody.includes('unit.kind === "building"')) {
   error("Source AI build needs should count buildings through source Building semantics instead of browser-local kind text.");
