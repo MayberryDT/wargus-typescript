@@ -1,7 +1,7 @@
 import type { WargusEngineSettings, WargusManifest, WargusMap, WargusSpeedFactors, WargusSpell, WargusUnit } from "./types";
 import { isExploreOnReadyValue } from "./sourceActions";
 import { boxDimensionsForUnit, createInitialWorld, createPlayerStats, defaultForestTileResources, imageForTileset, initialForestResourcesForWorld, isSourceBuildingDefinition, isUnitVisibleToPlayer, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, resourcesHeldForSourceUnit, sightRangeForUnit, sourceAiDefinitionForName, sourceAiDefinitionIsPassive, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, updateVisibility, worldKindForUnitDefinition, type WorldProjectile, type WorldState } from "../simulation/world";
-import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, canTrainUnitAt, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
+import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, canTrainUnitAt, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
 import { isSourceHarvestableWoodTile } from "../simulation/passability";
 
 type MutableEngineSettingsSave = Pick<WargusEngineSettings,
@@ -1192,16 +1192,22 @@ function normalizeAiStates(value: unknown, world: WorldState, currentTick = worl
     const fallbackNextAttackTick = fallback?.nextAttackTick ?? currentTick + sourceOrderRetryTicksForSave(world, 20 * 30);
     const nextThinkTickCap = currentTick + world.tickRate;
     const nextAttackTickCap = Math.max(fallbackNextAttackTick, currentTick + Math.max(sourceSecondTicks, attackDelayRuntimeTicks));
+    const sourceScriptId = typeof record.sourceScriptId === "string" ? record.sourceScriptId : fallback?.sourceScriptId ?? null;
+    const requestedSourceScriptIndex = Math.max(0, Math.floor(finiteNumberOr(record.sourceScriptIndex, fallback?.sourceScriptIndex ?? 0)));
+    const sourceBounds = sourceAiScriptSaveBounds(world, player, sourceScriptId, strategy, requestedSourceScriptIndex);
+    const sourceScriptLaunches = normalizeAiSourceScriptLaunches(record.sourceScriptLaunches, fallback?.sourceScriptLaunches ?? [], world, player, sourceBounds);
+    const unavailableUnitIds = new Set(sourceScriptLaunches.flatMap((launch) => launch.unitIds));
+    const sourceScriptForces = normalizeAiSourceScriptForces(record.sourceScriptForces, fallback?.sourceScriptForces ?? [], world, player, sourceBounds, unavailableUnitIds);
     states.push({
       player,
       enabled: record.enabled !== false,
       strategy,
-      sourceScriptId: typeof record.sourceScriptId === "string" ? record.sourceScriptId : fallback?.sourceScriptId ?? null,
-      sourceScriptIndex: Math.max(0, Math.floor(finiteNumberOr(record.sourceScriptIndex, fallback?.sourceScriptIndex ?? 0))),
+      sourceScriptId,
+      sourceScriptIndex: sourceBounds.sourceScriptIndex,
       sourceScriptSleepUntilTick: Math.max(0, Math.floor(finiteNumberOr(record.sourceScriptSleepUntilTick, fallback?.sourceScriptSleepUntilTick ?? 0))),
-      sourceScriptForces: normalizeAiSourceScriptForces(record.sourceScriptForces, fallback?.sourceScriptForces ?? [], world),
-      sourceScriptLaunches: normalizeAiSourceScriptLaunches(record.sourceScriptLaunches, fallback?.sourceScriptLaunches ?? []),
-      sourceScriptForceRoles: normalizeAiSourceScriptForceRoles(record.sourceScriptForceRoles, fallback?.sourceScriptForceRoles ?? []),
+      sourceScriptForces,
+      sourceScriptLaunches,
+      sourceScriptForceRoles: normalizeAiSourceScriptForceRoles(sourceBounds),
       attackForceSize: Math.max(3, Math.floor(finiteNumberOr(record.attackForceSize, fallback?.attackForceSize ?? 3))),
       attackForceIds: normalizeNonNegativeIntegerArray(record.attackForceIds, fallback?.attackForceIds ?? []),
       forceSizes: normalizePositiveIntegerArray(record.forceSizes, fallback?.forceSizes ?? [], 1),
@@ -1250,63 +1256,152 @@ function normalizeExploredTilesByPlayer(value: unknown, legacyExplored: number[]
   return buffers;
 }
 
-function normalizeAiSourceScriptForces(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptForces"], world: WorldState): WorldState["aiStates"][number]["sourceScriptForces"] {
-  if (!Array.isArray(value)) {
-    return fallback;
+function normalizeAiSourceScriptForces(
+  value: unknown,
+  fallback: WorldState["aiStates"][number]["sourceScriptForces"],
+  world: WorldState,
+  playerId: number,
+  bounds: ReturnType<typeof sourceAiScriptSaveBounds>,
+  unavailableUnitIds: Set<string>
+): WorldState["aiStates"][number]["sourceScriptForces"] {
+  const source = Array.isArray(value) ? value : fallback;
+  if (bounds.scriptLength <= 0) {
+    const forces: WorldState["aiStates"][number]["sourceScriptForces"] = [];
+    const seenForceIds = new Set<number>();
+    const usedUnitIds = new Set(unavailableUnitIds);
+    const liveUnitIds = new Set(world.units.filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !unit.construction).map((unit) => unit.id));
+    for (const entry of source.slice(0, 16)) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const record = entry as Record<string, unknown>;
+      const id = Math.max(0, Math.floor(finiteNumberOr(record.id, 0)));
+      if (seenForceIds.has(id)) {
+        continue;
+      }
+      seenForceIds.add(id);
+      const targets = Array.isArray(record.targets)
+        ? record.targets.slice(0, 16).map((target) => {
+          if (!target || typeof target !== "object") {
+            return null;
+          }
+          const targetRecord = target as Record<string, unknown>;
+          const role = typeof targetRecord.role === "string" ? targetRecord.role : "";
+          return role ? {
+            role,
+            count: Math.max(0, Math.min(64, Math.floor(finiteNumberOr(targetRecord.count, 0)))),
+            unitTypeId: typeof targetRecord.unitTypeId === "string" ? targetRecord.unitTypeId : null
+          } : null;
+        }).filter((target): target is { role: string; count: number; unitTypeId: string | null } => Boolean(target))
+        : [];
+      const assignedUnitIds = normalizeStringIds(record.assignedUnitIds)
+        .filter((unitId) => liveUnitIds.has(unitId) && !usedUnitIds.has(unitId))
+        .slice(0, 64);
+      assignedUnitIds.forEach((unitId) => usedUnitIds.add(unitId));
+      forces.push({ id, attack: record.attack === true, targets, assignedUnitIds });
+    }
+    return forces;
   }
-  return value
+  const records = new Map<number, Record<string, unknown>>();
+  for (const entry of source) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const id = Math.max(0, Math.floor(finiteNumberOr(record.id, -1)));
+    if (!records.has(id)) {
+      records.set(id, record);
+    }
+  }
+  const usedUnitIds = new Set(unavailableUnitIds);
+  return bounds.activeForces.map((contract) => {
+    const record = records.get(contract.id);
+    return {
+      id: contract.id,
+      attack: contract.attack,
+      targets: contract.targets.map((target) => ({ ...target })),
+      assignedUnitIds: normalizeBoundedAiUnitIds(record?.assignedUnitIds, world, playerId, contract.unitTypeLimits, usedUnitIds, contract.maxAssignedUnitIds)
+    };
+  });
+}
+
+function normalizeAiSourceScriptLaunches(
+  value: unknown,
+  fallback: WorldState["aiStates"][number]["sourceScriptLaunches"],
+  world: WorldState,
+  playerId: number,
+  bounds: ReturnType<typeof sourceAiScriptSaveBounds>
+): WorldState["aiStates"][number]["sourceScriptLaunches"] {
+  const source = (Array.isArray(value) ? value : fallback)
     .map((entry) => {
       if (!entry || typeof entry !== "object") {
         return null;
       }
       const record = entry as Record<string, unknown>;
-      const targets = Array.isArray(record.targets)
-        ? record.targets
-          .map((target) => {
-            if (!target || typeof target !== "object") {
-              return null;
-            }
-            const targetRecord = target as Record<string, unknown>;
-            const role = typeof targetRecord.role === "string" ? targetRecord.role : "";
-            if (!role) {
-              return null;
-            }
-            return {
-              role,
-              count: Math.max(0, Math.floor(finiteNumberOr(targetRecord.count, 0))),
-              unitTypeId: typeof targetRecord.unitTypeId === "string" ? targetRecord.unitTypeId : null
-            };
-          })
-          .filter((target): target is { role: string; count: number; unitTypeId: string | null } => Boolean(target))
-        : [];
       return {
-        id: Math.max(0, Math.floor(finiteNumberOr(record.id, 0))),
-        attack: record.attack === true,
-        targets,
-        assignedUnitIds: normalizeExistingUnitIds(record.assignedUnitIds, world)
+        sourceForceId: Math.max(0, Math.floor(finiteNumberOr(record.sourceForceId, 0))),
+        unitIds: record.unitIds,
+        launchedTick: Math.max(0, Math.floor(finiteNumberOr(record.launchedTick, 0)))
       };
     })
-    .filter((entry): entry is WorldState["aiStates"][number]["sourceScriptForces"][number] => Boolean(entry));
-}
-
-function normalizeAiSourceScriptLaunches(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptLaunches"]): WorldState["aiStates"][number]["sourceScriptLaunches"] {
-  const source = Array.isArray(value) ? value : fallback;
-  return source.map((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return null;
+    .filter((entry): entry is { sourceForceId: number; unitIds: unknown; launchedTick: number } => Boolean(entry));
+  if (bounds.scriptLength <= 0) {
+    const liveUnitIds = new Set(world.units.filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !unit.construction).map((unit) => unit.id));
+    const usedUnitIds = new Set<string>();
+    return source.slice(0, 16).map((entry) => {
+      const unitIds = normalizeStringIds(entry.unitIds)
+        .filter((unitId) => liveUnitIds.has(unitId) && !usedUnitIds.has(unitId))
+        .slice(0, 64);
+      unitIds.forEach((unitId) => usedUnitIds.add(unitId));
+      return { sourceForceId: entry.sourceForceId, unitIds, launchedTick: entry.launchedTick };
+    });
+  }
+  const launches: WorldState["aiStates"][number]["sourceScriptLaunches"] = [];
+  const usedUnitIds = new Set<string>();
+  let sourceIndex = 0;
+  for (const contract of bounds.launches) {
+    let record: (typeof source)[number] | undefined;
+    while (sourceIndex < source.length) {
+      const candidate = source[sourceIndex];
+      sourceIndex += 1;
+      if (candidate?.sourceForceId === contract.sourceForceId) {
+        record = candidate;
+        break;
+      }
     }
-    const record = entry as Record<string, unknown>;
-    return {
-      sourceForceId: Math.max(0, Math.floor(finiteNumberOr(record.sourceForceId, 0))),
-      unitIds: normalizeStringIds(record.unitIds),
-      launchedTick: Math.max(0, Math.floor(finiteNumberOr(record.launchedTick, 0)))
-    };
-  }).filter((entry): entry is WorldState["aiStates"][number]["sourceScriptLaunches"][number] => Boolean(entry));
+    if (!record) {
+      continue;
+    }
+    launches.push({
+      sourceForceId: contract.sourceForceId,
+      unitIds: normalizeBoundedAiUnitIds(record.unitIds, world, playerId, contract.unitTypeLimits, usedUnitIds, contract.maxUnitIds),
+      launchedTick: record.launchedTick
+    });
+  }
+  return launches;
 }
 
-function normalizeExistingUnitIds(value: unknown, world: WorldState): string[] {
-  const liveIds = new Set(world.units.filter((unit) => unit.hitPoints > 0).map((unit) => unit.id));
-  return normalizeStringIds(value).filter((unitId) => liveIds.has(unitId));
+function normalizeBoundedAiUnitIds(value: unknown, world: WorldState, playerId: number, unitTypeLimits: Array<{ unitTypeId: string; count: number }>, usedUnitIds: Set<string>, limit: number): string[] {
+  const sourceIds = normalizeStringIds(value);
+  const liveUnits = new Map(world.units
+    .filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !unit.construction)
+    .map((unit) => [unit.id, unit]));
+  const selected: string[] = [];
+  for (const target of unitTypeLimits) {
+    let count = 0;
+    for (const unitId of sourceIds) {
+      if (selected.length >= limit || count >= target.count) {
+        break;
+      }
+      if (usedUnitIds.has(unitId) || liveUnits.get(unitId)?.typeId !== target.unitTypeId) {
+        continue;
+      }
+      selected.push(unitId);
+      usedUnitIds.add(unitId);
+      count += 1;
+    }
+  }
+  return selected;
 }
 
 function normalizeStringIds(value: unknown): string[] {
@@ -1316,26 +1411,8 @@ function normalizeStringIds(value: unknown): string[] {
   return [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0))];
 }
 
-function normalizeAiSourceScriptForceRoles(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptForceRoles"]): WorldState["aiStates"][number]["sourceScriptForceRoles"] {
-  if (!Array.isArray(value)) {
-    return fallback;
-  }
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return null;
-      }
-      const record = entry as Record<string, unknown>;
-      const role = typeof record.role === "string" ? record.role : "";
-      if (!role) {
-        return null;
-      }
-      return {
-        id: Math.max(0, Math.floor(finiteNumberOr(record.id, 0))),
-        role
-      };
-    })
-    .filter((entry): entry is WorldState["aiStates"][number]["sourceScriptForceRoles"][number] => Boolean(entry));
+function normalizeAiSourceScriptForceRoles(bounds: ReturnType<typeof sourceAiScriptSaveBounds>): WorldState["aiStates"][number]["sourceScriptForceRoles"] {
+  return bounds.activeForceRoles.map((entry) => ({ ...entry }));
 }
 
 function sourceOrderRetryTicksForSave(world: WorldState, sourceCycles: number): number {

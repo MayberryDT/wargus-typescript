@@ -6520,7 +6520,7 @@ function advanceSourceAiScript(world: WorldState, playerId: number, state: World
   }
 }
 
-function sourceAiScriptForState(state: WorldAiState): SourceAiInstruction[] | null {
+function sourceAiScriptForState(state: Pick<WorldAiState, "sourceScriptId" | "strategy">): SourceAiInstruction[] | null {
   if (state.sourceScriptId === "wc2-air-attack" || state.strategy === "air") {
     return SOURCE_AI_AIR_ATTACK_SCRIPT;
   }
@@ -6528,6 +6528,72 @@ function sourceAiScriptForState(state: WorldAiState): SourceAiInstruction[] | nu
     return SOURCE_AI_LAND_ATTACK_SCRIPT;
   }
   return null;
+}
+
+export function sourceAiScriptSaveBounds(world: WorldState, playerId: number, sourceScriptId: string | null, strategy: WorldAiState["strategy"], sourceScriptIndex: number): {
+  scriptLength: number;
+  sourceScriptIndex: number;
+  activeForces: Array<WorldAiState["sourceScriptForces"][number] & { unitTypeLimits: Array<{ unitTypeId: string; count: number }>; maxAssignedUnitIds: number }>;
+  activeForceRoles: WorldAiState["sourceScriptForceRoles"];
+  launches: Array<{ sourceForceId: number; unitTypeLimits: Array<{ unitTypeId: string; count: number }>; maxUnitIds: number }>;
+} {
+  const script = sourceAiScriptForState({ sourceScriptId, strategy });
+  if (!script) {
+    return { scriptLength: 0, sourceScriptIndex: 0, activeForces: [], activeForceRoles: [], launches: [] };
+  }
+  const normalizedIndex = Math.max(0, Math.min(script.length, Math.floor(sourceScriptIndex)));
+  const active = new Map<number, WorldAiState["sourceScriptForces"][number] & { unitTypeLimits: Array<{ unitTypeId: string; count: number }>; maxAssignedUnitIds: number }>();
+  const activeRoles = new Map<number, string>();
+  const launches: Array<{ sourceForceId: number; unitTypeLimits: Array<{ unitTypeId: string; count: number }>; maxUnitIds: number }> = [];
+  for (let index = 0; index < normalizedIndex; index += 1) {
+    const instruction = script[index];
+    if (instruction?.kind === "force") {
+      const targets = instruction.targets.map((target) => ({
+        role: target.role,
+        count: Math.max(0, Math.floor(target.count)),
+        unitTypeId: sourceAiUnitTypeForRole(world, playerId, target.role)
+      }));
+      const unitTypeLimits = targets
+        .filter((target): target is typeof target & { unitTypeId: string } => Boolean(target.unitTypeId))
+        .map((target) => ({ unitTypeId: target.unitTypeId, count: sourceAiDifficultyForceCount(world, target.count) }));
+      active.set(instruction.id, {
+        id: instruction.id,
+        attack: instruction.attack,
+        targets,
+        assignedUnitIds: [],
+        unitTypeLimits,
+        maxAssignedUnitIds: unitTypeLimits.reduce((sum, target) => sum + target.count, 0)
+      });
+      continue;
+    }
+    if (instruction?.kind === "force-role") {
+      activeRoles.set(instruction.id, instruction.role);
+      continue;
+    }
+    if (instruction?.kind !== "attack-force") {
+      continue;
+    }
+    const force = active.get(instruction.id);
+    if (!force) {
+      continue;
+    }
+    launches.push({
+      sourceForceId: instruction.id,
+      unitTypeLimits: force.unitTypeLimits,
+      maxUnitIds: force.maxAssignedUnitIds
+    });
+    active.delete(instruction.id);
+    activeRoles.delete(instruction.id);
+  }
+  return {
+    scriptLength: script.length,
+    sourceScriptIndex: normalizedIndex,
+    activeForces: [...active.values()],
+    activeForceRoles: [...activeRoles]
+      .filter(([id]) => active.has(id))
+      .map(([id, role]) => ({ id, role })),
+    launches
+  };
 }
 
 function applySourceAiInstruction(world: WorldState, playerId: number, state: WorldAiState, instruction: SourceAiInstruction): SourceAiInstructionResult {
@@ -6569,8 +6635,7 @@ function applySourceAiInstruction(world: WorldState, playerId: number, state: Wo
     case "wait-force":
       return sourceAiForceReady(world, playerId, state, instruction.id) ? "advance" : "block";
     case "attack-force":
-      launchSourceAiAttackForce(world, playerId, state, instruction.id);
-      return "advance";
+      return launchSourceAiAttackForce(world, playerId, state, instruction.id) ? "advance" : "block";
     case "research": {
       const upgradeId = race === "orc" ? instruction.orcId : instruction.humanId;
       if (!state.researchOrder.includes(upgradeId)) {
@@ -6637,12 +6702,11 @@ function setSourceAiForce(world: WorldState, playerId: number, state: WorldAiSta
   }
 }
 
-function launchSourceAiAttackForce(world: WorldState, playerId: number, state: WorldAiState, id: number): void {
+function launchSourceAiAttackForce(world: WorldState, playerId: number, state: WorldAiState, id: number): boolean {
   const force = state.sourceScriptForces.find((candidate) => candidate.id === id);
-  if (!force) {
-    return;
+  if (!force || !sourceAiForceReady(world, playerId, state, id)) {
+    return false;
   }
-  assignSourceAiForceUnits(world, playerId, state, force);
   const unitIds = force.assignedUnitIds.filter((unitId) => {
     const unit = findUnit(world, unitId);
     if (!unit || unit.hitPoints <= 0) {
@@ -6653,11 +6717,14 @@ function launchSourceAiAttackForce(world: WorldState, playerId: number, state: W
       return issueAttackOrder(world, unit.id, target.id);
     }
     const pressurePoint = findAiPressurePointForUnit(world, playerId, unit);
-    if (pressurePoint) {
-      issueAttackMoveOrder(world, unit.id, pressurePoint.x, pressurePoint.y);
-    }
-    return true;
+    return Boolean(pressurePoint && issueAttackMoveOrder(world, unit.id, pressurePoint.x, pressurePoint.y));
   });
+  if (unitIds.length !== force.assignedUnitIds.length || unitIds.some((unitId) => {
+    const order = findUnit(world, unitId)?.order;
+    return order?.kind !== "attack" && order?.kind !== "attack-move";
+  })) {
+    return false;
+  }
   const launchLimit = sourceAiScriptForState(state)?.filter((instruction) => instruction.kind === "attack-force").length ?? 0;
   state.sourceScriptLaunches = [
     ...state.sourceScriptLaunches,
@@ -6665,6 +6732,7 @@ function launchSourceAiAttackForce(world: WorldState, playerId: number, state: W
   ].slice(-Math.max(1, launchLimit));
   state.sourceScriptForces = state.sourceScriptForces.filter((candidate) => candidate.id !== id);
   state.sourceScriptForceRoles = state.sourceScriptForceRoles.filter((entry) => entry.id !== id);
+  return true;
 }
 
 function sourceAiForceReady(world: WorldState, playerId: number, state: WorldAiState, id: number): boolean {
@@ -6673,17 +6741,29 @@ function sourceAiForceReady(world: WorldState, playerId: number, state: WorldAiS
     return true;
   }
   assignSourceAiForceUnits(world, playerId, state, force);
+  const remaining = new Set(force.assignedUnitIds);
   return force.targets.every((target) => {
     if (target.count <= 0 || !target.unitTypeId) {
       return true;
     }
     const role = target.role;
     const unitTypeId = target.unitTypeId;
-    return isSourceAiUnitRole(role) && force.assignedUnitIds
-      .map((unitId) => findUnit(world, unitId))
-      .filter((unit): unit is WorldUnit => Boolean(unit && unit.hitPoints > 0))
-      .filter((unit) => sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId))
-      .length >= sourceAiDifficultyForceCount(world, target.count);
+    if (!isSourceAiUnitRole(role)) {
+      return false;
+    }
+    let present = 0;
+    for (const unitId of remaining) {
+      const unit = findUnit(world, unitId);
+      if (!unit || unit.hitPoints <= 0 || !sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId)) {
+        continue;
+      }
+      remaining.delete(unitId);
+      present += 1;
+      if (present >= sourceAiDifficultyForceCount(world, target.count)) {
+        break;
+      }
+    }
+    return present >= sourceAiDifficultyForceCount(world, target.count);
   });
 }
 
@@ -6692,13 +6772,15 @@ function assignSourceAiForceUnits(world: WorldState, playerId: number, state: Wo
     ...state.sourceScriptLaunches.flatMap((launch) => launch.unitIds),
     ...state.sourceScriptForces.filter((candidate) => candidate.id !== force.id).flatMap((candidate) => candidate.assignedUnitIds)
   ]);
-  const assigned = new Set(force.assignedUnitIds.filter((unitId) => {
+  const validAssigned = new Set(force.assignedUnitIds.filter((unitId) => {
     const unit = findUnit(world, unitId);
     return Boolean(unit && unit.player === playerId && unit.hitPoints > 0 && !unavailable.has(unitId));
   }));
   const candidates = world.units
     .filter((unit) => unit.player === playerId && unit.hitPoints > 0 && !unit.construction && !isWorker(unit) && canReceiveMoveOrders(unit) && !unavailable.has(unit.id))
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .sort((left, right) => Number(validAssigned.has(right.id)) - Number(validAssigned.has(left.id)) || left.id.localeCompare(right.id));
+  const assigned: string[] = [];
+  const claimed = new Set<string>();
   for (const target of force.targets) {
     if (!target.unitTypeId || !isSourceAiUnitRole(target.role)) {
       continue;
@@ -6706,27 +6788,23 @@ function assignSourceAiForceUnits(world: WorldState, playerId: number, state: Wo
     const desired = sourceAiDifficultyForceCount(world, target.count);
     const role = target.role;
     const unitTypeId = target.unitTypeId;
-    let present = [...assigned]
-      .map((unitId) => findUnit(world, unitId))
-      .filter((unit): unit is WorldUnit => Boolean(unit && sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId)))
-      .length;
+    let present = 0;
     for (const unit of candidates) {
-      if (present >= desired) break;
-      if (!assigned.has(unit.id) && sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId)) {
-        assigned.add(unit.id);
+      if (present >= desired) {
+        break;
+      }
+      if (!claimed.has(unit.id) && sourceAiUnitMatchesForceTarget(world, unit, role, unitTypeId)) {
+        claimed.add(unit.id);
+        assigned.push(unit.id);
         present += 1;
       }
     }
   }
-  force.assignedUnitIds = [...assigned];
+  force.assignedUnitIds = assigned;
 }
 
-function sourceAiUnitMatchesForceTarget(world: WorldState, unit: WorldUnit, role: SourceAiUnitRole, unitTypeId: string): boolean {
-  if (unit.typeId === unitTypeId) {
-    return true;
-  }
-  const definition = world.unitDefinitions.find((candidate) => candidate.id === unit.typeId);
-  return Boolean(definition && sourceAiUnitDefinitionMatchesRole(definition, role));
+function sourceAiUnitMatchesForceTarget(_world: WorldState, unit: WorldUnit, _role: SourceAiUnitRole, unitTypeId: string): boolean {
+  return unit.typeId === unitTypeId;
 }
 
 function isSourceAiBuildRole(role: SourceAiRole): role is SourceAiBuildRole {
@@ -6749,16 +6827,9 @@ function sourceAiRoleCount(world: WorldState, playerId: number, role: SourceAiRo
   return sourceAiBuildRoleCount(world, buildings, role, playerId);
 }
 
-function countSourceAiCombatRole(world: WorldState, playerId: number, role: SourceAiUnitRole, unitTypeId: string): number {
+function countSourceAiCombatRole(world: WorldState, playerId: number, _role: SourceAiUnitRole, unitTypeId: string): number {
   return world.units.filter((unit) => {
-    if (unit.player !== playerId || unit.hitPoints <= 0 || unit.construction || isWorker(unit)) {
-      return false;
-    }
-    if (unit.typeId === unitTypeId) {
-      return true;
-    }
-    const definition = world.unitDefinitions.find((candidate) => candidate.id === unit.typeId);
-    return Boolean(definition && sourceAiUnitDefinitionMatchesRole(definition, role));
+    return unit.player === playerId && unit.hitPoints > 0 && !unit.construction && !isWorker(unit) && unit.typeId === unitTypeId;
   }).length;
 }
 
@@ -19181,6 +19252,89 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     oneHall,
     secondBarracks,
     competingCosts
+  };
+}
+
+export function runPlan014AiForceSafetyFixture(sourceWorld: WorldState): Record<string, unknown> {
+  const sourceState = sourceWorld.aiStates.find((state) => state.enabled);
+  if (!sourceState) {
+    return { ok: false, error: "missing enabled AI state" };
+  }
+  const race = sourceWorld.players.find((player) => player.id === sourceState.player)?.race === "orc" ? "orc" : "human";
+  const cavalryMageTypeId = sourceAiPreferredUnitTypeForRole(race, "cavalry-mage");
+  const mageTypeId = sourceAiPreferredUnitTypeForRole(race, "mage");
+  const soldierTypeId = sourceAiPreferredUnitTypeForRole(race, "soldier");
+  const requiredTypeIds = [cavalryMageTypeId, mageTypeId, soldierTypeId];
+  if (requiredTypeIds.some((typeId) => !sourceWorld.unitDefinitions.some((definition) => definition.id === typeId))) {
+    return { ok: false, error: `missing force fixture definitions: ${requiredTypeIds.join(", ")}` };
+  }
+  const fixture = (): { world: WorldState; state: WorldAiState } => {
+    const world = plan014AiFixtureWorld(sourceWorld, 24, 18);
+    world.engineSettings.lastDifficultyDefault = 3;
+    world.aiStates.forEach((state) => { state.enabled = false; });
+    const state = world.aiStates.find((candidate) => candidate.player === sourceState.player)!;
+    state.enabled = true;
+    state.strategy = "land";
+    state.sourceScriptId = "wc2-land-attack";
+    state.sourceScriptForces = [];
+    state.sourceScriptLaunches = [];
+    state.sourceScriptForceRoles = [];
+    world.exploredTilesByPlayer[state.player]?.fill(1);
+    return { world, state };
+  };
+  const unit = (world: WorldState, typeId: string, id: string, tileX: number, tileY: number): WorldUnit => {
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === typeId)!;
+    return createWorldUnit({ unit: definition, id, player: sourceState.player, tileX, tileY, tileset: null });
+  };
+
+  const mixedFixture = fixture();
+  mixedFixture.world.units = [
+    unit(mixedFixture.world, cavalryMageTypeId, "__plan014-mixed-cavalry-mage-a", 4, 5),
+    unit(mixedFixture.world, cavalryMageTypeId, "__plan014-mixed-cavalry-mage-b", 5, 5),
+    unit(mixedFixture.world, soldierTypeId, "__plan014-mixed-soldier", 6, 5)
+  ];
+  setSourceAiForce(mixedFixture.world, mixedFixture.state.player, mixedFixture.state, 5, true, [
+    { role: "cavalry-mage", count: 2 },
+    { role: "mage", count: 1 }
+  ]);
+  const readyWithoutMage = sourceAiForceReady(mixedFixture.world, mixedFixture.state.player, mixedFixture.state, 5);
+  mixedFixture.world.units.push(unit(mixedFixture.world, mageTypeId, "__plan014-mixed-mage", 7, 5));
+  const readyWithMage = sourceAiForceReady(mixedFixture.world, mixedFixture.state.player, mixedFixture.state, 5);
+  const mixedForce = mixedFixture.state.sourceScriptForces.find((force) => force.id === 5);
+  const assignedIds = mixedForce?.assignedUnitIds ?? [];
+  const assignedTypes = assignedIds.map((unitId) => findUnit(mixedFixture.world, unitId)?.typeId ?? "missing");
+
+  const noPressureFixture = fixture();
+  const noPressureUnit = unit(noPressureFixture.world, soldierTypeId, "__plan014-no-pressure-soldier", 5, 5);
+  noPressureFixture.world.units = [noPressureUnit];
+  setSourceAiForce(noPressureFixture.world, noPressureFixture.state.player, noPressureFixture.state, 1, true, [{ role: "soldier", count: 1 }]);
+  sourceAiForceReady(noPressureFixture.world, noPressureFixture.state.player, noPressureFixture.state, 1);
+  const launchSucceeded = launchSourceAiAttackForce(noPressureFixture.world, noPressureFixture.state.player, noPressureFixture.state, 1);
+  const retryEligible = sourceAiForceReady(noPressureFixture.world, noPressureFixture.state.player, noPressureFixture.state, 1)
+    && !noPressureFixture.state.sourceScriptLaunches.some((launch) => launch.unitIds.includes(noPressureUnit.id));
+  const mixed = { readyWithoutMage, readyWithMage, cavalryMageTypeId, mageTypeId, soldierTypeId, assignedIds, assignedTypes };
+  const noPressure = {
+    launchSucceeded,
+    launchCount: noPressureFixture.state.sourceScriptLaunches.length,
+    activeForceCount: noPressureFixture.state.sourceScriptForces.length,
+    unitOrderKind: noPressureUnit.order?.kind ?? null,
+    retryEligible
+  };
+  return {
+    ok: !mixed.readyWithoutMage
+      && mixed.readyWithMage
+      && mixed.assignedIds.length === 3
+      && new Set(mixed.assignedIds).size === 3
+      && mixed.assignedTypes.filter((typeId) => typeId === cavalryMageTypeId).length === 2
+      && mixed.assignedTypes.filter((typeId) => typeId === mageTypeId).length === 1
+      && !mixed.assignedTypes.includes(soldierTypeId)
+      && !noPressure.launchSucceeded
+      && noPressure.launchCount === 0
+      && noPressure.activeForceCount === 1
+      && noPressure.unitOrderKind === null
+      && noPressure.retryEligible,
+    mixed,
+    noPressure
   };
 }
 

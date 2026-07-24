@@ -493,24 +493,25 @@ const requiredOrderFragments = [
   "countPlayerUnitsAndQueued",
   "state.buildOrder",
   "function issueSourceAiBuildNeeds",
+  "function issueSourceAiConstructionRequest",
   "const buildings = world.units.filter((unit) => unit.player === playerId && isSourceAiBuilding(unit) && unit.hitPoints > 0)",
   "function isSourceAiDepotRole",
   "function issueSourceAiUpgradeNeed",
   "const buildings = world.units.filter((unit) => unit.player === playerId && isSourceAiBuilding(unit) && unit.hitPoints > 0 && !unit.construction)",
   "function issueAiBuildBySourceRole",
   "sourceAiBuildNeedForRole(world, playerId, role, race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"town-center\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"supply\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"barracks\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"lumber-mill\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"blacksmith\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"advanced-melee\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"caster\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"shipyard\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"foundry\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"refinery\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"air\", race)",
-  "issueAiBuildBySourceRole(world, builder, playerId, \"demolition\", race)",
+  "issueSourceAiConstructionRequest(world, playerId, \"town-center\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"supply\", completedSupply + 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"barracks\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"lumber-mill\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"blacksmith\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"advanced-melee\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"caster\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"shipyard\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"foundry\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"refinery\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"air\", 1, race",
+  "issueSourceAiConstructionRequest(world, playerId, \"demolition\", 1, race",
   "function isSourceAiBuilding",
   "return isBuildingLike(unit);",
   "function sourceAiBuildDefinitionMatchesRole",
@@ -550,7 +551,7 @@ const requiredOrderFragments = [
   "state.researchOrder",
   "preferredUpgradeIds.filter(matchesSourceUpgrade)",
   "const holyProducers = completedUnits.filter((unit) => isHolyResearchProducer(world, unit));",
-  'issueAiBuildBySourceRole(world, builder, playerId, "holy", race);',
+  'issueSourceAiConstructionRequest(world, playerId, "holy", 1, race',
   "for (const building of holyProducers)",
   "return { matches, fallback: human ? \"unit-church\" : \"unit-altar-of-storms\" };",
   "return sourceBuildDefinitionResearchesMatching(world, definition.id, (upgradeId) => isHolyResearchUpgradeId(world, upgradeId), playerId);",
@@ -634,6 +635,10 @@ for (const fragment of [
   "function assignSourceAiForceUnits",
   "state.sourceScriptLaunches.flatMap",
   "function launchSourceAiAttackForce",
+  'return launchSourceAiAttackForce(world, playerId, state, instruction.id) ? "advance" : "block"',
+  "unitIds.length !== force.assignedUnitIds.length",
+  "return unit.typeId === unitTypeId",
+  "const claimed = new Set<string>()",
   "launchedTick: world.tick",
   "state.sourceScriptForces = state.sourceScriptForces.filter",
   "if (state.sourceScriptId)",
@@ -660,7 +665,10 @@ for (const fragment of [
   "record.sourceScriptLaunches",
   "normalizeAiSourceScriptLaunches",
   "record.assignedUnitIds",
-  "normalizeExistingUnitIds",
+  "sourceAiScriptSaveBounds",
+  "normalizeBoundedAiUnitIds",
+  "bounds.activeForces.map",
+  "for (const contract of bounds.launches)",
   "function normalizeStringIds"
 ]) {
   if (!saveSource.includes(fragment)) {
@@ -668,7 +676,7 @@ for (const fragment of [
   }
 }
 
-const sourceAiBuildNeedsBody = ordersSource.match(/function issueSourceAiBuildNeeds[\s\S]*?\n}\n\nfunction isSourceAiDepotRole/)?.[0] ?? "";
+const sourceAiBuildNeedsBody = ordersSource.match(/function issueSourceAiBuildNeeds[\s\S]*?\n}\n\nfunction issueSourceAiConstructionRequest/)?.[0] ?? "";
 if (sourceAiBuildNeedsBody.includes('unit.kind === "building"')) {
   error("Source AI build needs should count buildings through source Building semantics instead of browser-local kind text.");
 }
