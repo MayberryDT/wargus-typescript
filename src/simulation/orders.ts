@@ -2,7 +2,7 @@ import type { WargusAllowRule, WargusButton, WargusMissile, WargusSpell, WargusU
 import { sourceButtonAppliesTo, sourceButtonLabel } from "../wargus/buttons";
 import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
-import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, isWorldPositionVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
+import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath, findPathResult } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
@@ -8159,6 +8159,11 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
   if (!world.engineSettings.aiExploresDefault) {
     return;
   }
+  const state = world.aiStates.find((candidate) => candidate.player === playerId);
+  if (!state || world.tick < state.nextScoutTick) {
+    return;
+  }
+  let assigned = false;
   for (const scout of scouts) {
     if (scout.order && scout.order.kind !== "move") {
       continue;
@@ -8168,21 +8173,19 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
     if (scout.order && !nearDestination) {
       continue;
     }
-    const target = findAiPressurePointForUnit(world, playerId, scout) ?? fallbackAiScoutPoint(world, playerId, scout);
+    const target = findAiPressurePointForUnit(world, playerId, scout) ?? fallbackAiScoutPoint(world, scout);
     if (target) {
       issueMoveOrder(world, scout.id, target.x, target.y);
+      assigned = true;
     }
+  }
+  if (assigned) {
+    state.nextScoutTick = world.tick + sourceOrderRetryTicks(world, 5 * 30);
   }
 }
 
-function fallbackAiScoutPoint(world: WorldState, playerId: number, scout: WorldUnit): { x: number; y: number } | null {
-  const columns = Math.max(1, world.map.width - 2);
-  const rows = Math.max(1, world.map.height - 2);
-  const hash = Math.abs(deterministicHash(`${playerId}:${scout.id}:${Math.floor(world.tick / sourceOrderRetryTicks(world, 600))}`));
-  return {
-    x: (1 + (hash % columns)) * world.tileSize + world.tileSize / 2,
-    y: (1 + (Math.floor(hash / columns) % rows)) * world.tileSize + world.tileSize / 2
-  };
+function fallbackAiScoutPoint(world: WorldState, scout: WorldUnit): { x: number; y: number } | null {
+  return findExplorationCandidates(world, scout)[0] ?? null;
 }
 
 function demolitionProductionCount(world: WorldState, units: WorldUnit[]): number {
@@ -8751,11 +8754,12 @@ function findAiPressurePointForUnit(world: WorldState, playerId: number, unit: W
       && isUnitVisibleToPlayer(world, candidate, playerId))
     .map((candidate) => ({ x: candidate.x, y: candidate.y }));
   const unexploredCandidates: Array<{ x: number; y: number; score: number }> = [];
+  const exploredTiles = sourceExploredTilesForPlayer(world, playerId);
   const stride = Math.max(4, Math.floor(Math.min(world.map.width, world.map.height) / 10));
   for (let tileY = 1; tileY < world.map.height - 1; tileY += stride) {
     for (let tileX = 1; tileX < world.map.width - 1; tileX += stride) {
       const point = tileToWorldCenter(world, tileX, tileY);
-      if (isWorldPositionVisibleToPlayer(world, point.x, point.y, playerId)) {
+      if (exploredTiles[tileY * world.map.width + tileX] !== 0) {
         continue;
       }
       unexploredCandidates.push({ ...point, score: distanceSquared(unit, point) + Math.abs(deterministicHash(`${playerId}:${tileX}:${tileY}`)) % 97 });
@@ -9286,6 +9290,7 @@ function retargetExploreOrder(world: WorldState, unit: WorldUnit): void {
 }
 
 function findExplorationCandidates(world: WorldState, unit: WorldUnit): Array<{ x: number; y: number }> {
+  const exploredTiles = sourceExploredTilesForPlayer(world, unit.player);
   const seed = Math.abs(deterministicHash(`${unit.player}:${unit.id}:${world.tick}`));
   const unexplored = findUnexploredExplorationCandidates(world, unit, seed);
   if (unexplored.length > 0) {
@@ -9296,7 +9301,7 @@ function findExplorationCandidates(world: WorldState, unit: WorldUnit): Array<{ 
   for (let y = 1; y < world.map.height - 1; y += stride) {
     for (let x = 1; x < world.map.width - 1; x += stride) {
       const index = y * world.map.width + x;
-      const explored = world.exploredTiles[index] !== 0;
+      const explored = exploredTiles[index] !== 0;
       const worldX = x * world.tileSize + world.tileSize / 2;
       const worldY = y * world.tileSize + world.tileSize / 2;
       const distance = Math.hypot(worldX - unit.x, worldY - unit.y);
@@ -9310,10 +9315,11 @@ function findExplorationCandidates(world: WorldState, unit: WorldUnit): Array<{ 
 }
 
 function findUnexploredExplorationCandidates(world: WorldState, unit: WorldUnit, seed: number): Array<{ x: number; y: number }> {
+  const exploredTiles = sourceExploredTilesForPlayer(world, unit.player);
   const candidates: Array<{ x: number; y: number; score: number }> = [];
   for (let y = 1; y < world.map.height - 1; y += 1) {
     for (let x = 1; x < world.map.width - 1; x += 1) {
-      if (world.exploredTiles[y * world.map.width + x] !== 0) {
+      if (exploredTiles[y * world.map.width + x] !== 0) {
         continue;
       }
       const worldX = x * world.tileSize + world.tileSize / 2;
@@ -9327,6 +9333,16 @@ function findUnexploredExplorationCandidates(world: WorldState, unit: WorldUnit,
   return candidates
     .sort((left, right) => left.score - right.score)
     .map(({ x, y }) => ({ x, y }));
+}
+
+function sourceExploredTilesForPlayer(world: WorldState, playerId: number): Uint8Array {
+  const existing = world.exploredTilesByPlayer[playerId];
+  if (existing) {
+    return existing;
+  }
+  const buffer = new Uint8Array(world.map.width * world.map.height);
+  world.exploredTilesByPlayer[playerId] = buffer;
+  return buffer;
 }
 
 function issueRallyOrderToTrainedUnit(world: WorldState, producer: WorldUnit, trainedUnit: WorldUnit): void {
@@ -18956,12 +18972,63 @@ export function runPlan013CombatScenario(sourceWorld: WorldState, scenario: "M05
   return runPlan013M07(sourceWorld);
 }
 
+function plan014AiFixtureWorld(sourceWorld: WorldState, width = 16, height = 12): WorldState {
+  const tileCount = width * height;
+  const players = structuredClone(sourceWorld.players) as WorldState["players"];
+  const playerBufferCount = players.reduce(
+    (count, player) => Math.max(count, player.id + 1),
+    Math.max(1, sourceWorld.exploredTilesByPlayer.length)
+  );
+  const exploredTilesByPlayer = Array.from(
+    { length: playerBufferCount },
+    () => new Uint8Array(tileCount)
+  );
+  return {
+    ...sourceWorld,
+    map: { ...sourceWorld.map, width, height },
+    tileSize: 32,
+    tiles: Array.from({ length: tileCount }, () => 0),
+    terrainVersion: 0,
+    units: [],
+    corpses: [],
+    projectiles: [],
+    pendingAttacks: [],
+    spellEffects: [],
+    tilesetTerrain: null,
+    engineSettings: structuredClone(sourceWorld.engineSettings),
+    players,
+    researchedUpgrades: structuredClone(sourceWorld.researchedUpgrades),
+    activeResearch: [],
+    queuedResearch: [],
+    aiStates: structuredClone(sourceWorld.aiStates) as WorldState["aiStates"],
+    exploredTilesByPlayer,
+    exploredTiles: exploredTilesByPlayer[sourceWorld.visibilityPlayer] ?? new Uint8Array(tileCount),
+    visibleTiles: new Uint8Array(tileCount),
+    lastSeenBuildings: [],
+    visibilityReveals: [],
+    forestRegrowth: [],
+    forestResources: [],
+    revelationKnownMainFacilityPlayers: [],
+    revelationTimers: [],
+    revealedPlayers: [],
+    godModePlayers: [],
+    matchState: { status: "playing", winner: null, endedTick: null },
+    events: [],
+    lastHelpTickByPlayer: {},
+    lastHelpLocationByPlayer: {},
+    nextUnitSerial: 0,
+    elapsed: 0,
+    tick: 0,
+    accumulator: 0
+  };
+}
+
 export function runPlan014AiScriptFixture(sourceWorld: WorldState): Record<string, unknown> {
   const sourceState = sourceWorld.aiStates.find((state) => state.enabled);
   if (!sourceState) {
     return { ok: false, error: "missing enabled AI state" };
   }
-  const world = structuredClone(sourceWorld) as WorldState;
+  const world = plan014AiFixtureWorld(sourceWorld);
   world.engineSettings.lastDifficultyDefault = 3;
   world.matchState = { status: "playing", winner: null, endedTick: null };
   world.tick = 0;
@@ -19027,6 +19094,88 @@ export function runPlan014AiScriptFixture(sourceWorld: WorldState): Record<strin
   };
 }
 
+export function createPlan014AiKnowledgeFixtureWorld(sourceWorld: WorldState): WorldState {
+  const world = plan014AiFixtureWorld(sourceWorld);
+  const state = world.aiStates.find((candidate) => candidate.enabled);
+  if (!state) {
+    return world;
+  }
+  const fixtureUnit = (playerId: number, id: string, tileX: number, tileY: number): WorldUnit => {
+    const player = world.players.find((candidate) => candidate.id === playerId);
+    const workerTypeId = player?.race === "orc" ? "unit-peon" : "unit-peasant";
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === workerTypeId);
+    if (!definition) throw new Error(`Plan 014 knowledge fixture missing ${workerTypeId}`);
+    return createWorldUnit({ unit: definition, id, player: playerId, tileX, tileY, tileset: null });
+  };
+  world.units = [
+    fixtureUnit(world.visibilityPlayer, "__plan014-local-worker", 13, 9),
+    fixtureUnit(state.player, "__plan014-ai-worker", 2, 2)
+  ];
+  return world;
+}
+
+export function runPlan014AiKnowledgeFixture(sourceWorld: WorldState): Record<string, unknown> {
+  const world = createPlan014AiKnowledgeFixtureWorld(sourceWorld);
+  const state = world.aiStates.find((candidate) => candidate.enabled);
+  if (!state) {
+    return { ok: false, error: "missing enabled AI state" };
+  }
+  const tileCount = world.map.width * world.map.height;
+  const localBuffer = world.exploredTilesByPlayer[world.visibilityPlayer] ?? new Uint8Array(tileCount);
+  const aiBuffer = world.exploredTilesByPlayer[state.player] ?? new Uint8Array(tileCount);
+  world.exploredTilesByPlayer[world.visibilityPlayer] = localBuffer;
+  world.exploredTilesByPlayer[state.player] = aiBuffer;
+  localBuffer.fill(1);
+  aiBuffer.fill(0);
+  world.exploredTiles = localBuffer;
+  state.nextExplorationUpdateTick = 0;
+  world.tick = 0;
+  updateVisibility(world);
+  const aiExploredAfterUpdate = aiBuffer.reduce((sum, value) => sum + value, 0);
+  const localExploredAfterUpdate = localBuffer.reduce((sum, value) => sum + value, 0);
+  const explorer = world.units.find((unit) => unit.player === state.player && unit.hitPoints > 0 && canReceiveMoveOrders(unit));
+  const candidate = explorer ? findExplorationCandidates(world, explorer)[0] ?? null : null;
+  const candidateIndex = candidate ? Math.floor(candidate.y / world.tileSize) * world.map.width + Math.floor(candidate.x / world.tileSize) : -1;
+  const ownerCandidateWasUnexplored = candidateIndex >= 0 && aiBuffer[candidateIndex] === 0;
+  const humanCandidateWasExplored = candidateIndex >= 0 && localBuffer[candidateIndex] === 1;
+
+  const player = world.players.find((candidatePlayer) => candidatePlayer.id === state.player)!;
+  const factors: Record<number, number> = {};
+  for (const difficulty of [1, 2, 3, 4, 5]) {
+    world.engineSettings.lastDifficultyDefault = difficulty;
+    applySourceAiDifficultyBonuses(world, player);
+    factors[difficulty] = player.speedFactors.build;
+  }
+  world.engineSettings.lastDifficultyDefault = 3;
+  applySourceAiDifficultyBonuses(world, player);
+  const resetFactor = player.speedFactors.build;
+
+  state.sourceScriptSleepUntilTick = 0;
+  world.tick = 0;
+  const sleepInstruction: SourceAiInstruction = { kind: "sleep", cycles: 30 };
+  const sleepStart = applySourceAiInstruction(world, state.player, state, sleepInstruction);
+  const sleepDeadline = state.sourceScriptSleepUntilTick;
+  world.tick = sleepDeadline;
+  const sleepFinish = applySourceAiInstruction(world, state.player, state, sleepInstruction);
+
+  return {
+    ok: aiExploredAfterUpdate > 0
+      && aiExploredAfterUpdate < localExploredAfterUpdate
+      && world.exploredTiles === localBuffer
+      && ownerCandidateWasUnexplored
+      && humanCandidateWasExplored
+      && JSON.stringify(factors) === JSON.stringify({ 1: 0.75, 2: 1, 3: 1, 4: 1.2, 5: 1.5 })
+      && resetFactor === 1
+      && sleepStart === "block"
+      && sleepFinish === "advance"
+      && state.sourceScriptSleepUntilTick === 0,
+    exploration: { aiExploredAfterUpdate, localExploredAfterUpdate, aliasBound: world.exploredTiles === localBuffer, candidate, ownerCandidateWasUnexplored, humanCandidateWasExplored, nextExplorationUpdateTick: state.nextExplorationUpdateTick },
+    difficulty: { factors, resetFactor },
+    sleep: { sleepStart, sleepDeadline, sleepFinish, finalDeadline: state.sourceScriptSleepUntilTick },
+    scout: { nextScoutTick: state.nextScoutTick }
+  };
+}
+
 function plan013FixtureWorld(sourceWorld: WorldState, width = 12, height = 9): WorldState {
   const fixture = structuredClone(sourceWorld) as WorldState;
   fixture.map = { ...fixture.map, width, height };
@@ -19040,7 +19189,8 @@ function plan013FixtureWorld(sourceWorld: WorldState, width = 12, height = 9): W
   fixture.pendingAttacks = [];
   fixture.spellEffects = [];
   fixture.events = [];
-  fixture.exploredTiles = new Uint8Array(width * height);
+  fixture.exploredTilesByPlayer = fixture.exploredTilesByPlayer.map(() => new Uint8Array(width * height));
+  fixture.exploredTiles = fixture.exploredTilesByPlayer[fixture.visibilityPlayer] ?? new Uint8Array(width * height);
   fixture.visibleTiles = new Uint8Array(width * height);
   fixture.visibilityReveals = [];
   fixture.lastSeenBuildings = [];
@@ -19338,10 +19488,25 @@ function runPlan013M07(sourceWorld: WorldState): Record<string, unknown> {
   const explicitIssued = issueAttackOrder(explicitWorld, explicitAttacker.id, explicitTarget.id);
   const explicitAutoReturn = explicitAttacker.order?.kind === "attack" ? explicitAttacker.order.autoReturn : undefined;
 
+  const holdWorld = plan013FixtureWorld(sourceWorld);
+  const holdPlayers = plan013FixturePlayers(holdWorld);
+  const holder = plan013FixtureUnit(holdWorld, "unit-footman", "__plan013-m07-holder", holdPlayers.local, 2, 3);
+  const holdTarget = plan013FixtureUnit(holdWorld, "unit-grunt", "__plan013-m07-hold-target", holdPlayers.enemy, 5, 3);
+  holdTarget.canAttack = false;
+  holdTarget.speed = 0;
+  holdWorld.units = [holder, holdTarget];
+  updateVisibility(holdWorld);
+  const holdOrigin = { x: holder.x, y: holder.y };
+  const holdIssued = issueHoldPositionOrder(holdWorld, holder.id);
+  plan013Tick(holdWorld, 45);
+  const holdMovedDistance = Math.hypot(holder.x - holdOrigin.x, holder.y - holdOrigin.y);
+  const holdTargetId = holder.order?.kind === "hold" ? holder.order.targetId : null;
+
   return {
-    ok: automaticTargetId === target.id && autoReturn?.x === origin.x && autoReturn.y === origin.y && returnDistance <= world.tileSize && explicitIssued && explicitAutoReturn === null,
+    ok: automaticTargetId === target.id && autoReturn?.x === origin.x && autoReturn.y === origin.y && returnDistance <= world.tileSize && explicitIssued && explicitAutoReturn === null && holdIssued && holder.order?.kind === "hold" && holdMovedDistance === 0 && holdTargetId === null,
     automatic: { targetId: automaticTargetId, autoReturn, origin, reactionDistance, returnDistance, finalOrderKind: defender.order?.kind ?? null },
     explicit: { issued: explicitIssued, autoReturn: explicitAutoReturn ?? null, orderKind: explicitAttacker.order?.kind ?? null },
+    hold: { movedDistance: holdMovedDistance, targetId: holdTargetId },
     saveContract: { legacyMissingAutoReturnDefaultsToNull: true, verifier: "verify:save-schema" }
   };
 }

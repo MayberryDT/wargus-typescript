@@ -123,6 +123,7 @@ interface SavedGame {
     queuedResearch?: WorldState["queuedResearch"];
     aiStates: WorldState["aiStates"];
     visibilityPlayer: number;
+    exploredTilesByPlayer?: number[][];
     exploredTiles: number[];
     visibleTiles: number[];
     lastSeenBuildings?: WorldState["lastSeenBuildings"];
@@ -235,6 +236,7 @@ function createSavedGame(world: WorldState, camera: { x: number; y: number; zoom
       queuedResearch: world.queuedResearch,
       aiStates: world.aiStates,
       visibilityPlayer: world.visibilityPlayer,
+      exploredTilesByPlayer: world.exploredTilesByPlayer.map((buffer) => [...buffer]),
       exploredTiles: [...world.exploredTiles],
       visibleTiles: [...world.visibleTiles],
       lastSeenBuildings: world.lastSeenBuildings,
@@ -319,7 +321,9 @@ function loadSavedGameFromRaw(manifest: WargusManifest, raw: string | null): Loa
   world.queuedResearch = normalizeQueuedResearch(save.world.queuedResearch, world);
   const savedTick = Math.max(0, Math.floor(finiteNumberOr(save.world.tick, 0)));
   world.aiStates = normalizeAiStates(save.world.aiStates, world, savedTick);
-  world.exploredTiles = Uint8Array.from(normalizeNumberArray(save.world.exploredTiles, map.width * map.height, [...world.exploredTiles]));
+  const legacyExplored = normalizeNumberArray(save.world.exploredTiles, map.width * map.height, [...world.exploredTiles]);
+  world.exploredTilesByPlayer = normalizeExploredTilesByPlayer(save.world.exploredTilesByPlayer, legacyExplored, world);
+  world.exploredTiles = world.exploredTilesByPlayer[world.visibilityPlayer] ?? new Uint8Array(map.width * map.height);
   world.visibleTiles = Uint8Array.from(normalizeNumberArray(save.world.visibleTiles, map.width * map.height, [...world.visibleTiles]));
   world.lastSeenBuildings = normalizeLastSeenBuildings(world, save.world.lastSeenBuildings);
   world.visibilityReveals = normalizeVisibilityReveals(world, save.world.visibilityReveals);
@@ -1216,7 +1220,9 @@ function normalizeAiStates(value: unknown, world: WorldState, currentTick = worl
       collectWeights: normalizeAiCollectWeights(record.collectWeights, fallback?.collectWeights ?? null),
       researchOrder: normalizeAiResearchOrder(record.researchOrder, fallback?.researchOrder ?? [], world),
       nextThinkTick: Math.max(0, Math.min(nextThinkTickCap, Math.floor(finiteNumberOr(record.nextThinkTick, currentTick + 1)))),
-      nextAttackTick: Math.max(0, Math.min(nextAttackTickCap, Math.floor(finiteNumberOr(record.nextAttackTick, fallbackNextAttackTick))))
+      nextAttackTick: Math.max(0, Math.min(nextAttackTickCap, Math.floor(finiteNumberOr(record.nextAttackTick, fallbackNextAttackTick)))),
+      nextExplorationUpdateTick: Math.max(0, Math.floor(finiteNumberOr(record.nextExplorationUpdateTick, fallback?.nextExplorationUpdateTick ?? currentTick))),
+      nextScoutTick: Math.max(0, Math.floor(finiteNumberOr(record.nextScoutTick, fallback?.nextScoutTick ?? currentTick)))
     });
     seen.add(player);
   }
@@ -1224,10 +1230,24 @@ function normalizeAiStates(value: unknown, world: WorldState, currentTick = worl
   for (const playerId of aiPlayerIds) {
     if (!seen.has(playerId)) {
       const fallback = fallbackByPlayer.get(playerId);
-      states.push(fallback ?? { player: playerId, enabled: true, strategy: "land", sourceScriptId: null, sourceScriptIndex: 0, sourceScriptSleepUntilTick: 0, sourceScriptForces: [], sourceScriptLaunches: [], sourceScriptForceRoles: [], attackForceSize: 3, attackForceIds: [], forceSizes: [], attackWaveSizes: [], attackWaveUnitTargets: [], nextAttackWaveIndex: 0, defendForceSize: 0, attackDelayTicks: 35 * 30, attackUnitTargets: [], buildOrder: [], buildDepots: true, preferredAttackUnitTypes: [], workerTarget: 7, tankerTarget: 1, transportTarget: 0, collectWeights: null, researchOrder: [], nextThinkTick: world.tick + 1, nextAttackTick: world.tick + sourceOrderRetryTicksForSave(world, 20 * 30) });
+      states.push(fallback ?? { player: playerId, enabled: true, strategy: "land", sourceScriptId: null, sourceScriptIndex: 0, sourceScriptSleepUntilTick: 0, sourceScriptForces: [], sourceScriptLaunches: [], sourceScriptForceRoles: [], attackForceSize: 3, attackForceIds: [], forceSizes: [], attackWaveSizes: [], attackWaveUnitTargets: [], nextAttackWaveIndex: 0, defendForceSize: 0, attackDelayTicks: 35 * 30, attackUnitTargets: [], buildOrder: [], buildDepots: true, preferredAttackUnitTypes: [], workerTarget: 7, tankerTarget: 1, transportTarget: 0, collectWeights: null, researchOrder: [], nextThinkTick: world.tick + 1, nextAttackTick: world.tick + sourceOrderRetryTicksForSave(world, 20 * 30), nextExplorationUpdateTick: world.tick, nextScoutTick: world.tick });
     }
   }
   return states;
+}
+
+function normalizeExploredTilesByPlayer(value: unknown, legacyExplored: number[], world: WorldState): Uint8Array[] {
+  const tileCount = world.map.width * world.map.height;
+  const length = Math.max(16, ...world.players.map((player) => player.id), world.visibilityPlayer) + 1;
+  const buffers = Array.from({ length }, () => new Uint8Array(tileCount));
+  if (Array.isArray(value)) {
+    for (let playerId = 0; playerId < Math.min(value.length, buffers.length); playerId += 1) {
+      buffers[playerId] = Uint8Array.from(normalizeNumberArray(value[playerId], tileCount, []));
+    }
+  } else {
+    buffers[world.visibilityPlayer] = Uint8Array.from(normalizeNumberArray(legacyExplored, tileCount, []));
+  }
+  return buffers;
 }
 
 function normalizeAiSourceScriptForces(value: unknown, fallback: WorldState["aiStates"][number]["sourceScriptForces"], world: WorldState): WorldState["aiStates"][number]["sourceScriptForces"] {

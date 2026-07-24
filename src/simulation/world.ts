@@ -773,6 +773,7 @@ export interface WorldState {
   queuedResearch: QueuedResearchOrder[];
   aiStates: WorldAiState[];
   visibilityPlayer: number;
+  exploredTilesByPlayer: Uint8Array[];
   exploredTiles: Uint8Array;
   visibleTiles: Uint8Array;
   lastSeenBuildings: WorldLastSeenBuilding[];
@@ -883,6 +884,8 @@ export interface WorldAiState {
   researchOrder: string[];
   nextThinkTick: number;
   nextAttackTick: number;
+  nextExplorationUpdateTick: number;
+  nextScoutTick: number;
 }
 
 export interface PlayerSupply {
@@ -1088,6 +1091,10 @@ export function createInitialWorld(map: WargusMap, sourceUnits: WargusUnit[], se
   const players = playersFromSetup(setup, worldEngineSettings, sourceAiDefinitions);
   const playablePlayerId = playablePlayerIdForPlayers(players, setup, sourceAiDefinitions);
   const objectives = setup?.objectives ?? map.objectives ?? [];
+  const exploredTilesByPlayer = Array.from(
+    { length: Math.max(16, ...players.map((player) => player.id)) + 1 },
+    () => new Uint8Array(tileCount)
+  );
   const world: WorldState = {
     map,
     tileSize: 32,
@@ -1152,10 +1159,13 @@ export function createInitialWorld(map: WargusMap, sourceUnits: WargusUnit[], se
         collectWeights: aiCollectWeightsForPlayer(setup, player.ai),
         researchOrder: aiResearchOrderForPlayer(setup, player.ai),
         nextThinkTick: 1,
-        nextAttackTick: aiInitialAttackDelayTicksForPlayer(setup, player.ai)
+        nextAttackTick: aiInitialAttackDelayTicksForPlayer(setup, player.ai),
+        nextExplorationUpdateTick: 0,
+        nextScoutTick: 0
       })),
     visibilityPlayer: playablePlayerId,
-    exploredTiles: new Uint8Array(tileCount),
+    exploredTilesByPlayer,
+    exploredTiles: exploredTilesByPlayer[playablePlayerId] ?? new Uint8Array(tileCount),
     visibleTiles: new Uint8Array(tileCount),
     lastSeenBuildings: [],
     visibilityReveals: [],
@@ -1721,15 +1731,41 @@ function manaIncreaseForUnit(unit: Pick<WargusUnit, "manaIncrease">): number {
 
 export function updateVisibility(world: WorldState): void {
   updateSourceRevelationState(world);
+  const tileCount = world.map.width * world.map.height;
+  const localExplored = world.exploredTilesByPlayer[world.visibilityPlayer] ?? new Uint8Array(tileCount);
+  world.exploredTilesByPlayer[world.visibilityPlayer] = localExplored;
+  world.exploredTiles = localExplored;
   if (!world.engineSettings.fogOfWarEnabled) {
     world.visibleTiles.fill(1);
     world.exploredTiles.fill(1);
+    for (const state of world.aiStates) {
+      if (state.enabled && world.tick >= state.nextExplorationUpdateTick) {
+        const buffer = world.exploredTilesByPlayer[state.player] ?? new Uint8Array(tileCount);
+        world.exploredTilesByPlayer[state.player] = buffer;
+        buffer.fill(1);
+        state.nextExplorationUpdateTick = world.tick + world.tickRate;
+      }
+    }
     updateLastSeenBuildings(world);
     return;
   }
   world.visibleTiles.fill(0);
+  markExploredTilesForPlayer(world, world.visibilityPlayer, world.exploredTiles, world.visibleTiles);
+  for (const state of world.aiStates) {
+    if (!state.enabled || world.tick < state.nextExplorationUpdateTick) {
+      continue;
+    }
+    const buffer = world.exploredTilesByPlayer[state.player] ?? new Uint8Array(tileCount);
+    world.exploredTilesByPlayer[state.player] = buffer;
+    markExploredTilesForPlayer(world, state.player, buffer);
+    state.nextExplorationUpdateTick = world.tick + world.tickRate;
+  }
+  updateLastSeenBuildings(world);
+}
+
+export function markExploredTilesForPlayer(world: WorldState, playerId: number, explored: Uint8Array, visible?: Uint8Array): void {
   for (const unit of world.units) {
-    if ((!doesPlayerShareVisionWith(world, world.visibilityPlayer, unit.player) && !doesUnitProvideRevelationVision(world, world.visibilityPlayer, unit)) || unit.hitPoints <= 0) {
+    if ((!doesPlayerShareVisionWith(world, playerId, unit.player) && !doesUnitProvideRevelationVision(world, playerId, unit)) || unit.hitPoints <= 0) {
       continue;
     }
     const footprint = sourceFieldOfViewFootprintForUnit(world, unit);
@@ -1743,23 +1779,22 @@ export function updateVisibility(world: WorldState): void {
           continue;
         }
         const index = y * world.map.width + x;
-        world.visibleTiles[index] = 1;
-        world.exploredTiles[index] = 1;
+        if (visible) visible[index] = 1;
+        explored[index] = 1;
       }
     }
   }
   for (const effect of world.spellEffects) {
-    if (effect.kind !== "holy-vision" || !doesPlayerShareVisionWith(world, world.visibilityPlayer, effect.player)) {
+    if (effect.kind !== "holy-vision" || !doesPlayerShareVisionWith(world, playerId, effect.player)) {
       continue;
     }
-    revealTilesAround(world, effect.x, effect.y, Math.ceil(effect.radius / world.tileSize));
+    revealTilesAround(world, effect.x, effect.y, Math.ceil(effect.radius / world.tileSize), explored, visible);
   }
   for (const reveal of world.visibilityReveals ?? []) {
-    if (reveal.remainingTicks > 0 && doesPlayerShareVisionWith(world, world.visibilityPlayer, reveal.player)) {
-      revealTilesAround(world, reveal.x, reveal.y, reveal.radiusTiles);
+    if (reveal.remainingTicks > 0 && doesPlayerShareVisionWith(world, playerId, reveal.player)) {
+      revealTilesAround(world, reveal.x, reveal.y, reveal.radiusTiles, explored, visible);
     }
   }
-  updateLastSeenBuildings(world);
 }
 
 export function revealAreaToPlayer(world: WorldState, player: number, x: number, y: number, radiusTiles: number, remainingTicks: number): void {
@@ -1890,7 +1925,7 @@ function isLastSeenBuildingAreaVisible(world: WorldState, building: WorldLastSee
   }, world.visibilityPlayer);
 }
 
-function revealTilesAround(world: WorldState, x: number, y: number, radiusTiles: number): void {
+function revealTilesAround(world: WorldState, x: number, y: number, radiusTiles: number, explored: Uint8Array, visible?: Uint8Array): void {
   const centerX = Math.floor(x / world.tileSize);
   const centerY = Math.floor(y / world.tileSize);
   for (let tileY = centerY - radiusTiles; tileY <= centerY + radiusTiles; tileY += 1) {
@@ -1902,8 +1937,8 @@ function revealTilesAround(world: WorldState, x: number, y: number, radiusTiles:
         continue;
       }
       const index = tileY * world.map.width + tileX;
-      world.visibleTiles[index] = 1;
-      world.exploredTiles[index] = 1;
+      if (visible) visible[index] = 1;
+      explored[index] = 1;
     }
   }
 }

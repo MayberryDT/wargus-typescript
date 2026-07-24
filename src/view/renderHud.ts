@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Text, type FederatedPointerEvent } from "pixi.js";
+import { Application, Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from "pixi.js";
 import { canAttackGround, canEnterPendingWorldCommand, canIssueAutoHarvestOrder, canIssueDetonateOrder, canUseHudBuilderCommands, canIssueExploreOrder, canIssueHoldPosition, canIssueLoadTransport, canIssueReturnGoodsOrder, canReceiveMoveOrders, isAdvancedMeleeCombatDefinition, isAirCombatDefinition, isCasterDefinition, isDefensiveBuildingDefinition, isDemolitionLabDefinition, isDemolitionUnitDefinition, hasAnySourceResearchValue, hasSourceBuildButtonsForTypes, hasSourceResearchButtonsForTypes, hasSourceResearchValueMatching, hasSourceSpellResearchValue, hasSourceTrainButtonsForTypes, hasSourceTrainValueMatching, isGoldOrWoodWorkerDefinition, isHolyResearchUpgradeId as isHolyResearchUpgrade, isHolySupportResearchUpgradeId as isHolySupportResearchUpgrade, isHolyTransformationResearchUpgradeId as isHolyTransformationResearchUpgrade, isBlacksmithResearchUpgrade, isLumberMillResearchUpgrade, isMeleeLandCombatDefinition, isMeleeWeaponResearchUpgrade, isNavalCombatOrUtilityDefinition, isNavalResearchUpgrade, isNavalRoleDefinition, isOilRefineryDefinition, isOrdinaryBarracksCombatDefinition, isRangedLandCombatDefinition, isScoutAirDefinition, isShieldResearchUpgrade, isShipArmorResearchUpgradeId as isShipArmorResearchUpgrade, isShipCannonResearchUpgradeId as isShipCannonResearchUpgrade, isSiegeDefinition, isSiegeResearchUpgrade, isSourceConversionTarget, isSupplyProviderDefinition, isTransport, isWallDefinition, selectedCanCastTargetedSpell, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildIconForHudCommand, sourceBuildPageButtonForHud, sourceBuildValuesDefinitionMatching, sourceBuildValuesProduceMatching, sourceBuildValuesResearchMatching, sourceBuildValuesUpgradeToMatching, sourceButtonForHudCommand, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceCancelButtonForSelection, sourceFallbackResearchIconForHudCommand, sourceFallbackSpellCommandForSpellId, sourceFallbackTrainIconForHudCommand, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceResearchIconForHudCommand, sourceRootBuildButtonsForHud, selectedCanResearchMatchingSource, selectedCanResearchSpellSource, selectedCanResearchAny, selectedCanTrainAny, selectedCanTrainMatching, selectedCanBuildAny, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTowerUpgradeTargetForTypes, sourceTownUpgradeTargetForTypes, sourceTrainButtonsForHud, sourceTrainIconForHudCommand, sourceTrainTargetForTypes, sourceUpgradeButtonsForHud, sourceWorkerTrainTargetForTypes, townCenterTierForPlayer, type TargetedSpellCommand } from "../simulation/orders";
 import { getPlayerSupply, isInvisibleUtilityUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, isWorldTileSourceKnown, type WorldState } from "../simulation/world";
 import type { SavedGameSummary } from "../wargus/saveGame";
@@ -170,6 +170,87 @@ interface ModernHudLayout {
 type FixedDemoTextFit = { text: Text; fits: boolean };
 
 export let latestModernHudLayoutDebug: ModernHudLayoutDebug | null = null;
+
+export interface MinimapRenderCacheDebug {
+  drawCount: number;
+  terrainRebuildCount: number;
+  terrainKeyChangeCount: number;
+  terrainKey: string;
+  terrainTileCount: number;
+  fogTileCount: number;
+  rasterWidth: number;
+  rasterHeight: number;
+  rasterCanvasCreateCount: number;
+  rasterTextureCreateCount: number;
+  rasterSpriteCreateCount: number;
+  rasterResizeCount: number;
+  rasterUpdateCount: number;
+  visualRootAttached: boolean;
+  hitTargetAttached: boolean;
+  visualRootIndex: number;
+  hitTargetIndex: number;
+  visualRootChildCount: number;
+  visualRootMinChildCount: number;
+  visualRootMaxChildCount: number;
+  hitTargetChildCount: number;
+  pointerDownListenerCount: number;
+  pointerMoveListenerCount: number;
+}
+
+export let latestMinimapRenderCacheDebug: MinimapRenderCacheDebug | null = null;
+
+interface MinimapRenderCache {
+  visualRoot: Container;
+  rasterCanvas: HTMLCanvasElement;
+  rasterContext: CanvasRenderingContext2D;
+  rasterTexture: Texture;
+  rasterSprite: Sprite;
+  dynamic: Graphics;
+  hit: Graphics;
+  terrainColors: string[];
+  terrainWorld: WorldState | null;
+  terrainMap: WorldState["map"] | null;
+  terrainTiles: WorldState["tiles"] | null;
+  terrainTileset: WorldState["tilesetTerrain"] | null;
+  terrainKey: string;
+  hitKey: string;
+  drawCount: number;
+  terrainRebuildCount: number;
+  terrainKeyChangeCount: number;
+  terrainTileCount: number;
+  fogTileCount: number;
+  rasterCanvasCreateCount: number;
+  rasterTextureCreateCount: number;
+  rasterSpriteCreateCount: number;
+  rasterResizeCount: number;
+  rasterUpdateCount: number;
+  visualRootMinChildCount: number;
+  visualRootMaxChildCount: number;
+  pointerDownListenerCount: number;
+  pointerMoveListenerCount: number;
+  interaction: {
+    world: WorldState;
+    ox: number;
+    oy: number;
+    scale: number;
+    onMinimapPoint: (tileX: number, tileY: number, input: { button: number; shiftKey: boolean }) => void;
+  } | null;
+}
+
+const minimapRenderCaches = new WeakMap<Container, MinimapRenderCache>();
+
+export function destroyMinimapRenderCache(hudLayer: Container): void {
+  const cache = minimapRenderCaches.get(hudLayer);
+  if (!cache) {
+    return;
+  }
+  minimapRenderCaches.delete(hudLayer);
+  cache.visualRoot.parent?.removeChild(cache.visualRoot);
+  cache.hit.parent?.removeChild(cache.hit);
+  cache.visualRoot.destroy({ children: true });
+  cache.hit.destroy({ children: true });
+  cache.rasterTexture.destroy(true);
+}
 
 interface RenderHudArgs {
   app: Application;
@@ -384,11 +465,21 @@ export function renderHud(args: RenderHudArgs): void {
 }
 
 function destroyHudLayerChildren(layer: Container, frame: Graphics): void {
+  const minimapCache = minimapRenderCaches.get(layer);
   const children = layer.removeChildren();
   for (const child of children) {
-    if (child !== frame) {
+    if (child !== frame && child !== minimapCache?.visualRoot && child !== minimapCache?.hit) {
       child.destroy({ children: true });
     }
+  }
+  if (minimapCache && latestMinimapRenderCacheDebug) {
+    latestMinimapRenderCacheDebug = {
+      ...latestMinimapRenderCacheDebug,
+      visualRootAttached: false,
+      hitTargetAttached: false,
+      visualRootIndex: -1,
+      hitTargetIndex: -1
+    };
   }
 }
 
@@ -3690,27 +3781,77 @@ function drawMinimap(
   graphics.rect(x, y, width, height);
   graphics.fill(0x070604);
   const scale = Math.min(width / world.map.width, height / world.map.height);
-  const ox = x + (width - world.map.width * scale) / 2;
-  const oy = y + (height - world.map.height * scale) / 2;
+  const ox = (width - world.map.width * scale) / 2;
+  const oy = (height - world.map.height * scale) / 2;
   const mapPixelWidth = world.map.width * scale;
   const mapPixelHeight = world.map.height * scale;
+  const rasterWidth = Math.max(1, Math.ceil(mapPixelWidth));
+  const rasterHeight = Math.max(1, Math.ceil(mapPixelHeight));
+  let cache = minimapRenderCaches.get(layer);
+  if (!cache) {
+    cache = createMinimapRenderCache(rasterWidth, rasterHeight);
+    minimapRenderCaches.set(layer, cache);
+  }
+  cache.visualRoot.position.set(x, y);
+  cache.rasterSprite.position.set(ox, oy);
+  cache.hit.position.set(x, y);
+  cache.interaction = { world, ox: x + ox, oy: y + oy, scale, onMinimapPoint };
+  layer.addChildAt(cache.visualRoot, Math.min(1, layer.children.length));
+  if (cache.rasterCanvas.width !== rasterWidth || cache.rasterCanvas.height !== rasterHeight) {
+    cache.rasterTexture.source.resize(rasterWidth, rasterHeight);
+    cache.rasterContext.imageSmoothingEnabled = false;
+    cache.rasterResizeCount += 1;
+  }
 
-  for (let row = 0; row < world.map.height; row += 1) {
-    for (let col = 0; col < world.map.width; col += 1) {
-      const tile = world.tiles[row * world.map.width + col] ?? 1;
-      const index = row * world.map.width + col;
-      if (world.engineSettings.minimapWithTerrainDefault) {
-        const color = minimapTerrainColorForTile(world, tile);
-        graphics.rect(ox + col * scale, oy + row * scale, Math.ceil(scale), Math.ceil(scale));
-        graphics.fill(color);
-      }
-      if (world.engineSettings.fogOfWarEnabled && world.visibleTiles[index] === 0) {
-        const alpha = sourceMinimapFogAlpha(world, col, row);
-        graphics.rect(ox + col * scale, oy + row * scale, Math.ceil(scale), Math.ceil(scale));
-        graphics.fill({ color: 0x000000, alpha });
+  const terrainKey = minimapTerrainCacheKey(world, width, height, scale, ox, oy);
+  if (minimapTerrainNeedsRebuild(cache, world, terrainKey)) {
+    cache.terrainRebuildCount += 1;
+    if (cache.terrainKey !== terrainKey) {
+      cache.terrainKeyChangeCount += 1;
+    }
+    cache.terrainColors = [];
+    if (world.engineSettings.minimapWithTerrainDefault) {
+      cache.terrainColors = new Array<string>(world.map.width * world.map.height);
+      for (let index = 0; index < cache.terrainColors.length; index += 1) {
+        const color = minimapTerrainColorForTile(world, world.tiles[index] ?? 1);
+        cache.terrainColors[index] = `#${color.toString(16).padStart(6, "0")}`;
       }
     }
+    cache.terrainWorld = world;
+    cache.terrainMap = world.map;
+    cache.terrainTiles = world.tiles;
+    cache.terrainTileset = world.tilesetTerrain;
+    cache.terrainKey = terrainKey;
   }
+
+  const composite = drawMinimapRaster(
+    cache.rasterContext,
+    rasterWidth,
+    rasterHeight,
+    cache.terrainColors,
+    world.visibleTiles,
+    world.map.width,
+    world.map.height,
+    scale,
+    world.engineSettings.minimapWithTerrainDefault,
+    world.engineSettings.fogOfWarEnabled,
+    (col, row) => sourceMinimapFogAlpha(world, col, row)
+  );
+  cache.terrainTileCount = composite.terrainTileCount;
+  cache.fogTileCount = composite.fogTileCount;
+  cache.rasterTexture.source.update();
+  cache.rasterUpdateCount += 1;
+
+  const hitKey = `${world.map.width}:${world.map.height}:${ox}:${oy}:${mapPixelWidth}:${mapPixelHeight}`;
+  if (cache.hitKey !== hitKey) {
+    cache.hit.clear();
+    cache.hit.rect(ox, oy, mapPixelWidth, mapPixelHeight);
+    cache.hit.fill({ color: 0xffffff, alpha: 0.001 });
+    cache.hitKey = hitKey;
+  }
+
+  const dynamicGraphics = cache.dynamic;
+  dynamicGraphics.clear();
 
   for (const unit of world.units) {
     if (isInvisibleUtilityUnit(unit)) {
@@ -3719,21 +3860,21 @@ function drawMinimap(
     if (!isUnitVisibleToPlayer(world, unit, world.visibilityPlayer)) {
       continue;
     }
-    graphics.circle(ox + (unit.x / world.tileSize) * scale, oy + (unit.y / world.tileSize) * scale, 2);
-    graphics.fill(minimapColorForUnit(world, unit));
+    dynamicGraphics.circle(ox + (unit.x / world.tileSize) * scale, oy + (unit.y / world.tileSize) * scale, 2);
+    dynamicGraphics.fill(minimapColorForUnit(world, unit));
   }
 
   for (const building of world.lastSeenBuildings) {
     if (isLastSeenBuildingVisibleOnMinimap(world, building)) {
       continue;
     }
-    graphics.rect(
+    dynamicGraphics.rect(
       ox + (building.x / world.tileSize) * scale - 1.5,
       oy + (building.y / world.tileSize) * scale - 1.5,
       3,
       3
     );
-    graphics.fill({ color: minimapColorForPlayer(world, building.player), alpha: 0.58 });
+    dynamicGraphics.fill({ color: minimapColorForPlayer(world, building.player), alpha: 0.58 });
   }
 
   const now = performance.now();
@@ -3743,10 +3884,10 @@ function drawMinimap(
     const py = oy + (ping.y / world.tileSize) * scale;
     const radius = 4 + progress * 10;
     const alpha = 0.95 * (1 - progress);
-    graphics.circle(px, py, radius);
-    graphics.stroke({ width: 2, color: 0xd95d45, alpha });
-    graphics.rect(px - radius, py - radius, radius * 2, radius * 2);
-    graphics.stroke({ width: 1, color: 0xf0df9a, alpha: alpha * 0.7 });
+    dynamicGraphics.circle(px, py, radius);
+    dynamicGraphics.stroke({ width: 2, color: 0xd95d45, alpha });
+    dynamicGraphics.rect(px - radius, py - radius, radius * 2, radius * 2);
+    dynamicGraphics.stroke({ width: 1, color: 0xf0df9a, alpha: alpha * 0.7 });
   }
 
   const viewportWorldRects = sourceViewportWorldRects(world, camera, screenWidth, screenHeight, sourceViewportCameras);
@@ -3756,28 +3897,108 @@ function drawMinimap(
     const viewY = oy + (view.y / world.tileSize) * scale;
     const viewWidth = Math.min(mapPixelWidth, (Math.min(view.width, viewportWidth / viewCamera.zoom) / world.tileSize) * scale);
     const viewHeight = Math.min(mapPixelHeight, (Math.min(view.height, viewportHeight / viewCamera.zoom) / world.tileSize) * scale);
-    graphics.rect(viewX, viewY, viewWidth, viewHeight);
-    graphics.stroke({ width: 1, color: 0xf0df9a, alpha: 0.95 });
+    dynamicGraphics.rect(viewX, viewY, viewWidth, viewHeight);
+    dynamicGraphics.stroke({ width: 1, color: 0xf0df9a, alpha: 0.95 });
   }
 
+  layer.addChild(cache.hit);
+  cache.drawCount += 1;
+  const visualRootChildCount = cache.visualRoot.children.length;
+  cache.visualRootMinChildCount = Math.min(cache.visualRootMinChildCount, visualRootChildCount);
+  cache.visualRootMaxChildCount = Math.max(cache.visualRootMaxChildCount, visualRootChildCount);
+  latestMinimapRenderCacheDebug = {
+    drawCount: cache.drawCount,
+    terrainRebuildCount: cache.terrainRebuildCount,
+    terrainKeyChangeCount: cache.terrainKeyChangeCount,
+    terrainKey: cache.terrainKey,
+    terrainTileCount: cache.terrainTileCount,
+    fogTileCount: cache.fogTileCount,
+    rasterWidth: cache.rasterCanvas.width,
+    rasterHeight: cache.rasterCanvas.height,
+    rasterCanvasCreateCount: cache.rasterCanvasCreateCount,
+    rasterTextureCreateCount: cache.rasterTextureCreateCount,
+    rasterSpriteCreateCount: cache.rasterSpriteCreateCount,
+    rasterResizeCount: cache.rasterResizeCount,
+    rasterUpdateCount: cache.rasterUpdateCount,
+    visualRootAttached: cache.visualRoot.parent === layer,
+    hitTargetAttached: cache.hit.parent === layer,
+    visualRootIndex: layer.children.indexOf(cache.visualRoot),
+    hitTargetIndex: layer.children.indexOf(cache.hit),
+    visualRootChildCount,
+    visualRootMinChildCount: cache.visualRootMinChildCount,
+    visualRootMaxChildCount: cache.visualRootMaxChildCount,
+    hitTargetChildCount: cache.hit.children.length,
+    pointerDownListenerCount: cache.pointerDownListenerCount,
+    pointerMoveListenerCount: cache.pointerMoveListenerCount
+  };
+}
+
+function createMinimapRenderCache(rasterWidth: number, rasterHeight: number): MinimapRenderCache {
+  const rasterCanvas = document.createElement("canvas");
+  rasterCanvas.width = rasterWidth;
+  rasterCanvas.height = rasterHeight;
+  const rasterContext = rasterCanvas.getContext("2d");
+  if (!rasterContext) {
+    throw new Error("Unable to create minimap raster context");
+  }
+  rasterContext.imageSmoothingEnabled = false;
+  const rasterTexture = Texture.from(rasterCanvas, true);
+  const rasterSprite = new Sprite(rasterTexture);
+  const dynamic = new Graphics();
   const hit = new Graphics();
-  hit.rect(ox, oy, mapPixelWidth, mapPixelHeight);
-  hit.fill({ color: 0xffffff, alpha: 0.001 });
+  const visualRoot = new Container();
+  const cache: MinimapRenderCache = {
+    visualRoot,
+    rasterCanvas,
+    rasterContext,
+    rasterTexture,
+    rasterSprite,
+    dynamic,
+    hit,
+    terrainColors: [],
+    terrainWorld: null,
+    terrainMap: null,
+    terrainTiles: null,
+    terrainTileset: null,
+    terrainKey: "",
+    hitKey: "",
+    drawCount: 0,
+    terrainRebuildCount: 0,
+    terrainKeyChangeCount: 0,
+    terrainTileCount: 0,
+    fogTileCount: 0,
+    rasterCanvasCreateCount: 1,
+    rasterTextureCreateCount: 1,
+    rasterSpriteCreateCount: 1,
+    rasterResizeCount: 0,
+    rasterUpdateCount: 0,
+    visualRootMinChildCount: Number.POSITIVE_INFINITY,
+    visualRootMaxChildCount: 0,
+    pointerDownListenerCount: 0,
+    pointerMoveListenerCount: 0,
+    interaction: null
+  };
+  visualRoot.addChild(rasterSprite, dynamic);
   hit.eventMode = "static";
   hit.cursor = "pointer";
   const jump = (globalX: number, globalY: number, input: { button: number; shiftKey: boolean }): void => {
-    const tileX = Math.max(0, Math.min(world.map.width - 1, Math.floor((globalX - ox) / scale)));
-    const tileY = Math.max(0, Math.min(world.map.height - 1, Math.floor((globalY - oy) / scale)));
-    onMinimapPoint(tileX, tileY, input);
+    const interaction = cache.interaction;
+    if (!interaction) {
+      return;
+    }
+    const tileX = Math.max(0, Math.min(interaction.world.map.width - 1, Math.floor((globalX - interaction.ox) / interaction.scale)));
+    const tileY = Math.max(0, Math.min(interaction.world.map.height - 1, Math.floor((globalY - interaction.oy) / interaction.scale)));
+    interaction.onMinimapPoint(tileX, tileY, input);
   };
-  hit.on("pointerdown", (event) => {
+  hit.on("pointerdown", (event: FederatedPointerEvent) => {
     const nativeEvent = event.nativeEvent;
     jump(event.global.x, event.global.y, {
       button: nativeEvent instanceof PointerEvent ? nativeEvent.button : event.button,
       shiftKey: nativeEvent instanceof PointerEvent ? nativeEvent.shiftKey : false
     });
   });
-  hit.on("pointermove", (event) => {
+  cache.pointerDownListenerCount += 1;
+  hit.on("pointermove", (event: FederatedPointerEvent) => {
     if (event.buttons === 1) {
       const nativeEvent = event.nativeEvent;
       jump(event.global.x, event.global.y, {
@@ -3786,7 +4007,73 @@ function drawMinimap(
       });
     }
   });
-  layer.addChild(hit);
+  cache.pointerMoveListenerCount += 1;
+  return cache;
+}
+
+function minimapTerrainCacheKey(world: WorldState, width: number, height: number, scale: number, ox: number, oy: number): string {
+  const tilesetColorKey = world.tilesetTerrain
+    ? `${world.tilesetTerrain.name}:${world.tilesetTerrain.slots.map((entry) => `${entry.slot}:${entry.flags.join(",")}`).join(";")}`
+    : "none";
+  return [
+    world.map.path,
+    `${world.map.width}x${world.map.height}`,
+    world.terrainVersion,
+    `${width}x${height}`,
+    scale,
+    ox,
+    oy,
+    world.engineSettings.minimapWithTerrainDefault ? 1 : 0,
+    tilesetColorKey
+  ].join("|");
+}
+
+function minimapTerrainNeedsRebuild(cache: MinimapRenderCache, world: WorldState, terrainKey: string): boolean {
+  return cache.terrainWorld !== world
+    || cache.terrainMap !== world.map
+    || cache.terrainTiles !== world.tiles
+    || cache.terrainTileset !== world.tilesetTerrain
+    || cache.terrainKey !== terrainKey;
+}
+
+function drawMinimapRaster(
+  context: CanvasRenderingContext2D,
+  rasterWidth: number,
+  rasterHeight: number,
+  terrainColors: readonly string[],
+  visibleTiles: ArrayLike<number>,
+  mapWidth: number,
+  mapHeight: number,
+  scale: number,
+  terrainEnabled: boolean,
+  fogEnabled: boolean,
+  fogAlphaForTile: (col: number, row: number) => number
+): { terrainTileCount: number; fogTileCount: number } {
+  context.clearRect(0, 0, rasterWidth, rasterHeight);
+  const tileExtent = Math.ceil(scale);
+  let terrainTileCount = 0;
+  let fogTileCount = 0;
+  for (let row = 0; row < mapHeight; row += 1) {
+    for (let col = 0; col < mapWidth; col += 1) {
+      const index = row * mapWidth + col;
+      const x = col * scale;
+      const y = row * scale;
+      if (terrainEnabled) {
+        context.globalAlpha = 1;
+        context.fillStyle = terrainColors[index] ?? "#000000";
+        context.fillRect(x, y, tileExtent, tileExtent);
+        terrainTileCount += 1;
+      }
+      if (fogEnabled && visibleTiles[index] === 0) {
+        context.globalAlpha = fogAlphaForTile(col, row);
+        context.fillStyle = "#000000";
+        context.fillRect(x, y, tileExtent, tileExtent);
+        fogTileCount += 1;
+      }
+    }
+  }
+  context.globalAlpha = 1;
+  return { terrainTileCount, fogTileCount };
 }
 
 function drawSourceViewportModeOverlay(graphics: Graphics, world: WorldState, screenWidth: number, screenHeight: number, activeIndex: number): void {

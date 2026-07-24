@@ -7,10 +7,10 @@ import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER
 import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, loadSavedGameJson, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
-import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
+import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, createPlan014AiKnowledgeFixtureWorld, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiKnowledgeFixture, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
-import { availableCommands, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type ModernHudLayoutDebug } from "./view/renderHud";
+import { availableCommands, destroyMinimapRenderCache, latestMinimapRenderCacheDebug, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type MinimapRenderCacheDebug, type ModernHudLayoutDebug } from "./view/renderHud";
 import type { SourceDiplomacyDraft } from "./view/sourceUiHelpers";
 import type { UnitTextureAtlas } from "./view/unitTextureAtlas";
 import type { TileTextureAtlas } from "./view/tileTextureAtlas";
@@ -360,6 +360,7 @@ type BrowserSmokeState = {
   commandPage: number;
   commandCard: BrowserSmokeCommand[];
   modernHud: ModernHudLayoutDebug | null;
+  minimapRenderCache: MinimapRenderCacheDebug | null;
   selectedUnitCount: number;
   selectedUnitIds: string[];
   selectedUnitTypes: string[];
@@ -506,6 +507,7 @@ declare global {
     __WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__?: () => Record<string, unknown>;
     __WARGUS_TS_RUN_MECHANICS_SCENARIO__?: (scenario: "M05" | "M06" | "M07") => Record<string, unknown>;
     __WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__?: () => Record<string, unknown>;
+    __WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__?: () => Record<string, unknown>;
     __WARGUS_TS_SELECT_SOURCE_SPELL_FIXTURE__?: (casterTypeId: string, spellId: string) => ({ ok: boolean; error?: string; command?: string | null; instantCommand?: string | null; target?: BrowserSmokeOrderTarget | null } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_SELECT_SOURCE_RESEARCH_FIXTURE__?: (typeId: string, upgradeId: string) => ({ ok: boolean; error?: string } & ReturnType<typeof browserSmokeCommandResult>);
     __WARGUS_TS_CLEAR_SELECTION__?: () => ReturnType<typeof browserSmokeCommandResult>;
@@ -2021,6 +2023,69 @@ if (browserSmokeStateEnabled) {
     return { ok: cancelled, costs, placement, before, planned, pending, pendingRoundtrip, arrival, foundationRoundtrip, legacyFoundationRoundtrip, validExplicitConstructingRoundtrip, invalidPhaseRoundtrip, emptyBuilderRoundtrip, otherBuilderRoundtrip, cancel };
   };
   window.__WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__ = () => world ? runPlan014AiScriptFixture(world) : { ok: false, error: "missing world" };
+  window.__WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__ = () => {
+    if (!world || !manifest) {
+      return { ok: false, error: "missing world" };
+    }
+    const fixture = runPlan014AiKnowledgeFixture(world);
+    const roundtripWorld = createPlan014AiKnowledgeFixtureWorld(world);
+    const aiState = roundtripWorld.aiStates.find((state) => state.enabled);
+    if (!aiState) {
+      return { ...fixture, ok: false, error: "missing enabled AI state" };
+    }
+    const tileCount = roundtripWorld.map.width * roundtripWorld.map.height;
+    const localBuffer = roundtripWorld.exploredTilesByPlayer[roundtripWorld.visibilityPlayer] ?? new Uint8Array(tileCount);
+    const aiBuffer = roundtripWorld.exploredTilesByPlayer[aiState.player] ?? new Uint8Array(tileCount);
+    localBuffer.fill(0);
+    aiBuffer.fill(0);
+    localBuffer[0] = 1;
+    aiBuffer[Math.min(1, tileCount - 1)] = 1;
+    roundtripWorld.exploredTilesByPlayer[roundtripWorld.visibilityPlayer] = localBuffer;
+    roundtripWorld.exploredTilesByPlayer[aiState.player] = aiBuffer;
+    roundtripWorld.exploredTiles = localBuffer;
+    aiState.nextExplorationUpdateTick = 123;
+    aiState.nextScoutTick = 456;
+    const savedJson = exportSavedGame(roundtripWorld, { x: 0, y: 0, zoom: 1 });
+    const fixtureManifest = {
+      ...manifest,
+      maps: manifest.maps.map((map) => map.path === roundtripWorld.map.path ? roundtripWorld.map : map)
+    };
+    const loaded = loadSavedGameJson(fixtureManifest, savedJson)?.world;
+    const loadedAiState = loaded?.aiStates.find((state) => state.player === aiState.player);
+    const saveRoundtrip = {
+      ok: Boolean(loaded
+        && loaded.exploredTiles === loaded.exploredTilesByPlayer[loaded.visibilityPlayer]
+        && loaded.exploredTilesByPlayer[loaded.visibilityPlayer]?.length === tileCount
+        && loaded.exploredTilesByPlayer[aiState.player]?.length === tileCount
+        && loaded.exploredTilesByPlayer[loaded.visibilityPlayer]?.[0] === 1
+        && loaded.exploredTilesByPlayer[aiState.player]?.[Math.min(1, tileCount - 1)] === 1
+        && loadedAiState?.nextExplorationUpdateTick === 123
+        && loadedAiState?.nextScoutTick === 456),
+      tileCount,
+      localLength: loaded?.exploredTilesByPlayer[loaded.visibilityPlayer]?.length ?? 0,
+      aiLength: loaded?.exploredTilesByPlayer[aiState.player]?.length ?? 0,
+      aliasBound: Boolean(loaded && loaded.exploredTiles === loaded.exploredTilesByPlayer[loaded.visibilityPlayer]),
+      nextExplorationUpdateTick: loadedAiState?.nextExplorationUpdateTick ?? null,
+      nextScoutTick: loadedAiState?.nextScoutTick ?? null
+    };
+    const legacySave = JSON.parse(savedJson) as { world?: { exploredTilesByPlayer?: number[][]; exploredTiles?: number[] } };
+    if (legacySave.world) {
+      delete legacySave.world.exploredTilesByPlayer;
+      legacySave.world.exploredTiles = Array.from({ length: tileCount }, (_, index) => index === Math.min(2, tileCount - 1) ? 1 : 0);
+    }
+    const legacyLoaded = loadSavedGameJson(fixtureManifest, JSON.stringify(legacySave))?.world;
+    const legacyAiBuffer = legacyLoaded?.exploredTilesByPlayer[aiState.player];
+    const legacyRoundtrip = {
+      ok: Boolean(legacyLoaded
+        && legacyLoaded.exploredTiles === legacyLoaded.exploredTilesByPlayer[legacyLoaded.visibilityPlayer]
+        && legacyLoaded.exploredTiles[Math.min(2, tileCount - 1)] === 1
+        && legacyAiBuffer
+        && legacyAiBuffer.every((value) => value === 0)),
+      aliasBound: Boolean(legacyLoaded && legacyLoaded.exploredTiles === legacyLoaded.exploredTilesByPlayer[legacyLoaded.visibilityPlayer]),
+      aiExploredTiles: legacyAiBuffer ? legacyAiBuffer.reduce((sum, value) => sum + value, 0) : null
+    };
+    return { ...fixture, ok: fixture.ok === true && saveRoundtrip.ok && legacyRoundtrip.ok, saveRoundtrip, legacyRoundtrip };
+  };
   window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__ = (scenario) => {
     if (!world) {
       return { ok: false, error: "missing world", scenario };
@@ -4442,6 +4507,7 @@ function publishBrowserSmokeState(force = false): void {
     commandPage,
     commandCard: lightweightSmoke ? [] : browserSmokeCommandCard(),
     modernHud: latestModernHudLayoutDebug,
+    minimapRenderCache: latestMinimapRenderCacheDebug,
     selectedUnitCount: selectedUnitIds.length,
     selectedUnitIds: [...selectedUnitIds],
     selectedUnitTypes: selectedUnitIds
@@ -5345,13 +5411,16 @@ function sourceVideoShaderName(shader: string): "none" | "linear" | "crt" {
   return "none";
 }
 
-window.addEventListener("beforeunload", () => {
-  saveCurrentAutosave();
-});
+window.addEventListener("beforeunload", cleanupBeforeExit);
+window.addEventListener("pagehide", cleanupBeforeExit);
 
-window.addEventListener("pagehide", () => {
-  saveCurrentAutosave();
-});
+function cleanupBeforeExit(): void {
+  try {
+    saveCurrentAutosave();
+  } finally {
+    destroyMinimapRenderCache(hudLayer);
+  }
+}
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
