@@ -708,6 +708,9 @@ export function activeResearchLine(manifest: WargusManifest, world: WorldState, 
 
 export function productionStatusLine(manifest: WargusManifest, order: WorldUnit["productionQueue"][number]): string {
   const label = unitTypeName(manifest, order.unitTypeId);
+  if (order.blockedReason === "supply") return "Needs Food";
+  if (order.blockedReason === "limit") return "Unit limit reached";
+  if (order.blockedReason === "no-egress") return "No valid exit";
   return order.remainingSeconds <= 0
     ? `Training ${label} ready`
     : `Training ${label} ${Math.ceil(order.remainingSeconds)}s`;
@@ -794,12 +797,15 @@ function sourceStatusLineCostText(manifest: WargusManifest, button: WargusButton
 
 function sourceCostListText(costs: string[]): string {
   const parts: string[] = [];
+  let timeSeconds = 0;
   for (let index = 0; index + 1 < costs.length; index += 2) {
     const amount = Number(costs[index + 1]);
     if (Number.isFinite(amount) && amount > 0) {
-      parts.push(`${sourceResourceCostLabel(costs[index])} ${amount}`);
+      if (costs[index] === "time") timeSeconds = Math.ceil(amount / 5);
+      else parts.push(`${sourceResourceCostLabel(costs[index])} ${amount}`);
     }
   }
+  if (timeSeconds > 0) parts.push(`Time ${timeSeconds}s`);
   return parts.length > 0 ? `(${parts.join(", ")})` : "";
 }
 
@@ -821,6 +827,7 @@ export function sourceHintText(text: string): string {
     .replaceAll("~!", "")
     .replaceAll("~<", "")
     .replaceAll("~>", "")
+    .replace(/\bZTOP\b/g, "STOP")
     .replace(/\s+/g, " ")
     .trim();
 }

@@ -2,7 +2,7 @@ import type { WargusEngineSettings, WargusManifest, WargusMap, WargusSpeedFactor
 import { isExploreOnReadyValue } from "./sourceActions";
 import { normalizeScoutAssignmentProvenance } from "./scoutProvenance.mjs";
 import { boxDimensionsForUnit, createInitialWorld, createPlayerStats, defaultForestTileResources, imageForTileset, initialForestResourcesForWorld, isSourceBuildingDefinition, isUnitVisibleToPlayer, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, resourcesHeldForSourceUnit, sightRangeForUnit, sourceAiDefinitionForName, sourceAiDefinitionIsPassive, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, updateVisibility, worldKindForUnitDefinition, type WorldProjectile, type WorldState } from "../simulation/world";
-import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, canTrainUnitAt, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, SIMULATION_MAX_BACKLOG_SECONDS, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
+import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, SIMULATION_MAX_BACKLOG_SECONDS, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
 import { isSourceHarvestableWoodTile } from "../simulation/passability";
 
 type MutableEngineSettingsSave = Pick<WargusEngineSettings,
@@ -642,6 +642,7 @@ function normalizePlayers(value: unknown, world: WorldState): WorldState["player
     );
     players.push({
       id,
+      team: Math.floor(finiteNumberOr(record.team, fallback?.team ?? id)),
       resources: normalizeResources(record.resources, fallback?.resources),
       speedFactors: normalizeSpeedFactors(record.speedFactors, fallback?.speedFactors ?? world.engineSettings.speedFactors),
       stats: normalizePlayerStats(record.stats),
@@ -2026,15 +2027,9 @@ function pruneInvalidLoadedReferences(world: WorldState): void {
 }
 
 function normalizeLoadedProductionQueueReferences(world: WorldState, unit: WorldState["units"][number]): WorldState["units"][number]["productionQueue"] {
-  const originalQueue = unit.productionQueue;
-  const accepted: WorldState["units"][number]["productionQueue"] = [];
-  for (const entry of originalQueue) {
-    unit.productionQueue = accepted;
-    if (canTrainUnitAt(world, unit.id, entry.unitTypeId, world.unitDefinitions)) {
-      accepted.push(entry);
-    }
-  }
-  unit.productionQueue = originalQueue;
+  // Paid queues deliberately bypass canTrainUnitAt(world, unit.id, entry.unitTypeId, world.unitDefinitions): affordability and supply were settled at enqueue time.
+  const accepted = unit.productionQueue.filter((entry) => world.unitDefinitions.some((definition) => definition.id === entry.unitTypeId));
+  unit.productionQueue = accepted;
   return accepted;
 }
 
@@ -2671,7 +2666,8 @@ function normalizeProductionQueue(world: WorldState, producer: WorldState["units
       if (sourceTotalSeconds <= 0) {
         return null;
       }
-      return { unitTypeId, remainingSeconds: Math.min(Math.max(0.001, remainingSeconds), sourceTotalSeconds), totalSeconds: sourceTotalSeconds };
+      const blockedReason = record.blockedReason === "supply" || record.blockedReason === "limit" || record.blockedReason === "no-egress" ? record.blockedReason : null;
+      return { unitTypeId, remainingSeconds: Math.min(Math.max(0, remainingSeconds), sourceTotalSeconds), totalSeconds: sourceTotalSeconds, blockedReason };
     })
     .filter((entry): entry is WorldState["units"][number]["productionQueue"][number] => entry !== null)
     .slice(0, productionQueueLimitForEngine(world.engineSettings));

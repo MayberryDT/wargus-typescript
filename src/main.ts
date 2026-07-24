@@ -553,7 +553,7 @@ declare global {
     __WARGUS_TS_EXECUTE_SELECTION_HOTKEY__?: (code: string, input?: { shiftKey?: boolean }) => BrowserSmokeCommandResult;
     __WARGUS_TS_ISSUE_PENDING_WORLD_COMMAND_AT__?: (x: number, y: number, shiftKey?: boolean) => { issued: boolean; commandPage: number; pendingWorldCommandKind: string | null; selectedUnitIds: string[]; commandCard: BrowserSmokeCommand[] };
     __WARGUS_TS_DEBUG_SELECTED_BUILD__?: () => Array<{ unitId: string; typeId: string; buildingTypeId: string; canStart: boolean; gates: Record<string, boolean> }>;
-    __WARGUS_TS_DEBUG_SELECTED_TRAIN__?: () => Array<{ unitId: string; typeId: string; unitTypeId: string; canTrain: boolean; executable: boolean; visible: boolean; queueLength: number; activeResearchCount: number; queuedResearchCount: number; resources: Record<string, number>; supply: { used: number; cap: number; queued: number }; demand: number }>;
+    __WARGUS_TS_DEBUG_SELECTED_TRAIN__?: () => Array<{ unitId: string; typeId: string; unitTypeId: string; canTrain: boolean; executable: boolean; visible: boolean; queueLength: number; activeResearchCount: number; queuedResearchCount: number; resources: Record<string, number>; supply: { used: number; cap: number }; demand: number }>;
     __WARGUS_TS_CREATE_WORLD_FOR_MAP__?: (path: string) => Promise<BrowserSmokeWorldSummary>;
     __WARGUS_TS_SAVE_ACTIVE_WORLD_ROUNDTRIP__?: () => BrowserSmokeActiveSaveSummary;
     __WARGUS_TS_ISSUE_FIRST_HARVEST__?: () => boolean;
@@ -3840,6 +3840,10 @@ app.ticker.add((ticker) => {
   const deltaSeconds = Math.min(maxFrameDeltaSeconds, elapsedMs / 1000);
   recordFrameTiming(elapsedMs);
   updateCamera(camera, cameraInput, deltaSeconds, world, playableCameraViewport());
+  if (pointerScreenPosition) {
+    pointerWorldPosition = worldPointForScreenPosition(pointerScreenPosition.x, pointerScreenPosition.y);
+    if (pointerWorldPosition) updateSelectionDrag(selectionDrag, pointerWorldPosition.x, pointerWorldPosition.y);
+  }
   persistActiveSourceViewportCamera();
 
   if (world && manifest && activeMap) {

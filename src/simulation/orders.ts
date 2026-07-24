@@ -67,9 +67,9 @@ export function selectUnitsInRect(world: WorldState, startX: number, startY: num
   const right = Math.max(startX, endX);
   const top = Math.min(startY, endY);
   const bottom = Math.max(startY, endY);
-  const playerUnits = world.units.filter((unit) => (
-    unit.player === playerId
-    && canReceiveMoveOrders(unit)
+  const playerTeam = world.players.find((player) => player.id === playerId)?.team ?? playerId;
+  const candidates = world.units.filter((unit) => (
+    unit.hitPoints > 0
     && !isUnitHiddenInConstruction(unit)
     && !isUnitInsideResourceSource(unit)
     && isUnitVisibleToPlayer(world, unit, playerId)
@@ -79,25 +79,20 @@ export function selectUnitsInRect(world: WorldState, startX: number, startY: num
     && unit.y >= top
     && unit.y <= bottom
   ));
-  if (playerUnits.length > 0) {
-    return clampSelectionToSourceLimit(world, playerUnits.map((unit) => unit.id));
+  const ownedOrTeamed = candidates.filter((unit) => (world.players.find((player) => player.id === unit.player)?.team ?? unit.player) === playerTeam);
+  const mobiles = ownedOrTeamed.filter((unit) => canReceiveMoveOrders(unit) && !isBuildingLike(unit));
+  if (mobiles.length > 0) {
+    return clampSelectionToSourceLimit(world, mobiles.map((unit) => unit.id));
   }
-  const visibleUnits = world.units
-    .filter((unit) => unit.hitPoints > 0
-      && unit.selectableByRectangle
-      && !isUnitHiddenInConstruction(unit)
-      && !isUnitInsideResourceSource(unit)
-      && isUnitVisibleToPlayer(world, unit, playerId)
-      && unit.x >= left
-      && unit.x <= right
-      && unit.y >= top
-      && unit.y <= bottom)
-    .map((unit) => unit.id);
-  return clampSelectionToSourceLimit(world, visibleUnits);
+  const firstBuilding = ownedOrTeamed.find((unit) => isBuildingLike(unit));
+  if (firstBuilding) return clampSelectionToSourceLimit(world, ownedOrTeamed.filter((unit) => unit.typeId === firstBuilding.typeId).map((unit) => unit.id));
+  return candidates[0] ? [candidates[0].id] : [];
 }
 
 export function mergeSelection(world: WorldState, currentIds: string[], addedIds: string[]): string[] {
-  return clampSelectionToSourceLimit(world, [...new Set([...currentIds, ...addedIds])]);
+  let merged = [...currentIds];
+  for (const id of addedIds) if (!merged.includes(id) && sourceCanToggleUnitIntoSelection(world, merged, id)) merged.push(id);
+  return clampSelectionToSourceLimit(world, merged);
 }
 
 export function toggleSelection(world: WorldState, currentIds: string[], unitId: string | null): string[] {
@@ -4092,11 +4087,11 @@ export function canTrainUnitAt(world: WorldState, buildingId: string, unitTypeId
   }
   const supply = getPlayerSupply(world, player.id);
   if (isProducerTransformationFor(world, building, unitTypeId)) {
-    const transformedUsed = supply.used + supply.queued - building.demand + unitDefinition.demand;
+    const transformedUsed = supply.used - building.demand + unitDefinition.demand;
     const transformedCap = supply.cap - (building.construction ? 0 : building.supply) + unitDefinition.supply;
     return transformedUsed <= transformedCap;
   }
-  if (unitDefinition.demand > 0 && supply.used + supply.queued + unitDefinition.demand > supply.cap) {
+  if (unitDefinition.demand > 0 && supply.used + unitDefinition.demand > supply.cap) {
     return false;
   }
   return true;
@@ -4113,7 +4108,7 @@ export function issueTrainUnitOrder(world: WorldState, buildingId: string, unitT
   const totalSeconds = isProducerTransformationFor(world, building, unitDefinition.id)
     ? sourceUpgradeDurationSecondsForPlayer(world, building.player, unitDefinition.costs)
     : sourceTrainDurationSecondsForPlayer(world, building.player, unitDefinition.costs);
-  building.productionQueue.push({ unitTypeId, remainingSeconds: totalSeconds, totalSeconds });
+  building.productionQueue.push({ unitTypeId, remainingSeconds: totalSeconds, totalSeconds, blockedReason: null });
   return true;
 }
 
@@ -4127,7 +4122,7 @@ function canQueueUpgradeToAt(world: WorldState, building: WorldUnit, unitTypeId:
     return false;
   }
   const supply = getPlayerSupply(world, player.id);
-  const transformedUsed = supply.used + supply.queued - building.demand + unitDefinition.demand;
+  const transformedUsed = supply.used - building.demand + unitDefinition.demand;
   const transformedCap = supply.cap - (building.construction ? 0 : building.supply) + unitDefinition.supply;
   return transformedUsed <= transformedCap;
 }
@@ -4141,7 +4136,7 @@ function issueQueueUpgradeToOrder(world: WorldState, buildingId: string, unitTyp
   }
   spendResources(player.resources, unitDefinition.costs);
   const totalSeconds = sourceUpgradeDurationSecondsForPlayer(world, building.player, unitDefinition.costs);
-  building.productionQueue.push({ unitTypeId, remainingSeconds: totalSeconds, totalSeconds });
+  building.productionQueue.push({ unitTypeId, remainingSeconds: totalSeconds, totalSeconds, blockedReason: null });
   return true;
 }
 
@@ -7112,7 +7107,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
   }
 
   const supply = getPlayerSupply(world, playerId);
-  if (supply.cap - supply.used - supply.queued <= 2) {
+  if (supply.cap - supply.used <= 2) {
     const completedSupply = sourceAiCompletedBuildRoleCount(world, completedUnits, "supply", playerId);
     issueSourceAiConstructionRequest(world, playerId, "supply", completedSupply + 1, race, state.buildDepots ?? true);
   }
@@ -8471,6 +8466,66 @@ export function sourceButtonHasExecutableContext(world: WorldState, button: Warg
   return Boolean(sourceHudCommandForAction(button.action) && canIssueSourceActionButton(world, button, unit, extraScopes));
 }
 
+export type SourceCommandBlockReason =
+  | { kind: "busy" }
+  | { kind: "dependency"; ids: string[] }
+  | { kind: "resource"; shortages: Array<{ resource: "gold" | "wood" | "oil"; amount: number }> }
+  | { kind: "supply"; amount: number }
+  | { kind: "limit" }
+  | { kind: "unavailable" };
+
+export function firstSourceCommandBlockReason(world: WorldState, button: WargusButton, selectedUnits: WorldUnit[]): SourceCommandBlockReason | null {
+  const extraScopes = button.forUnit.filter((scope) => scope.endsWith("-group"));
+  const units = selectedUnits.filter((unit) => unit.player === world.visibilityPlayer && sourceButtonAppliesTo(button, unit.typeId, extraScopes));
+  if (units.some((unit) => sourceButtonHasExecutableContext(world, button, unit, extraScopes))) return null;
+  const unit = units[0];
+  if (!unit) return { kind: "unavailable" };
+  if (!sourceButtonAllowedForUnit(world, button, unit)) {
+    const ids = firstMissingSourceDependencyIds(world, unit.player, button.value ?? "");
+    return ids.length > 0 ? { kind: "dependency", ids } : { kind: "unavailable" };
+  }
+  if (["train-unit", "upgrade-to", "research"].includes(button.action)
+    && (unit.productionQueue.length >= productionQueueLimitForEngine(world.engineSettings) || isBuildingResearching(world, unit.id))) return { kind: "busy" };
+  if ((button.action === "train-unit" || button.action === "upgrade-to" || button.action === "build") && button.value) {
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === button.value);
+    if (!definition) return { kind: "unavailable" };
+    const ids = firstMissingSourceDependencyIds(world, unit.player, definition.id);
+    if (ids.length > 0) return { kind: "dependency", ids };
+    const shortages = sourceResourceShortages(world.players.find((player) => player.id === unit.player)?.resources ?? {}, definition.costs);
+    if (shortages.length > 0) return { kind: "resource", shortages };
+    if (button.action !== "build" && !isProducerTransformationFor(world, unit, definition.id)) {
+      if (!canCreateUnitWithinSourceLimits(world, unit.player, definition)) return { kind: "limit" };
+      const supply = getPlayerSupply(world, unit.player);
+      if (definition.demand > 0 && supply.used + definition.demand > supply.cap) return { kind: "supply", amount: supply.used + definition.demand - supply.cap };
+    }
+  }
+  if (button.action === "research" && button.value) {
+    const upgrade = world.upgradeDefinitions.find((candidate) => candidate.id === button.value);
+    const ids = firstMissingSourceDependencyIds(world, unit.player, button.value);
+    if (ids.length > 0) return { kind: "dependency", ids };
+    if (upgrade) {
+      const costs = ["gold", upgrade.costs.gold, "wood", upgrade.costs.wood, "oil", upgrade.costs.oil].map(String);
+      const shortages = sourceResourceShortages(world.players.find((player) => player.id === unit.player)?.resources ?? {}, costs);
+      if (shortages.length > 0) return { kind: "resource", shortages };
+    }
+  }
+  return { kind: "unavailable" };
+}
+
+function firstMissingSourceDependencyIds(world: WorldState, playerId: number, id: string): string[] {
+  const alternative = world.dependencyRules.find((rule) => rule.id === id)?.alternatives[0] ?? [];
+  return alternative.filter((dependencyId) => !hasSourceDependency(world, playerId, dependencyId));
+}
+
+function sourceResourceShortages(resources: Record<string, number>, costs: string[]): Array<{ resource: "gold" | "wood" | "oil"; amount: number }> {
+  const required = new Map<string, number>();
+  for (let index = 0; index + 1 < costs.length; index += 2) required.set(costs[index], Number(costs[index + 1]) || 0);
+  return (["gold", "wood", "oil"] as const).flatMap((resource) => {
+    const amount = Math.max(0, (required.get(resource) ?? 0) - (resources[resource] ?? 0));
+    return amount > 0 ? [{ resource, amount }] : [];
+  });
+}
+
 function canCastSourceButtonSpell(world: WorldState, caster: WorldUnit, spellId: string): boolean {
   const spell = world.spellDefinitions.find((candidate) => candidate.id === spellId);
   const manaCost = spellManaCost(world, spellId, spell?.manaCost ?? 0);
@@ -9575,7 +9630,7 @@ function stepProductionOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
   if (!active) {
     return;
   }
-  active.remainingSeconds -= tickSeconds;
+  active.remainingSeconds = Math.max(0, active.remainingSeconds - tickSeconds);
   if (active.remainingSeconds > 0) {
     return;
   }
@@ -9597,10 +9652,16 @@ function stepProductionOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
     return;
   }
 
-  if (!canCompleteTrainedUnitWithinSourceLimits(world, unit.player, unitDefinition)) {
-    active.remainingSeconds = sourceTrainRetryDelaySeconds(world);
+  if (!canCreateUnitWithinSourceLimits(world, unit.player, unitDefinition)) {
+    active.blockedReason = "limit";
     return;
   }
+  const supply = getPlayerSupply(world, unit.player);
+  if (unitDefinition.demand > 0 && supply.used + unitDefinition.demand > supply.cap) {
+    active.blockedReason = "supply";
+    return;
+  }
+  active.blockedReason = null;
 
   const spawn = findSpawnTile(world, unit, unitDefinition);
   if (spawn) {
@@ -9623,22 +9684,10 @@ function stepProductionOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
     world.events.push({ kind: "unit-ready", unitId: trainedUnit.id, typeId: trainedUnit.typeId, player: trainedUnit.player, x: trainedUnit.x, y: trainedUnit.y });
     world.nextUnitSerial += 1;
   } else {
-    active.remainingSeconds = sourceTrainRetryDelaySeconds(world);
+    active.blockedReason = "no-egress";
     return;
   }
   unit.productionQueue.shift();
-}
-
-function sourceTrainRetryDelaySeconds(world: WorldState): number {
-  return sourceCyclesToSeconds(world, 5);
-}
-
-function canCompleteTrainedUnitWithinSourceLimits(world: WorldState, playerId: number, definition: Pick<WargusUnit, "building" | "demand">): boolean {
-  if (!canCreateUnitWithinSourceLimits(world, playerId, definition)) {
-    return false;
-  }
-  const supply = getPlayerSupply(world, playerId);
-  return definition.demand <= 0 || supply.used + definition.demand <= supply.cap;
 }
 
 function issueOnReadyOrder(world: WorldState, unit: WorldUnit): void {
@@ -18423,24 +18472,6 @@ function sourceUnitLimitCounts(world: WorldState, playerId: number): { units: nu
   for (const unit of world.units) {
     visit(unit);
   }
-  const definitionsById = new Map(world.unitDefinitions.map((definition) => [definition.id, definition]));
-  for (const producer of world.units) {
-    if (producer.hitPoints <= 0 || producer.player !== playerId || producer.construction) {
-      continue;
-    }
-    for (const order of producer.productionQueue) {
-      const definition = definitionsById.get(order.unitTypeId);
-      if (!definition || isProducerTransformationFor(world, producer, order.unitTypeId)) {
-        continue;
-      }
-      counts.total += 1;
-      if (definition.building) {
-        counts.buildings += 1;
-      } else {
-        counts.units += 1;
-      }
-    }
-  }
   return counts;
 }
 
@@ -18739,7 +18770,7 @@ function findSpawnTile(world: WorldState, producer: WorldUnit, unitDefinition: W
   const producerBottom = Math.ceil((producer.y + producer.radius) / world.tileSize);
   const probe = createWorldUnit({ unit: unitDefinition, id: "spawn-probe", player: producer.player, tileX: 0, tileY: 0 });
 
-  for (let radius = 1; radius <= 8; radius += 1) {
+  for (let radius = 1; radius <= Math.max(world.map.width, world.map.height); radius += 1) {
     const candidates: Array<{ x: number; y: number }> = [];
     for (let y = producerTop - radius; y <= producerBottom + radius; y += 1) {
       for (let x = producerLeft - radius; x <= producerRight + radius; x += 1) {
@@ -18764,11 +18795,9 @@ function pickSpawnTileForProducerRally(world: WorldState, producer: WorldUnit, c
   if (candidates.length === 0) {
     return null;
   }
-  const target = producer.rallyPoint ?? producer;
-  return [...candidates].sort((a, b) => (
-    distanceSquared(tileToWorldCenter(world, a.x, a.y), target)
-    - distanceSquared(tileToWorldCenter(world, b.x, b.y), target)
-  ))[0] ?? null;
+  void world;
+  void producer;
+  return candidates[0] ?? null;
 }
 
 function isTownCenter(unit: WorldUnit): boolean {

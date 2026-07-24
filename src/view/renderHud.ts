@@ -1,5 +1,5 @@
 import { Application, Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from "pixi.js";
-import { canAttackGround, canEnterPendingWorldCommand, canIssueAutoHarvestOrder, canIssueDetonateOrder, canUseHudBuilderCommands, canIssueExploreOrder, canIssueHoldPosition, canIssueLoadTransport, canIssueReturnGoodsOrder, canReceiveMoveOrders, isAdvancedMeleeCombatDefinition, isAirCombatDefinition, isCasterDefinition, isDefensiveBuildingDefinition, isDemolitionLabDefinition, isDemolitionUnitDefinition, hasAnySourceResearchValue, hasSourceBuildButtonsForTypes, hasSourceResearchButtonsForTypes, hasSourceResearchValueMatching, hasSourceSpellResearchValue, hasSourceTrainButtonsForTypes, hasSourceTrainValueMatching, isGoldOrWoodWorkerDefinition, isHolyResearchUpgradeId as isHolyResearchUpgrade, isHolySupportResearchUpgradeId as isHolySupportResearchUpgrade, isHolyTransformationResearchUpgradeId as isHolyTransformationResearchUpgrade, isBlacksmithResearchUpgrade, isLumberMillResearchUpgrade, isMeleeLandCombatDefinition, isMeleeWeaponResearchUpgrade, isNavalCombatOrUtilityDefinition, isNavalResearchUpgrade, isNavalRoleDefinition, isOilRefineryDefinition, isOrdinaryBarracksCombatDefinition, isRangedLandCombatDefinition, isScoutAirDefinition, isShieldResearchUpgrade, isShipArmorResearchUpgradeId as isShipArmorResearchUpgrade, isShipCannonResearchUpgradeId as isShipCannonResearchUpgrade, isSiegeDefinition, isSiegeResearchUpgrade, isSourceConversionTarget, isSupplyProviderDefinition, isTransport, isWallDefinition, selectedCanCastTargetedSpell, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildIconForHudCommand, sourceBuildPageButtonForHud, sourceBuildValuesDefinitionMatching, sourceBuildValuesProduceMatching, sourceBuildValuesResearchMatching, sourceBuildValuesUpgradeToMatching, sourceButtonForHudCommand, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceCancelButtonForSelection, sourceFallbackResearchIconForHudCommand, sourceFallbackSpellCommandForSpellId, sourceFallbackTrainIconForHudCommand, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceResearchIconForHudCommand, sourceRootBuildButtonsForHud, selectedCanResearchMatchingSource, selectedCanResearchSpellSource, selectedCanResearchAny, selectedCanTrainAny, selectedCanTrainMatching, selectedCanBuildAny, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTowerUpgradeTargetForTypes, sourceTownUpgradeTargetForTypes, sourceTrainButtonsForHud, sourceTrainIconForHudCommand, sourceTrainTargetForTypes, sourceUpgradeButtonsForHud, sourceWorkerTrainTargetForTypes, townCenterTierForPlayer, type TargetedSpellCommand } from "../simulation/orders";
+import { canAttackGround, canEnterPendingWorldCommand, canIssueAutoHarvestOrder, canIssueDetonateOrder, canUseHudBuilderCommands, canIssueExploreOrder, canIssueHoldPosition, canIssueLoadTransport, canIssueReturnGoodsOrder, canReceiveMoveOrders, firstSourceCommandBlockReason, isAdvancedMeleeCombatDefinition, isAirCombatDefinition, isCasterDefinition, isDefensiveBuildingDefinition, isDemolitionLabDefinition, isDemolitionUnitDefinition, hasAnySourceResearchValue, hasSourceBuildButtonsForTypes, hasSourceResearchButtonsForTypes, hasSourceResearchValueMatching, hasSourceSpellResearchValue, hasSourceTrainButtonsForTypes, hasSourceTrainValueMatching, isGoldOrWoodWorkerDefinition, isHolyResearchUpgradeId as isHolyResearchUpgrade, isHolySupportResearchUpgradeId as isHolySupportResearchUpgrade, isHolyTransformationResearchUpgradeId as isHolyTransformationResearchUpgrade, isBlacksmithResearchUpgrade, isLumberMillResearchUpgrade, isMeleeLandCombatDefinition, isMeleeWeaponResearchUpgrade, isNavalCombatOrUtilityDefinition, isNavalResearchUpgrade, isNavalRoleDefinition, isOilRefineryDefinition, isOrdinaryBarracksCombatDefinition, isRangedLandCombatDefinition, isScoutAirDefinition, isShieldResearchUpgrade, isShipArmorResearchUpgradeId as isShipArmorResearchUpgrade, isShipCannonResearchUpgradeId as isShipCannonResearchUpgrade, isSiegeDefinition, isSiegeResearchUpgrade, isSourceConversionTarget, isSupplyProviderDefinition, isTransport, isWallDefinition, selectedCanCastTargetedSpell, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildIconForHudCommand, sourceBuildPageButtonForHud, sourceBuildValuesDefinitionMatching, sourceBuildValuesProduceMatching, sourceBuildValuesResearchMatching, sourceBuildValuesUpgradeToMatching, sourceButtonForHudCommand, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceCancelButtonForSelection, sourceFallbackResearchIconForHudCommand, sourceFallbackSpellCommandForSpellId, sourceFallbackTrainIconForHudCommand, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceResearchIconForHudCommand, sourceRootBuildButtonsForHud, selectedCanResearchMatchingSource, selectedCanResearchSpellSource, selectedCanResearchAny, selectedCanTrainAny, selectedCanTrainMatching, selectedCanBuildAny, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTowerUpgradeTargetForTypes, sourceTownUpgradeTargetForTypes, sourceTrainButtonsForHud, sourceTrainIconForHudCommand, sourceTrainTargetForTypes, sourceUpgradeButtonsForHud, sourceWorkerTrainTargetForTypes, townCenterTierForPlayer, type SourceCommandBlockReason, type TargetedSpellCommand } from "../simulation/orders";
 import { getPlayerSupply, isInvisibleUtilityUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, isWorldTileSourceKnown, type WorldState } from "../simulation/world";
 import type { SavedGameSummary } from "../wargus/saveGame";
 import type { WargusBriefingLayout, WargusButton, WargusManifest, WargusMap, WargusMenuButtonLayout } from "../wargus/types";
@@ -715,7 +715,7 @@ function drawFixedDemoTopBar(layer: Container, graphics: Graphics, layout: Moder
   const resources: Array<{ key: string; label: string; value: string; icon: string | null; action?: () => void }> = [
     { key: "gold", label: "Gold", value: String(player?.resources.gold ?? 0), icon: "icon-gold-mine" },
     { key: "wood", label: "Lumber", value: String(player?.resources.wood ?? 0), icon: human ? "icon-elven-lumber-mill" : "icon-troll-lumber-mill" },
-    { key: "food", label: "Food", value: supply ? `${supply.used + supply.queued}/${supply.cap}` : "0/0", icon: human ? "icon-farm" : "icon-pig-farm" },
+    { key: "food", label: "Food", value: supply ? `${supply.used}/${supply.cap}${supply.used > supply.cap && !world.units.some((unit) => unit.player === world.visibilityPlayer && unit.mainFacility && !unit.construction) ? " · Build Hall" : ""}` : "0/0", icon: human ? "icon-farm" : "icon-pig-farm" },
     { key: "workers", label: "Idle", value: String(sourceFreeWorkerCount(world, player?.id ?? world.visibilityPlayer)), icon: "icon-peasant", action: onFreeWorkerPick }
   ];
   if (oilRelevant) {
@@ -951,25 +951,18 @@ function drawFixedDemoSelectedPanel(layer: Container, graphics: Graphics, rect: 
     });
   }
 
-  const activeProduction = selectedIsOwned ? selected.productionQueue[0] : null;
+  const productionQueue = selectedIsOwned ? selected.productionQueue.slice(0, 6) : [];
+  const activeProduction = productionQueue[0] ?? null;
   if (activeProduction) {
-    const label = unitTypeName(manifest, activeProduction.unitTypeId);
     const queueY = y + height - 46;
-    const labelWidth = Math.max(92, width * 0.42 - 24);
-    addFixedDemoFitText(layer, {
-      text: `Training ${label}`,
-      x: x + 14,
-      y: queueY - 2,
-      width: labelWidth,
-      height: 16,
-      fontSize: 12,
-      minFontSize: 8,
-      fill: "#fff0a8",
-      fontWeight: 700
+    const slotWidth = Math.max(34, Math.floor((width - 42) / 6));
+    productionQueue.forEach((order, index) => {
+      const slotX = x + 14 + index * slotWidth;
+      addFixedDemoFitText(layer, { text: `${index + 1} ${unitTypeName(manifest, order.unitTypeId)}`, x: slotX, y: queueY - 4, width: slotWidth - 4, height: 16, fontSize: 10, minFontSize: 7, fill: "#fff0a8", fontWeight: 700 });
+      addFixedDemoHitTarget(layer, { x: slotX, y: queueY - 7, width: slotWidth - 3, height: 23 }, true, () => onProductionQueuePick(selected.id, { kind: "production", index }));
     });
-    const barX = x + Math.max(132, width * 0.42);
-    drawFixedDemoBar(graphics, barX, queueY + 3, Math.max(80, x + width - 14 - barX), 8, 1 - activeProduction.remainingSeconds / activeProduction.totalSeconds, sourceCompletedBarColor(world));
-    addFixedDemoHitTarget(layer, { x: x + 10, y: queueY - 8, width: width - 20, height: 24 }, true, () => onProductionQueuePick(selected.id, { kind: "production", index: 0 }));
+    if (selected.productionQueue.length > 6) addFixedDemoFitText(layer, { text: `+${selected.productionQueue.length - 6}`, x: x + width - 30, y: queueY - 4, width: 24, height: 16, fontSize: 10, minFontSize: 8, fill: "#fff0a8", fontWeight: 700 });
+    drawFixedDemoBar(graphics, x + 14, queueY + 14, Math.max(80, width - 28), 4, 1 - activeProduction.remainingSeconds / activeProduction.totalSeconds, sourceCompletedBarColor(world));
   }
 
   const activeResearch = selectedIsOwned ? world.activeResearch.find((research) => research.buildingId === selected.id) : null;
@@ -1050,7 +1043,8 @@ function drawFixedDemoSelectedStats(layer: Container, selected: WorldState["unit
   const stats = [
     selected.canAttack ? `Damage ${damage}` : selected.gatherResources.length > 0 ? "Worker" : selected.kind === "building" || selected.mainFacility || selected.storesResources.length > 0 ? "Building" : "",
     armor > 0 ? `Armor ${armor}` : "",
-    range > 0 ? `Range ${range}` : "",
+    selected.canAttack && range > 0 ? `Range ${range}` : "",
+    selected.supply > 0 ? `Provides ${selected.supply} Food` : "",
     selected.resourcesHeld > 0 && selected.carriedResource ? `${selected.carriedResource} ${selected.resourcesHeld}` : ""
   ].filter(Boolean);
   addFixedDemoText(layer, stats.join("  "), x, y, 11, "#d8d3bd", 650, width);
@@ -1199,6 +1193,9 @@ function commandLongLabel(manifest: WargusManifest, world: WorldState, command: 
 }
 
 function commandStatusText(manifest: WargusManifest, world: WorldState, command: HudCommand): string {
+  if (command.disabled && command.disabledReason) {
+    return command.disabledReason;
+  }
   if (command.statusText) {
     return command.statusText;
   }
@@ -1698,7 +1695,7 @@ function drawResourceStrip(
     { key: "gold", icon: "icon-gold-mine", value: player?.resources.gold ?? 0 },
     { key: "wood", icon: human ? "icon-elven-lumber-mill" : "icon-troll-lumber-mill", value: player?.resources.wood ?? 0 },
     { key: "oil", icon: "icon-oil-patch", value: player?.resources.oil ?? 0 },
-    { key: "food", icon: human ? "icon-farm" : "icon-pig-farm", value: supply ? `${supply.used + supply.queued}/${supply.cap}` : "0/0" }
+    { key: "food", icon: human ? "icon-farm" : "icon-pig-farm", value: supply ? `${supply.used}/${supply.cap}` : "0/0" }
   ];
   const sourceSlots = world.engineSettings.resourceUiSlots
     .filter((slot) => ["gold", "wood", "oil", "food", "score", "workers"].includes(slot.key) && !slot.hidden)
@@ -1760,7 +1757,7 @@ function sourceResourceCounterValue(
   slot: { key: string; resource: string }
 ): number | string {
   if (slot.key === "food" || slot.resource === "food") {
-    return supply ? `${supply.used + supply.queued}/${supply.cap}` : "0/0";
+    return supply ? `${supply.used}/${supply.cap}` : "0/0";
   }
   if (slot.key === "score" || slot.resource === "score") {
     return player ? sourceResultScoreForPlayer(world, player) : 0;
@@ -2591,6 +2588,7 @@ export interface HudCommand {
   icon?: string | null;
   sourceButton?: WargusButton | null;
   disabled?: boolean;
+  disabledReason?: string;
 }
 
 let hoveredHudCommandId: HudCommandId | null = null;
@@ -3551,19 +3549,33 @@ function enrichCommandFromSource(
   typeIds: Set<string>
 ): HudCommand {
   const sourceButton = command.sourceButton ?? sourceButtonForCommand(manifest, world, command.id, playerId, selectedUnits, readyUnits, typeIds);
+  const disabled = command.disabled ?? sourceCommandDisabled(world, sourceButton, selectedUnits);
+  const blockReason = disabled && sourceButton ? firstSourceCommandBlockReason(world, sourceButton, selectedUnits) : null;
   const enriched = {
     ...command,
     key: sourceButton?.key ? sourceButton.key.toUpperCase() : command.key,
     label: sourceButtonLabel(sourceButton) ?? command.label,
     icon: sourceButton?.icon ?? iconForCommand(command.id, world, playerId, typeIds, selectedUnits),
     sourceButton,
-    disabled: command.disabled ?? sourceCommandDisabled(world, sourceButton, selectedUnits)
+    disabled,
+    disabledReason: command.disabledReason ?? (blockReason ? commandBlockReasonText(manifest, blockReason) : undefined)
   };
   return {
     ...enriched,
     longLabel: command.longLabel ?? commandLongLabel(manifest, world, enriched),
     statusText: command.statusText ?? commandStatusText(manifest, world, enriched)
   };
+}
+
+function commandBlockReasonText(manifest: WargusManifest, reason: SourceCommandBlockReason): string {
+  switch (reason.kind) {
+    case "busy": return "Production busy";
+    case "dependency": return `Requires ${reason.ids.map((id) => id.startsWith("unit-") ? unitTypeName(manifest, id) : upgradeName(manifest, id)).join(" + ")}`;
+    case "resource": return reason.shortages.map(({ resource, amount }) => `Need ${amount} ${resource[0].toUpperCase()}${resource.slice(1)}`).join("; ");
+    case "supply": return `Needs ${reason.amount} Food`;
+    case "limit": return "Unit limit reached";
+    case "unavailable": return "Unavailable in this battle";
+  }
 }
 
 function sourceCommandDisabled(world: WorldState, button: WargusButton | null | undefined, selectedUnits: WorldState["units"]): boolean {

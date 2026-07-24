@@ -509,6 +509,7 @@ export interface ProductionOrder {
   unitTypeId: string;
   remainingSeconds: number;
   totalSeconds: number;
+  blockedReason: "supply" | "limit" | "no-egress" | null;
 }
 
 export interface ConstructionState {
@@ -842,6 +843,7 @@ export type MatchState =
 
 export interface WorldPlayer {
   id: number;
+  team: number;
   name: string | null;
   resources: Record<string, number>;
   speedFactors: WargusSpeedFactors;
@@ -903,13 +905,11 @@ export interface WorldAiState {
 export interface PlayerSupply {
   used: number;
   cap: number;
-  queued: number;
 }
 
 export function getPlayerSupply(world: WorldState, playerId: number): PlayerSupply {
   let used = 0;
   let cap = 0;
-  let queued = 0;
   const countUnit = (unit: WorldUnit): void => {
     if (unit.player !== playerId || unit.hitPoints <= 0) {
       return;
@@ -918,10 +918,6 @@ export function getPlayerSupply(world: WorldState, playerId: number): PlayerSupp
       cap += unit.supply;
     }
     used += unit.demand;
-    for (const order of unit.productionQueue) {
-      const unitDefinition = world.unitDefinitions.find((candidate) => candidate.id === order.unitTypeId);
-      queued += unitDefinition?.demand ?? 0;
-    }
     for (const cargoUnit of unit.cargo ?? []) {
       countUnit(cargoUnit);
     }
@@ -929,7 +925,7 @@ export function getPlayerSupply(world: WorldState, playerId: number): PlayerSupp
   for (const unit of world.units) {
     countUnit(unit);
   }
-  return { used, cap, queued };
+  return { used, cap };
 }
 
 function engineSettingsWithSetupState(engineSettings: WargusEngineSettings, state: WargusMapSetup["state"] | undefined): WargusEngineSettings {
@@ -2283,8 +2279,8 @@ function playersFromSetup(setup: WargusMapSetup | null, engineSettings: WargusEn
   if (!setup?.players.length) {
     const defaultRace = sourceDefaultRace(engineSettings);
     return [
-      { id: 0, name: sourcePlayerName(engineSettings, sourceAiDefinitions, 0, "person", defaultRace, null), resources: { gold: 0, wood: 0, oil: 0 }, speedFactors: cloneSourceSpeedFactors(speedFactors), race: defaultRace, ai: null, playerType: "person", startX: 10 * 32 + 16, startY: 10 * 32 + 16 },
-      { id: 1, name: sourcePlayerName(engineSettings, sourceAiDefinitions, 1, "computer", defaultRace, "Land Attack"), resources: { gold: 0, wood: 0, oil: 0 }, speedFactors: cloneSourceSpeedFactors(speedFactors), race: defaultRace, ai: "Land Attack", playerType: "computer", startX: 20 * 32 + 16, startY: 20 * 32 + 16 }
+      { id: 0, team: 0, name: sourcePlayerName(engineSettings, sourceAiDefinitions, 0, "person", defaultRace, null), resources: { gold: 0, wood: 0, oil: 0 }, speedFactors: cloneSourceSpeedFactors(speedFactors), race: defaultRace, ai: null, playerType: "person", startX: 10 * 32 + 16, startY: 10 * 32 + 16 },
+      { id: 1, team: 1, name: sourcePlayerName(engineSettings, sourceAiDefinitions, 1, "computer", defaultRace, "Land Attack"), resources: { gold: 0, wood: 0, oil: 0 }, speedFactors: cloneSourceSpeedFactors(speedFactors), race: defaultRace, ai: "Land Attack", playerType: "computer", startX: 20 * 32 + 16, startY: 20 * 32 + 16 }
     ].map((player) => ({ ...player, stats: createPlayerStats() }));
   }
   return setup.players.map((player) => ({
@@ -2293,6 +2289,7 @@ function playersFromSetup(setup: WargusMapSetup | null, engineSettings: WargusEn
       return { startX: start.x * 32 + 16, startY: start.y * 32 + 16 };
     })(),
     id: player.player,
+    team: setup.teams?.find((entry) => entry.player === player.player)?.team ?? player.player,
     name: sourcePlayerName(engineSettings, sourceAiDefinitions, player.player, player.playerType, player.race, player.ai),
     resources: { ...player.resources },
     speedFactors: cloneSourceSpeedFactors(speedFactors),

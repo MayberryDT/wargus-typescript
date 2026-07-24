@@ -47,6 +47,15 @@ normalize imported display identifiers only at presentation boundaries.
 - **Depends on**: plans/014-make-ai-execute-its-strategy.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug, direction
 - **Planned at**: commit `6af2eeb`, 2026-07-10
+- **Current decision**: IN PROGRESS — implementation is complete and browser-free gates are recorded; the user explicitly deferred M11–M12 browser acceptance and final READY review to the single integrated playthrough after Plan 017.
+
+## Acceptance override (2026-07-24)
+
+The user directed Plan 016 to land as one implementation milestone without
+browser, server, game, per-checkpoint reviews, or verifier-infrastructure
+expansion. Browser-backed layout/play sessions and the final READY decision are
+therefore deferred to the one integrated post-Plan-017 playthrough. This does
+not claim that M11–M12 or required viewport layout were run in this batch.
 
 ## Player-visible contract and evidence
 

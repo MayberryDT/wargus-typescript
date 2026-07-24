@@ -10,7 +10,7 @@ export interface IconTextureAtlas {
 }
 
 export async function loadIconTextureAtlas(tileset: string | null | undefined): Promise<IconTextureAtlas | null> {
-  const tilesetName = tileset ?? "summer";
+  const tilesetName = normalizeIconTilesetName(tileset);
   try {
     const [base, framesById] = await Promise.all([
       Assets.load<Texture>(`/wargus/graphics/tilesets/${tilesetName}/icons.png`),
@@ -28,6 +28,10 @@ export async function loadIconTextureAtlas(tileset: string | null | undefined): 
     console.warn(`Unable to load icon atlas for tileset: ${tilesetName}`);
     return null;
   }
+}
+
+function normalizeIconTilesetName(value: string | null | undefined): string {
+  return (value ?? "summer").replace(/^scripts\/tilesets\//, "").replace(/^wargus\//, "").replace(/\.lua$/, "") || "summer";
 }
 
 export function getIconTexture(atlas: IconTextureAtlas, iconId: string | null | undefined): Texture | null {
