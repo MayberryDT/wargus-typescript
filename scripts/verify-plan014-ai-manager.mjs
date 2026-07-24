@@ -65,6 +65,7 @@ try {
   const aiState = world.aiStates.find((state) => state.enabled);
   const aiPlayer = aiState ? world.players.find((player) => player.id === aiState.player) : null;
   if (!aiState || !aiPlayer) throw new Error("Plan 014 save fixture is missing its AI player/state.");
+  const liveEvidence = orders.sourceAiRuntimeEvidence(world, aiState.player, aiState);
   const race = aiPlayer.race === "orc" ? "orc" : "human";
   const saveTypeIds = {
     soldier: race === "orc" ? "unit-grunt" : "unit-footman",
@@ -166,6 +167,17 @@ try {
     || result?.competingCosts?.arrivalDeductionMatches !== true) {
     failures.push(`competing unpaid costs: ${JSON.stringify(result?.competingCosts)}`);
   }
+  const oneHallBuild = result?.oneHall?.evidence?.buildRoles?.find((entry) => entry.role === "town-center");
+  const secondBarracksBuild = result?.secondBarracks?.evidence?.buildRoles?.find((entry) => entry.role === "barracks");
+  if (oneHallBuild?.desired !== 1
+    || oneHallBuild?.inFlight !== 1
+    || oneHallBuild?.foundations !== 0
+    || !(Number(result?.oneHall?.evidence?.reservedResources?.gold ?? 0) > 0)
+    || secondBarracksBuild?.desired !== 2
+    || secondBarracksBuild?.completed !== 1
+    || secondBarracksBuild?.inFlight !== 1) {
+    failures.push(`live construction evidence: ${JSON.stringify({ oneHall: result?.oneHall?.evidence, secondBarracks: result?.secondBarracks?.evidence })}`);
+  }
   if (!forceSafety?.ok
     || forceSafety?.mixed?.readyWithoutMage !== false
     || forceSafety?.mixed?.readyWithMage !== true
@@ -201,6 +213,24 @@ try {
     || !saveSafety.activeLaunchDisjoint
     || saveSafety.forceRoleCount !== 0) {
     failures.push(`bounded source-AI save state: ${JSON.stringify(saveSafety)}`);
+  }
+  if (liveEvidence?.player !== aiState.player
+    || !Number.isInteger(liveEvidence?.sourceScriptIndex)
+    || !Array.isArray(liveEvidence?.forces)
+    || !Array.isArray(liveEvidence?.launches)
+    || !Array.isArray(liveEvidence?.buildRoles)
+    || !Array.isArray(liveEvidence?.pendingBuildOrders)
+    || !Array.isArray(liveEvidence?.productionQueues)
+    || !Array.isArray(liveEvidence?.constructions)
+    || typeof liveEvidence?.reservedResources !== "object"
+    || typeof liveEvidence?.speedFactors?.build !== "number"
+    || typeof liveEvidence?.exploration?.exploredTiles !== "number"
+    || liveEvidence.forces.length > 16
+    || liveEvidence.launches.length > 16
+    || liveEvidence.pendingBuildOrders.length > 64
+    || liveEvidence.productionQueues.length > 64
+    || liveEvidence.constructions.length > 64) {
+    failures.push(`bounded live AI evidence: ${JSON.stringify(liveEvidence)}`);
   }
   if (failures.length > 0) throw new Error(failures.join("\n"));
   console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, competing unpaid costs, exact mixed force, blocked orderless launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);

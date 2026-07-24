@@ -7420,6 +7420,15 @@ function sourceAiCanAffordBuildNeed(world: WorldState, playerId: number, role: s
     return false;
   }
   const available = { ...player.resources };
+  const reserved = sourceAiReservedBuildResources(world, playerId);
+  for (const [resource, amount] of Object.entries(reserved)) {
+    available[resource] = (available[resource] ?? 0) - amount;
+  }
+  return canAfford(available, definition.costs);
+}
+
+function sourceAiReservedBuildResources(world: WorldState, playerId: number): Record<string, number> {
+  const reserved: Record<string, number> = {};
   for (const unit of world.units) {
     const order = unit.order;
     if (unit.player !== playerId || !isUsableBuilder(unit) || order?.kind !== "build" || order.phase !== "to-site") {
@@ -7432,11 +7441,11 @@ function sourceAiCanAffordBuildNeed(world: WorldState, playerId: number, role: s
     for (let index = 0; index < pending.costs.length - 1; index += 2) {
       const resource = pending.costs[index];
       if (resource !== "time") {
-        available[resource] = (available[resource] ?? 0) - Number(pending.costs[index + 1]);
+        reserved[resource] = (reserved[resource] ?? 0) + Number(pending.costs[index + 1]);
       }
     }
   }
-  return canAfford(available, definition.costs);
+  return reserved;
 }
 
 function isSourceAiDepotRole(role: string): boolean {
@@ -7478,6 +7487,119 @@ function sourceAiCompletedBuildRoleCount(world: WorldState, buildings: WorldUnit
     const definition = world.unitDefinitions.find((candidate) => candidate.id === unit.typeId);
     return Boolean(definition && sourceAiBuildDefinitionMatchesRole(world, definition, role, playerId));
   }).length;
+}
+
+export function sourceAiRuntimeEvidence(world: WorldState, playerId: number, state: WorldAiState) {
+  const player = world.players.find((candidate) => candidate.id === playerId);
+  const ownedUnits = world.units.filter((unit) => unit.player === playerId && unit.hitPoints > 0);
+  const completedBuildings = ownedUnits.filter((unit) => isSourceAiBuilding(unit) && !unit.construction);
+  const foundations = ownedUnits.filter((unit) => isSourceAiBuilding(unit) && Boolean(unit.construction));
+  const buildRoles = [
+    "town-center", "town-center-tier2", "town-center-tier3", "supply", "barracks", "lumber-mill", "blacksmith", "tower", "guard-tower", "cannon-tower",
+    "advanced-melee", "holy", "caster", "air", "demolition", "shipyard", "foundry", "refinery", "oil-platform"
+  ] as const;
+  const pendingBuildUnits = ownedUnits
+    .filter((unit): unit is WorldUnit & { order: Extract<WorldUnit["order"], { kind: "build" }> } => unit.order?.kind === "build" && unit.order.phase === "to-site")
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .slice(0, 64);
+  const roleEvidence = buildRoles.map((role) => {
+    const inFlight = pendingBuildUnits.filter((unit) => {
+      const definition = world.unitDefinitions.find((candidate) => candidate.id === unit.order.buildingTypeId);
+      return Boolean(definition && sourceAiBuildDefinitionMatchesRole(world, definition, role, playerId));
+    }).length;
+    return {
+      role,
+      desired: state.buildOrder.filter((candidate) => candidate === role).length,
+      completed: sourceAiCompletedBuildRoleCount(world, completedBuildings, role, playerId),
+      foundations: sourceAiCompletedBuildRoleCount(world, foundations, role, playerId),
+      inFlight
+    };
+  });
+  const forceBounds = sourceAiScriptSaveBounds(world, playerId, state.sourceScriptId, state.strategy, Number.MAX_SAFE_INTEGER);
+  const forces = state.sourceScriptForces.slice(0, 16).map((force) => ({
+    id: force.id,
+    attack: force.attack,
+    targets: force.targets.slice(0, 16).map((target) => ({ ...target })),
+    assignedUnitIds: force.assignedUnitIds.slice(0, 64),
+    assignedUnits: force.assignedUnitIds.slice(0, 64).map((unitId) => {
+      const unit = findUnit(world, unitId);
+      return { unitId, typeId: unit?.typeId ?? null, orderKind: unit?.order?.kind ?? null };
+    })
+  }));
+  const launches = state.sourceScriptLaunches.slice(-Math.max(1, forceBounds.launches.length)).map((launch) => ({
+    sourceForceId: launch.sourceForceId,
+    launchedTick: launch.launchedTick,
+    unitIds: launch.unitIds.slice(0, 64),
+    units: launch.unitIds.slice(0, 64).map((unitId) => {
+      const unit = findUnit(world, unitId);
+      return { unitId, typeId: unit?.typeId ?? null, orderKind: unit?.order?.kind ?? null };
+    })
+  }));
+  const explorationBuffer = world.exploredTilesByPlayer[playerId] ?? new Uint8Array(0);
+  const exploredTiles = explorationBuffer.reduce((sum, value) => sum + (value === 0 ? 0 : 1), 0);
+  const scoutDestinations = ownedUnits
+    .filter((unit): unit is WorldUnit & { order: Extract<WorldUnit["order"], { kind: "explore" }> } => unit.order?.kind === "explore")
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .slice(0, 16)
+    .map((unit) => ({ unitId: unit.id, targetX: unit.order.targetX, targetY: unit.order.targetY, orderKind: unit.order.kind }));
+  const productionQueues = completedBuildings
+    .filter((unit) => unit.productionQueue.length > 0)
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .slice(0, 64)
+    .map((unit) => ({
+      buildingId: unit.id,
+      buildingTypeId: unit.typeId,
+      queueLength: unit.productionQueue.length,
+      headUnitTypeId: unit.productionQueue[0]?.unitTypeId ?? null,
+      headTotalSeconds: unit.productionQueue[0]?.totalSeconds ?? null,
+      headRemainingSeconds: unit.productionQueue[0]?.remainingSeconds ?? null,
+      orders: unit.productionQueue.slice(0, 6).map((order) => ({ ...order }))
+    }));
+  const constructions = foundations
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .slice(0, 64)
+    .map((unit) => ({
+      buildingId: unit.id,
+      buildingTypeId: unit.typeId,
+      builderId: unit.construction?.builderId ?? null,
+      totalSeconds: unit.construction?.totalSeconds ?? null,
+      remainingSeconds: unit.construction?.remainingSeconds ?? null
+    }));
+  return {
+    player: playerId,
+    sourceScriptId: state.sourceScriptId,
+    sourceScriptIndex: state.sourceScriptIndex,
+    sourceScriptSleepUntilTick: state.sourceScriptSleepUntilTick,
+    forces,
+    launches,
+    buildRoles: roleEvidence,
+    pendingBuildOrders: pendingBuildUnits.map((unit) => ({
+      builderId: unit.id,
+      buildingTypeId: unit.order.buildingTypeId,
+      phase: unit.order.phase,
+      tileX: unit.order.tileX,
+      tileY: unit.order.tileY
+    })),
+    reservedResources: sourceAiReservedBuildResources(world, playerId),
+    playerResources: { ...(player?.resources ?? {}) },
+    speedFactors: player ? {
+      build: player.speedFactors.build,
+      train: player.speedFactors.train,
+      upgrade: player.speedFactors.upgrade,
+      research: player.speedFactors.research,
+      resourceHarvest: { ...player.speedFactors.resourceHarvest },
+      resourceReturn: { ...player.speedFactors.resourceReturn }
+    } : null,
+    exploration: {
+      exploredTiles,
+      totalTiles: explorationBuffer.length,
+      nextExplorationUpdateTick: state.nextExplorationUpdateTick,
+      nextScoutTick: state.nextScoutTick,
+      scoutDestinations
+    },
+    productionQueues,
+    constructions
+  };
 }
 
 function isSourceAiBuilding(unit: WorldUnit): boolean {
@@ -19154,6 +19276,7 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   const oneHallAfterOrder = openingWorker.order?.kind === "build" ? `${openingWorker.order.kind}:${openingWorker.order.phase}` : openingWorker.order?.kind ?? null;
   const pendingTownCenters = sourceAiBuildRoleCount(oneHallFixture.world, [], "town-center", oneHallFixture.state.player);
   const oneHallResourcesChangedBeforeArrival = !resourcesEqual(oneHallResourcesBefore, oneHallFixture.player.resources);
+  const oneHallEvidence = sourceAiRuntimeEvidence(oneHallFixture.world, oneHallFixture.state.player, oneHallFixture.state);
   runLandAttackAi(oneHallFixture.world, oneHallFixture.state.player, oneHallFixture.state);
   const afterRepeatPendingTownCenters = sourceAiBuildRoleCount(oneHallFixture.world, [], "town-center", oneHallFixture.state.player);
 
@@ -19171,6 +19294,7 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   runLandAttackAi(secondBarracksFixture.world, secondBarracksFixture.state.player, secondBarracksFixture.state);
   const travellingWorkerRetasked = travellingWorker.order?.kind === "build" && travellingWorker.order.buildingTypeId === barracksTypeId;
   const completedAndPendingAfter = sourceAiBuildRoleCount(secondBarracksFixture.world, secondBarracksFixture.world.units.filter(isSourceAiBuilding), "barracks", secondBarracksFixture.state.player);
+  const secondBarracksEvidence = sourceAiRuntimeEvidence(secondBarracksFixture.world, secondBarracksFixture.state.player, secondBarracksFixture.state);
   runLandAttackAi(secondBarracksFixture.world, secondBarracksFixture.state.player, secondBarracksFixture.state);
   const afterRepeatCompletedAndPending = sourceAiBuildRoleCount(secondBarracksFixture.world, secondBarracksFixture.world.units.filter(isSourceAiBuilding), "barracks", secondBarracksFixture.state.player);
 
@@ -19213,13 +19337,15 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     afterOrder: oneHallAfterOrder,
     pendingTownCenters,
     afterRepeatPendingTownCenters,
-    resourcesChangedBeforeArrival: oneHallResourcesChangedBeforeArrival
+    resourcesChangedBeforeArrival: oneHallResourcesChangedBeforeArrival,
+    evidence: oneHallEvidence
   };
   const secondBarracks = {
     completedBefore,
     travellingWorkerRetasked,
     completedAndPendingAfter,
-    afterRepeatCompletedAndPending
+    afterRepeatCompletedAndPending,
+    evidence: secondBarracksEvidence
   };
   const competingCosts = {
     individuallyAffordable,

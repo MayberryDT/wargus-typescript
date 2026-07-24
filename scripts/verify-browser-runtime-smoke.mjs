@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { connect } from "node:net";
 
@@ -7,6 +8,7 @@ const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=ai-staged-pressure`;
 const SESSION_LIMIT_MS = 25_000;
 const MODE = process.env.WARGUS_BROWSER_RUNTIME_MODE ?? "plan014";
 const SERVER_MODE = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev";
+const REPORT_PATH = process.env.WARGUS_BROWSER_RUNTIME_REPORT ?? null;
 const EXPECTED_BACKGROUND_MUSIC = "warcraft-2-ost-human-1-128-ytshorts.savetube.me.mp3";
 let server = null;
 let browserServer = null;
@@ -39,6 +41,9 @@ try {
   wallTimeMs = Date.now() - startedAt;
   if (context.pages().length !== 1) throw new Error(`Verifier opened extra tabs; found ${context.pages().length}.`);
   assertRuntimeSmoke(result);
+  if (REPORT_PATH) {
+    writeFileSync(REPORT_PATH, `${JSON.stringify(runtimeEvidenceReport(result), null, 2)}\n`, "utf8");
+  }
   console.log(`Browser runtime smoke verified (${MODE}, one tab, port ${PORT}, wall ${(wallTimeMs / 1000).toFixed(1)}s; canvas ${result.canvas.width}x${result.canvas.height}/${result.screenshot.uniqueColors} colors; ${modeSummary(result)}, update ${Number(result.performance.averageUpdateMs).toFixed(2)}ms).`);
 } finally {
   if (browserServer?.process()?.pid) browserPids = [...new Set([...browserPids, ...processTreePids(browserServer.process().pid)])];
@@ -58,7 +63,7 @@ async function runRuntimeSmoke(page) {
   await page.waitForFunction(() => Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded), null, { timeout: 8_000 });
   await page.waitForFunction((mode) => {
     if (mode === "basics") return true;
-    if (mode === "plan014") return typeof window.__WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__ === "function" && typeof window.__WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__ === "function";
+    if (mode === "plan014") return window.__WARGUS_TS_SMOKE_STATE__?.aiStates?.some((state) => state.enabled && state.evidence);
     if (mode === "m01") return typeof window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__ === "function";
     if (mode === "m04") return typeof window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__ === "function";
     return typeof window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__ === "function";
@@ -83,7 +88,7 @@ async function runRuntimeSmoke(page) {
   const fixtures = await page.evaluate((mode) => {
     const startedAt = performance.now();
     const result = mode === "plan014"
-      ? { aiScript: window.__WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__(), aiKnowledge: window.__WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__() }
+      ? {}
       : mode === "m01"
         ? { m01: window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__("arrival") }
         : mode === "m04"
@@ -127,7 +132,7 @@ function assertRuntimeSmoke(result) {
   const averageRenderMs = Number(result.performance.averageRenderMs);
   if (!Number.isFinite(averageUpdateMs) || averageUpdateMs > 20) failures.push(`update budget: ${averageUpdateMs}`);
   if (!Number.isFinite(averageRenderMs) || averageRenderMs > 24) failures.push(`render budget: ${averageRenderMs}`);
-  if (MODE === "plan014") assertPlan014(result.aiScript, result.aiKnowledge, failures);
+  if (MODE === "plan014") assertPlan014(result.smoke, failures);
   else if (MODE === "m01") assertM01(result.m01, failures);
   else if (MODE === "m04") assertM04(result.m04, failures);
   else if (MODE === "m07") assertM07(result.m07, failures);
@@ -137,11 +142,39 @@ function assertRuntimeSmoke(result) {
 }
 
 function modeSummary(result) {
-  if (MODE === "plan014") return `AI launches ${result.aiScript.launchSizes.slice(0, 3).join("->")}, factors ${Object.values(result.aiKnowledge.difficulty.factors).join("/")}, explored ${result.aiKnowledge.exploration.aiExploredAfterUpdate}`;
+  if (MODE === "plan014") {
+    const ai = result.smoke?.aiStates?.find((state) => state.enabled && state.evidence);
+    return `live AI player ${ai?.player ?? "missing"}, script ${ai?.evidence?.sourceScriptIndex ?? "missing"}, launches ${ai?.evidence?.launches?.length ?? "missing"}`;
+  }
   if (MODE === "m01") return "M01 pending/paid/cancel lifecycle";
   if (MODE === "m04") return `M04 ${result.m04.m04.completionCount}/5 formation`;
   if (MODE === "basics") return `basics fog ${result.basics.fogTelemetry.exploredTiles}/${result.basics.mapTileCount}, audio ${result.basics.smoke.audioContextState}, order ${result.basics.smoke.firstSelectedOrderKind}`;
   return `M07 return ${result.m07.automatic.returnDistance.toFixed(1)}px`;
+}
+
+function runtimeEvidenceReport(result) {
+  return {
+    schemaVersion: 1,
+    mode: MODE,
+    serverMode: SERVER_MODE,
+    port: PORT,
+    url: URL,
+    wallTimeMs,
+    canvas: result.canvas,
+    screenshot: result.screenshot,
+    performance: result.performance,
+    live: {
+      tick: result.smoke?.tick ?? null,
+      paused: result.smoke?.paused ?? null,
+      gameSpeed: result.smoke?.gameSpeed ?? null,
+      aiStates: result.smoke?.aiStates ?? []
+    },
+    fixtures: {
+      m01: result.m01 ?? null,
+      m04: result.m04 ?? null,
+      m07: result.m07 ?? null
+    }
+  };
 }
 
 async function runBrowserBasics(page, pageErrors, canvas, screenshot) {
@@ -238,16 +271,22 @@ function sameScreenshotStats(left, right) {
   return left?.uniqueColors === right?.uniqueColors && left?.brightPixels === right?.brightPixels;
 }
 
-function assertPlan014(script, knowledge, failures) {
-  if (!script?.ok || JSON.stringify(script.launchSizes?.slice(0, 3)) !== JSON.stringify([1, 4, 16]) || script.uniqueLaunchedIds !== 21 || script.barracksDesired !== 2) failures.push(`M08 script fixture: ${JSON.stringify(script)}`);
-  const launches = script?.launches ?? [];
-  const launchedIds = launches.flatMap((launch) => launch.unitIds ?? []);
-  if (launches.length < 3 || new Set(launchedIds).size !== launchedIds.length || launches.some((launch) => !(launch.launchedTick >= 0))) failures.push(`M08 detached launches: ${JSON.stringify(launches)}`);
-  const expectedFactors = { 1: 0.75, 2: 1, 3: 1, 4: 1.2, 5: 1.5 };
-  if (!knowledge?.ok || JSON.stringify(knowledge.difficulty?.factors) !== JSON.stringify(expectedFactors) || knowledge.difficulty?.resetFactor !== 1) failures.push(`M09 factors/reset: ${JSON.stringify(knowledge?.difficulty)}`);
-  if (knowledge.sleep?.sleepStart !== "block" || knowledge.sleep?.sleepFinish !== "advance" || !(knowledge.sleep?.sleepDeadline > 0) || knowledge.sleep?.finalDeadline !== 0) failures.push(`positive sleep barrier: ${JSON.stringify(knowledge?.sleep)}`);
-  if (!knowledge.exploration?.aliasBound || !knowledge.exploration?.ownerCandidateWasUnexplored || !knowledge.exploration?.humanCandidateWasExplored || !(knowledge.exploration?.aiExploredAfterUpdate > 0)) failures.push(`AI-owned exploration: ${JSON.stringify(knowledge?.exploration)}`);
-  if (!knowledge.saveRoundtrip?.ok || !knowledge.legacyRoundtrip?.ok || knowledge.legacyRoundtrip?.aiExploredTiles !== 0) failures.push(`exploration save compatibility: ${JSON.stringify({ save: knowledge?.saveRoundtrip, legacy: knowledge?.legacyRoundtrip })}`);
+function assertPlan014(smoke, failures) {
+  const ai = smoke?.aiStates?.find((state) => state.enabled && state.evidence);
+  const evidence = ai?.evidence;
+  if (!ai || !evidence || !Number.isInteger(evidence.sourceScriptIndex)) {
+    failures.push(`live Plan014 AI state: ${JSON.stringify(smoke?.aiStates)}`);
+    return;
+  }
+  if (!Array.isArray(evidence.forces) || evidence.forces.length > 16 || evidence.forces.some((force) => !Array.isArray(force.assignedUnitIds) || force.assignedUnitIds.length > 64 || !Array.isArray(force.assignedUnits))) failures.push(`bounded live force state: ${JSON.stringify(evidence.forces)}`);
+  if (!Array.isArray(evidence.launches) || evidence.launches.length > 16 || evidence.launches.some((launch) => !(launch.launchedTick >= 0) || !Array.isArray(launch.unitIds) || launch.unitIds.length > 64 || !Array.isArray(launch.units))) failures.push(`bounded live launch state: ${JSON.stringify(evidence.launches)}`);
+  if (!Array.isArray(evidence.buildRoles) || evidence.buildRoles.length === 0 || evidence.buildRoles.some((entry) => !Number.isInteger(entry.desired) || !Number.isInteger(entry.completed) || !Number.isInteger(entry.foundations) || !Number.isInteger(entry.inFlight))) failures.push(`live build-role counts: ${JSON.stringify(evidence.buildRoles)}`);
+  if (!Array.isArray(evidence.pendingBuildOrders) || evidence.pendingBuildOrders.length > 64 || Object.values(evidence.reservedResources ?? {}).some((amount) => !Number.isFinite(amount) || amount < 0)) failures.push(`live pending/reserved builds: ${JSON.stringify({ pending: evidence.pendingBuildOrders, reserved: evidence.reservedResources })}`);
+  const factor = Number(evidence.speedFactors?.build);
+  if (!Number.isFinite(factor) || factor < 0.75 || factor > 1.5) failures.push(`live speed factors: ${JSON.stringify(evidence.speedFactors)}`);
+  if (!(evidence.exploration?.totalTiles > 0 && evidence.exploration.exploredTiles >= 0 && evidence.exploration.exploredTiles <= evidence.exploration.totalTiles && Array.isArray(evidence.exploration.scoutDestinations))) failures.push(`live exploration/scout state: ${JSON.stringify(evidence.exploration)}`);
+  if (!Array.isArray(evidence.productionQueues) || evidence.productionQueues.length > 64 || evidence.productionQueues.some((queue) => queue.headTotalSeconds !== null && (!(queue.headTotalSeconds > 0) || !(queue.headRemainingSeconds >= 0)))) failures.push(`live train queue durations: ${JSON.stringify(evidence.productionQueues)}`);
+  if (!Array.isArray(evidence.constructions) || evidence.constructions.length > 64 || evidence.constructions.some((construction) => !(construction.totalSeconds > 0) || !(construction.remainingSeconds >= 0))) failures.push(`live construction durations: ${JSON.stringify(evidence.constructions)}`);
 }
 
 function assertM01(result, failures) {

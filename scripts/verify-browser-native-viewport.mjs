@@ -36,6 +36,7 @@ for (const fragment of [
   "browserSmokeStateEnabled",
   "__WARGUS_TS_SMOKE_STATE__",
   "function publishBrowserSmokeState",
+  "evidence: sourceAiRuntimeEvidence(smokeWorld, state.player, state)",
   "__WARGUS_TS_CENTER_FIRST_OWNED_MOVABLE__",
   "firstOwnedMovableScreenPoint",
   "firstSelectedOrderKind",
@@ -104,6 +105,7 @@ expect(packageSource.includes('"verify:browser-demo-victory"'), "package.json sh
 expect(packageSource.includes("npm run verify:browser-demo-victory"), "Browser demo-session verifier should run the fixed-demo victory verifier.");
 expect(packageSource.includes('"verify:browser-production-smoke"'), "package.json should expose the production browser runtime smoke verifier.");
 expect(packageSource.includes('"verify:browser-runtime-basics"'), "package.json should expose the focused browser basics verifier.");
+expect(packageSource.includes('"verify:browser-runtime-m07"'), "package.json should expose the focused M07 browser verifier for reproducible evidence capture.");
 expect(packageSource.includes('"verify:browser-production"'), "package.json should expose the combined production browser verifier.");
 expect(packageSource.includes('"verify:browser-production:all"'), "package.json should expose the exhaustive combined production browser verifier.");
 expect(packageSource.includes("WARGUS_BROWSER_SMOKE_SERVER=preview node scripts/verify-browser-runtime-smoke.mjs && WARGUS_BROWSER_SMOKE_SERVER=preview npm run verify:browser-runtime-basics"), "Production browser smoke should run both Plan014 and restored browser basics against Vite preview.");
@@ -135,8 +137,17 @@ for (const scriptName of [
 
 expect(runtimeSmokeSource.includes('await import("playwright")'), "Browser runtime smoke should load its declared Playwright dependency directly.");
 expect(runtimeSmokeSource.includes("process.env.CHROME_BIN ?? chromium.executablePath()"), "Browser runtime smoke should resolve Chromium portably while retaining an explicit override.");
+expect(runtimeSmokeSource.includes("process.env.WARGUS_BROWSER_RUNTIME_REPORT ?? null"), "Browser runtime smoke should expose an opt-in JSON evidence artifact path.");
+expect(runtimeSmokeSource.includes("writeFileSync(REPORT_PATH"), "Browser runtime smoke should write its final accepted payload when an evidence path is requested.");
+expect(runtimeSmokeSource.includes("function runtimeEvidenceReport(result)"), "Browser runtime smoke should keep a reproducible M07/live-AI/performance report shape.");
+expect(runtimeSmokeSource.includes("aiStates: result.smoke?.aiStates ?? []"), "Browser runtime report should retain live duration, force, exploration, and resource evidence.");
 expect(!runtimeSmokeSource.includes("/home/halla/"), "Browser runtime smoke must not contain Halla-specific executable paths.");
 expect(!runtimeSmokeSource.includes("PLAYWRIGHT_MODULE"), "Browser runtime smoke should be self-contained after npm install.");
+expect(runtimeSmokeSource.includes("state.enabled && state.evidence"), "Plan 014 browser smoke should wait for live AI evidence from the running world.");
+expect(runtimeSmokeSource.includes("assertPlan014(result.smoke, failures)"), "Plan 014 browser smoke should validate the published live AI evidence.");
+expect(!runtimeSmokeSource.includes("window.__WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__()"), "Plan 014 browser smoke must not label the synthetic AI script fixture as live progression.");
+expect(!runtimeSmokeSource.includes("window.__WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__()"), "Plan 014 browser smoke must not label the synthetic AI knowledge fixture as live progression.");
+expect(!runtimeSmokeSource.includes("AI launches"), "Plan 014 browser smoke summary must not claim fixture launch milestones as live progression.");
 expect(mapLoadSource.includes('from "./browser-smoke-harness.mjs"'), "Browser map-load smoke should use the shared browser smoke harness.");
 expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGTERM\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGTERM.");
 expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGKILL\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGKILL.");
