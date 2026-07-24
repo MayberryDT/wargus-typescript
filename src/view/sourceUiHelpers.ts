@@ -1684,6 +1684,7 @@ export function sourceMenuOverlayButtons(menu: SourceMenuOverlayId, world: World
       { label: "Ctrl Spd +", command: "mouse-control-scroll-speed-up" },
       { label: "Fast -", command: "fast-forward-cycle-down" },
       { label: "Fast +", command: "fast-forward-cycle-up" },
+      { label: "OK", command: "preferences-ok" },
       { label: "Frame -", command: "frame-skip-down" },
       { label: "Frame +", command: "frame-skip-up" },
       { label: "Formation", command: "toggle-formation-movement" },
@@ -1716,7 +1717,6 @@ export function sourceMenuOverlayButtons(menu: SourceMenuOverlayId, world: World
       { label: "Double +", command: "double-click-delay-up" },
       { label: "Hold -", command: "hold-click-delay-down" },
       { label: "Hold +", command: "hold-click-delay-up" },
-      { label: "OK", command: "preferences-ok" },
       { label: "Cancel", command: "preferences-cancel" }
     ];
   }
