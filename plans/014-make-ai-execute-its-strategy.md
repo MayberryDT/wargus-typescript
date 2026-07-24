@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow all steps and verification gates. This plan repairs the existing source-style AI; it does not invent a new strategy system. Stop on any STOP condition and update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-ai-difficulty.mjs scripts/verify-source-ai-force-plans.mjs scripts/verify-source-ai-explores.mjs scripts/verify-browser-runtime-smoke.mjs plans/evidence/014.md plans/014-make-ai-execute-its-strategy.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- package.json package-lock.json src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts src/view/renderHud.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-ai-difficulty.mjs scripts/verify-source-ai-force-plans.mjs scripts/verify-source-ai-explores.mjs scripts/verify-plan014-ai-manager.mjs scripts/verify-browser-runtime-smoke.mjs scripts/verify-browser-native-viewport.mjs scripts/verify-minimap-render-cache.mjs plans/evidence/014.md plans/014-make-ai-execute-its-strategy.md plans/README.md`
 > If the source AI instruction loop, build-order representation, difficulty factors, or exploration state changed, STOP and reconcile.
 
 **Goal:** Make the AI execute original Wargus script semantics at human-scale
@@ -48,6 +48,7 @@ percentages at the timing boundary, and persist explored tiles per player.
 - **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md, plans/013-fix-combat-commitment-and-response.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug
 - **Planned at**: commit `6af2eeb`, 2026-07-10
+- **Current decision**: IN PROGRESS — independent review at `7de113c` was NOT READY; construction, force, save, and browser-gate fixes are committed, while Task 9 and a new independent review remain pending.
 
 ## Player-visible contract and evidence
 
@@ -162,15 +163,22 @@ Index by player id. `exploredTiles` remains the rendering alias for `visibilityP
 
 **In scope**:
 
+- `package.json`
+- `package-lock.json`
 - `src/simulation/world.ts`
 - `src/simulation/orders.ts`
 - `src/wargus/saveGame.ts`
-- `src/main.ts` only for data-only AI smoke-state fields required by Task 8
+- `src/main.ts` only for data-only AI smoke-state fields required by Tasks 8–9
+- `src/view/renderHud.ts` for the accepted minimap performance correction
 - `scripts/verify-fixed-demo-random-ai.mjs`
 - `scripts/verify-source-ai-difficulty.mjs`
 - `scripts/verify-source-ai-force-plans.mjs`
 - `scripts/verify-source-ai-explores.mjs`
+- `scripts/verify-plan014-ai-manager.mjs`
 - `scripts/verify-browser-runtime-smoke.mjs`
+- `scripts/verify-browser-native-viewport.mjs`
+- `scripts/verify-minimap-render-cache.mjs`
+- `plans/014-make-ai-execute-its-strategy.md`
 - `plans/evidence/014.md` (create during execution)
 - `plans/README.md`
 
@@ -356,7 +364,7 @@ reused by the next scripted force.
 ### Task 8: Add live AI progression evidence
 
 - [x] Extend the browser smoke state in `src/main.ts` only if required to expose these data-only fields per AI state: selected attack force id(s), build-order role counts, completed building counts, and normalized speed factors.
-- [x] Extend `scripts/verify-browser-runtime-smoke.mjs` to run deterministic
+- [ ] Extend `scripts/verify-browser-runtime-smoke.mjs` to run deterministic
   fixed-demo seed `ai-staged-pressure` at source-neutral difficulty level 3 and
   accelerated verifier speed, recording actual source slots/AI id, and assert:
   1. The installed default zero-cycle initial sleep advances without an
@@ -369,7 +377,15 @@ reused by the next scripted force.
   5. AI speed factors remain within `0.75..1.5` for all menu difficulties.
 - [x] Do not require exact wall-clock timing; assert ordering and bounded factor values.
 
-**Verify**: `npm run verify:browser-runtime-smoke` -> exits 0 and reports staged AI progression.
+The review-fix browser mode now reads bounded evidence from the running world
+and no longer invokes the preseeded script/knowledge fixtures. The focused
+fixtures remain unit/integration checks under `verify:plan014-ai-runtime`; the
+literal live 1/4/16 progression, real duration sample, and progressed-stage
+performance capture remain part of Task 9.
+
+**Verify**: use the Codex in-app Browser for the segmented Task 9 chain. The
+shell verifier's opt-in `WARGUS_BROWSER_RUNTIME_REPORT` path is an artifact
+format for a separately authorized run, not a substitute for visible play.
 
 ### Task 9: Perform the playable AI acceptance session
 
@@ -395,10 +411,10 @@ Expected observable behavior:
 - [x] Run `npm run verify:source-ai-difficulty`.
 - [x] Run `npm run verify:source-ai-forces`.
 - [x] Run `npm run verify:source-ai-explores`.
-- [x] Run `npm run verify:browser-runtime-smoke`.
+- [ ] Run the production-honest `npm run verify:browser-runtime-smoke` through the approved browser path.
 - [x] Run `npm run verify:save-schema`.
 - [ ] Replay M01/M04/M07 and record M08–M09 in `plans/evidence/014.md`; obtain a READY review decision.
-- [x] Run `git diff --check` and confirm only in-scope files changed.
+- [x] Run `git diff --check` and confirm only the expanded in-scope files changed.
 - [ ] Update plan 014 to `DONE` in `plans/README.md`.
 
 ## Done criteria
