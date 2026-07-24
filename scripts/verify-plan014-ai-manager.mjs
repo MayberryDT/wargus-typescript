@@ -186,6 +186,15 @@ try {
     || !(result?.productionReservation?.afterResolutionQueues?.research > 0)) {
     failures.push(`production respects unpaid build reservation: ${JSON.stringify(result?.productionReservation)}`);
   }
+  if (result?.tankerRally?.ai?.tankerIdle !== true
+    || result?.tankerRally?.ai?.resourcesUnchanged !== true
+    || result?.tankerRally?.ai?.pendingBuildingPreserved !== true
+    || result?.tankerRally?.ai?.oilPatchPreserved !== true
+    || result?.tankerRally?.ai?.platformNotStarted !== true
+    || result?.tankerRally?.human?.platformStartedFromRawFunds !== true
+    || result?.tankerRally?.human?.spendMatches !== true) {
+    failures.push(`trained-tanker rally respects only AI net reservations: ${JSON.stringify(result?.tankerRally)}`);
+  }
   if (result?.blockedOilRepair?.rawRepairAffordable !== true
     || result?.blockedOilRepair?.rawPlatformAffordable !== true
     || result?.blockedOilRepair?.resourcesUnchanged !== true
@@ -209,6 +218,12 @@ try {
     || result?.pendingOil?.reservedWithPendingOil?.gold !== result?.pendingOil?.expectedGold
     || result?.pendingOil?.reservedWithPendingOil?.wood !== result?.pendingOil?.expectedWood
     || result?.pendingOil?.queuesBlockedByPendingOil !== true
+    || result?.pendingOil?.blockedArrival?.orderPreserved !== true
+    || result?.pendingOil?.blockedArrival?.orderUnchanged !== true
+    || result?.pendingOil?.blockedArrival?.resourcesUnchanged !== true
+    || result?.pendingOil?.blockedArrival?.competingBuildingPreserved !== true
+    || result?.pendingOil?.blockedArrival?.oilPatchPreserved !== true
+    || result?.pendingOil?.blockedArrival?.platformNotStarted !== true
     || result?.pendingOil?.platformProgressedAfterBuildingResolution !== true
     || result?.pendingOil?.oilPatchReplaced !== true
     || result?.pendingOil?.spendMatches !== true) {
@@ -293,7 +308,7 @@ try {
     failures.push(`bounded live AI evidence: ${JSON.stringify(liveEvidence)}`);
   }
   if (failures.length > 0) throw new Error(failures.join("\n"));
-  console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, production/oil/repair-safe unpaid reservations, exact mixed force, atomic mixed-reachability launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);
+  console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, production/oil/repair-safe unpaid reservations, AI tanker rally admission, retryable blocked oil arrival, exact mixed force, atomic mixed-reachability launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

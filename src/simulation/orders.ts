@@ -9674,7 +9674,9 @@ function issueRallyOrderToTrainedUnit(world: WorldState, producer: WorldUnit, tr
   if (!producer.rallyPoint || !canReceiveMoveOrders(trainedUnit)) {
     return;
   }
-  if (issueSourceRallyResourceOrder(world, trainedUnit, producer.rallyPoint.x, producer.rallyPoint.y)) {
+  const sourceAiManaged = producer.player === trainedUnit.player
+    && world.aiStates.some((state) => state.enabled && state.player === producer.player);
+  if (issueSourceRallyResourceOrder(world, trainedUnit, producer.rallyPoint.x, producer.rallyPoint.y, sourceAiManaged)) {
     return;
   }
   const enemy = findVisibleEnemyNearPointForUnit(world, trainedUnit, producer.rallyPoint.x, producer.rallyPoint.y);
@@ -9706,10 +9708,17 @@ function issueRallyOrderToTrainedUnit(world: WorldState, producer: WorldUnit, tr
   }
 }
 
-function issueSourceRallyResourceOrder(world: WorldState, trainedUnit: WorldUnit, x: number, y: number): boolean {
+function issueSourceRallyResourceOrder(world: WorldState, trainedUnit: WorldUnit, x: number, y: number, sourceAiManaged: boolean): boolean {
   const resource = findResourceAt(world, x, y, trainedUnit.player);
   if (resource && canSmartHarvestResource(trainedUnit, resource)) {
     if (isOilPatch(resource)) {
+      if (sourceAiManaged) {
+        const player = world.players.find((candidate) => candidate.id === trainedUnit.player);
+        const platformDefinition = player ? oilPlatformDefinitionForBuilder(world, trainedUnit, player, world.unitDefinitions) : undefined;
+        if (platformDefinition && !sourceAiCanAfford(world, trainedUnit.player, platformDefinition.costs)) {
+          return true;
+        }
+      }
       return issueBuildOilPlatformOrder(world, trainedUnit.id, resource.id, world.unitDefinitions);
     }
     if (isOilPlatform(resource)) {
@@ -19359,10 +19368,11 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   const barracksTypeId = race === "orc" ? "unit-orc-barracks" : "unit-human-barracks";
   const supplyTypeId = race === "orc" ? "unit-pig-farm" : "unit-farm";
   const blacksmithTypeId = race === "orc" ? "unit-orc-blacksmith" : "unit-human-blacksmith";
+  const shipyardTypeId = race === "orc" ? "unit-orc-shipyard" : "unit-human-shipyard";
   const tankerTypeId = race === "orc" ? "unit-orc-oil-tanker" : "unit-human-oil-tanker";
   const platformTypeId = race === "orc" ? "unit-orc-oil-platform" : "unit-human-oil-platform";
   const oilPatchTypeId = "unit-oil-patch";
-  const requiredTypeIds = [workerTypeId, townCenterTypeId, barracksTypeId, supplyTypeId, blacksmithTypeId, tankerTypeId, platformTypeId, oilPatchTypeId];
+  const requiredTypeIds = [workerTypeId, townCenterTypeId, barracksTypeId, supplyTypeId, blacksmithTypeId, shipyardTypeId, tankerTypeId, platformTypeId, oilPatchTypeId];
   if (requiredTypeIds.some((typeId) => !sourceWorld.unitDefinitions.some((definition) => definition.id === typeId))) {
     return { ok: false, error: `missing fixture definitions: ${requiredTypeIds.join(", ")}` };
   }
@@ -19544,6 +19554,57 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   };
 
   const platformDefinition = sourceWorld.unitDefinitions.find((definition) => definition.id === platformTypeId)!;
+  const tankerRallyFixture = fixture([]);
+  const rallyShipyard = unit(tankerRallyFixture.world, shipyardTypeId, "__plan014-rally-shipyard", 15, 15);
+  const rallyBuilder = unit(tankerRallyFixture.world, workerTypeId, "__plan014-rally-builder", 4, 4);
+  const aiRallyTanker = unit(tankerRallyFixture.world, tankerTypeId, "__plan014-ai-rally-tanker", 22, 15);
+  const humanRallyTanker = unit(tankerRallyFixture.world, tankerTypeId, "__plan014-human-rally-tanker", 22, 15);
+  const rallyOilPatch = unit(tankerRallyFixture.world, oilPatchTypeId, "__plan014-rally-oil-patch", 23, 15);
+  rallyOilPatch.resourcesHeld = 100000;
+  rallyShipyard.rallyPoint = { x: rallyOilPatch.x, y: rallyOilPatch.y };
+  rallyBuilder.order = {
+    kind: "build",
+    phase: "to-site",
+    buildingTypeId: barracksTypeId,
+    tileX: 20,
+    tileY: 10,
+    targetId: null,
+    targetX: 20 * tankerRallyFixture.world.tileSize,
+    targetY: 10 * tankerRallyFixture.world.tileSize,
+    buildCycle: 0,
+    path: [],
+    pathIndex: 0
+  };
+  tankerRallyFixture.world.allowedUnitTypes = [...new Set([...tankerRallyFixture.world.allowedUnitTypes, platformTypeId])];
+  tankerRallyFixture.world.visibleTiles.fill(1);
+  tankerRallyFixture.world.units = [rallyShipyard, rallyBuilder, aiRallyTanker, humanRallyTanker, rallyOilPatch];
+  for (const resource of ["gold", "wood", "oil"]) {
+    tankerRallyFixture.player.resources[resource] = Math.max(
+      costValue(barracksDefinition.costs, resource),
+      costValue(platformDefinition.costs, resource)
+    );
+  }
+  const aiRallyResourcesBefore = { ...tankerRallyFixture.player.resources };
+  issueRallyOrderToTrainedUnit(tankerRallyFixture.world, rallyShipyard, aiRallyTanker);
+  const aiRally = {
+    tankerIdle: aiRallyTanker.order === null,
+    resourcesUnchanged: resourcesEqual(aiRallyResourcesBefore, tankerRallyFixture.player.resources),
+    pendingBuildingPreserved: rallyBuilder.order?.kind === "build" && rallyBuilder.order.phase === "to-site",
+    oilPatchPreserved: tankerRallyFixture.world.units.some((candidate) => candidate.id === rallyOilPatch.id),
+    platformNotStarted: !tankerRallyFixture.world.units.some((candidate) => candidate.typeId === platformTypeId && candidate.construction)
+  };
+  tankerRallyFixture.state.enabled = false;
+  const humanRallyResourcesBefore = { ...tankerRallyFixture.player.resources };
+  issueRallyOrderToTrainedUnit(tankerRallyFixture.world, rallyShipyard, humanRallyTanker);
+  const humanRallyFoundation = tankerRallyFixture.world.units.find((candidate) => candidate.typeId === platformTypeId && Boolean(candidate.construction));
+  const humanRally = {
+    platformStartedFromRawFunds: Boolean(humanRallyFoundation),
+    spendMatches: ["gold", "wood", "oil"].every((resource) => (
+      (tankerRallyFixture.player.resources[resource] ?? 0)
+        === (humanRallyResourcesBefore[resource] ?? 0) - costValue(platformDefinition.costs, resource)
+    ))
+  };
+
   const blockedOilRepairFixture = fixture(["barracks", "barracks"]);
   blockedOilRepairFixture.state.workerTarget = 2;
   const blockedHall = unit(blockedOilRepairFixture.world, townCenterTypeId, "__plan014-oil-repair-hall", 3, 3);
@@ -19683,11 +19744,25 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   };
   pendingOilFixture.world.units = [pendingOilHall, pendingOilBarracks, pendingOilSupplyA, pendingOilSupplyB, pendingOilBuilder, pendingOilTanker, pendingOilPatch];
   for (const resource of ["gold", "wood", "oil"]) {
-    pendingOilFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource) + costValue(platformDefinition.costs, resource);
+    pendingOilFixture.player.resources[resource] = Math.max(
+      costValue(barracksDefinition.costs, resource),
+      costValue(platformDefinition.costs, resource)
+    );
   }
   const reservedWithPendingOil = sourceAiReservedBuildResources(pendingOilFixture.world, pendingOilFixture.state.player);
   runLandAttackAi(pendingOilFixture.world, pendingOilFixture.state.player, pendingOilFixture.state);
   const queuesBlockedByPendingOil = pendingOilHall.productionQueue.length === 0 && pendingOilBarracks.productionQueue.length === 0;
+  const oilBlockedResourcesBefore = { ...pendingOilFixture.player.resources };
+  const oilBlockedOrderBefore = JSON.stringify(pendingOilTanker.order);
+  stepBuildOilPlatformOrder(pendingOilFixture.world, pendingOilTanker, 0);
+  const blockedArrival = {
+    orderPreserved: pendingOilTanker.order?.kind === "build-oil-platform",
+    orderUnchanged: JSON.stringify(pendingOilTanker.order) === oilBlockedOrderBefore,
+    resourcesUnchanged: resourcesEqual(oilBlockedResourcesBefore, pendingOilFixture.player.resources),
+    competingBuildingPreserved: pendingOilBuilder.order?.kind === "build" && pendingOilBuilder.order.phase === "to-site",
+    oilPatchPreserved: pendingOilFixture.world.units.some((candidate) => candidate.id === pendingOilPatch.id),
+    platformNotStarted: !pendingOilFixture.world.units.some((candidate) => candidate.typeId === platformTypeId && candidate.construction)
+  };
   pendingOilBuilder.order = null;
   for (const resource of ["gold", "wood", "oil"]) {
     pendingOilFixture.player.resources[resource] = costValue(platformDefinition.costs, resource);
@@ -19700,6 +19775,7 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     expectedGold: costValue(barracksDefinition.costs, "gold") + costValue(platformDefinition.costs, "gold"),
     expectedWood: costValue(barracksDefinition.costs, "wood") + costValue(platformDefinition.costs, "wood"),
     queuesBlockedByPendingOil,
+    blockedArrival,
     platformProgressedAfterBuildingResolution: Boolean(oilPlatformFoundation),
     oilPatchReplaced: !pendingOilFixture.world.units.some((candidate) => candidate.id === pendingOilPatch.id),
     spendMatches: ["gold", "wood", "oil"].every((resource) => (
@@ -19775,6 +19851,13 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
       && !productionReservation.foundationCancelled
       && Object.values(productionReservation.reservedAfterArrival).every((amount) => amount === 0)
       && productionReservation.spendingAllowedAfterResolution
+      && aiRally.tankerIdle
+      && aiRally.resourcesUnchanged
+      && aiRally.pendingBuildingPreserved
+      && aiRally.oilPatchPreserved
+      && aiRally.platformNotStarted
+      && humanRally.platformStartedFromRawFunds
+      && humanRally.spendMatches
       && blockedOilRepair.rawRepairAffordable
       && blockedOilRepair.rawPlatformAffordable
       && blockedOilRepair.resourcesUnchanged
@@ -19793,6 +19876,12 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
       && (pendingOil.reservedWithPendingOil.gold ?? 0) === pendingOil.expectedGold
       && (pendingOil.reservedWithPendingOil.wood ?? 0) === pendingOil.expectedWood
       && pendingOil.queuesBlockedByPendingOil
+      && pendingOil.blockedArrival.orderPreserved
+      && pendingOil.blockedArrival.orderUnchanged
+      && pendingOil.blockedArrival.resourcesUnchanged
+      && pendingOil.blockedArrival.competingBuildingPreserved
+      && pendingOil.blockedArrival.oilPatchPreserved
+      && pendingOil.blockedArrival.platformNotStarted
       && pendingOil.platformProgressedAfterBuildingResolution
       && pendingOil.oilPatchReplaced
       && pendingOil.spendMatches,
@@ -19800,6 +19889,7 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     secondBarracks,
     competingCosts,
     productionReservation,
+    tankerRally: { ai: aiRally, human: humanRally },
     blockedOilRepair,
     repairPause: {
       acceptedWithNetFunds: repairAcceptedWithNetFunds,
