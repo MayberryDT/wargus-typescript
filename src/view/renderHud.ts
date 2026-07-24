@@ -149,8 +149,14 @@ export interface ModernHudLayoutDebug {
     hitRect: HudRect;
     trigger: "tap" | "press";
   }>;
+  menuOverlay: HudMenuOverlayId | null;
+  menuButtonControls: Array<HudRect & {
+    id: HudMapCommandId;
+    label: string;
+    disabled: boolean;
+  }>;
   resourceChips: Array<HudRect & { key: string; value: string; textFits: boolean }>;
-  commandButtons: Array<HudRect & { id: string; label: string; longLabel: string; statusText: string; textFits: boolean }>;
+  commandButtons: Array<HudRect & { id: string; label: string; longLabel: string; statusText: string; disabled: boolean; textFits: boolean }>;
   messages: Array<HudRect & { text: string; severity: "info" | "warning" | "attack" }>;
   overlaps: string[];
 }
@@ -170,6 +176,7 @@ interface ModernHudLayout {
 type FixedDemoTextFit = { text: Text; fits: boolean };
 
 export let latestModernHudLayoutDebug: ModernHudLayoutDebug | null = null;
+const MAX_MENU_BUTTON_CONTROLS = 64;
 
 export interface MinimapRenderCacheDebug {
   drawCount: number;
@@ -358,7 +365,7 @@ export function renderHud(args: RenderHudArgs): void {
       onNextCampaignMission
     });
     drawBriefingOverlay(app, hudLayer, manifest, world, briefingOpen, wargusBitmapFontAtlas, onDismissBriefing, onReplayBriefing);
-    drawSourceMenuOverlay(app, hudLayer, manifest, world, menuOverlay, paused, gameSpeed, activeSaveSlot, activeSaveSummary, autosaveSummary, diplomacyDraft, wargusBitmapFontAtlas, onMapCommand);
+    drawSourceMenuOverlay(app, hudLayer, manifest, world, menuOverlay, paused, gameSpeed, activeSaveSlot, activeSaveSummary, autosaveSummary, diplomacyDraft, wargusBitmapFontAtlas, onMapCommand, latestModernHudLayoutDebug);
     drawMapPicker(app, hudLayer, manifest, mapPicker, completedCampaignMissions, wargusBitmapFontAtlas, onMapPick);
     return;
   }
@@ -561,6 +568,8 @@ function beginModernHudLayoutDebug(layout: ModernHudLayout): ModernHudLayoutDebu
     toastLane: layout.toastLane,
     portrait: null,
     mapButtonControls: [],
+    menuOverlay: null,
+    menuButtonControls: [],
     resourceChips: [],
     commandButtons: [],
     messages: [],
@@ -1097,6 +1106,7 @@ function drawFixedDemoCommandPanel(layer: Container, graphics: Graphics, rect: H
       label: command.label,
       longLabel: commandLongLabel(manifest, world, command),
       statusText: commandStatusText(manifest, world, command),
+      disabled: command.disabled === true,
       textFits
     });
   });
@@ -2361,8 +2371,13 @@ function drawSourceMenuOverlay(
   autosaveSummary: SavedGameSummary | null,
   diplomacyDraft: SourceDiplomacyDraft | null,
   bitmapFonts: WargusBitmapFontAtlas | null,
-  onMapCommand: (command: HudMapCommandId) => void
+  onMapCommand: (command: HudMapCommandId) => void,
+  debug: ModernHudLayoutDebug | null = null
 ): void {
+  if (debug) {
+    debug.menuOverlay = menu;
+    debug.menuButtonControls = [];
+  }
   if (!menu || world.matchState.status !== "playing") {
     return;
   }
@@ -2420,7 +2435,20 @@ function drawSourceMenuOverlay(
     const button = buttons[index];
     const column = index % columns;
     const row = Math.floor(index / columns);
-    drawBriefingButton(layer, startX + column * (buttonWidth + gap), startY + row * rowGap, buttonWidth, 34, button.label, manifest, race, bitmapFonts, () => {
+    const buttonX = startX + column * (buttonWidth + gap);
+    const buttonY = startY + row * rowGap;
+    if (debug && debug.menuButtonControls.length < MAX_MENU_BUTTON_CONTROLS) {
+      debug.menuButtonControls.push({
+        x: buttonX,
+        y: buttonY,
+        width: buttonWidth,
+        height: 34,
+        id: button.command as HudMapCommandId,
+        label: button.label,
+        disabled: button.disabled === true
+      });
+    }
+    drawBriefingButton(layer, buttonX, buttonY, buttonWidth, 34, button.label, manifest, race, bitmapFonts, () => {
       if (!button.disabled) {
         onMapCommand(button.command as HudMapCommandId);
       }

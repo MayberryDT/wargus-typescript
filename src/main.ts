@@ -321,6 +321,30 @@ type BrowserSmokeCommand = {
   sourcePos: number | null;
 };
 type BrowserSmokeSourceCommand = Pick<BrowserSmokeCommand, "id" | "key" | "icon" | "sourceAction" | "sourceValue" | "sourceLevel" | "sourcePos">;
+type BrowserSmokeUnitRecord = {
+  id: string;
+  typeId: string;
+  x: number;
+  y: number;
+  hitPoints: number;
+  maxHitPoints: number;
+  order: {
+    kind: string;
+    phase: string | null;
+    buildingTypeId: string | null;
+    targetId: string | null;
+    targetX: number | null;
+    targetY: number | null;
+    tileX: number | null;
+    tileY: number | null;
+  } | null;
+  construction: {
+    builderId: string;
+    totalSeconds: number;
+    remainingSeconds: number;
+  } | null;
+  productionQueue: Array<{ unitTypeId: string; totalSeconds: number; remainingSeconds: number }>;
+};
 type BrowserSmokeScenarioSnapshot = {
   allowedUnitTypes: string[];
   allowedUpgradeTypes: string[];
@@ -356,7 +380,10 @@ type BrowserSmokeState = {
   briefingOpen: boolean;
   paused: boolean;
   gameSpeed: number;
+  aiDifficulty: number | null;
   sourceGameSpeedDefault: number | null;
+  tickRate: number | null;
+  tileSize: number | null;
   commandPage: number;
   commandCard: BrowserSmokeCommand[];
   modernHud: ModernHudLayoutDebug | null;
@@ -365,6 +392,7 @@ type BrowserSmokeState = {
   selectedUnitIds: string[];
   selectedUnitTypes: string[];
   ownedUnitCounts: Record<string, number>;
+  visibilityPlayerUnitRecords: BrowserSmokeUnitRecord[];
   ownedUnitScreenPoints: Array<{ id: string; typeId: string; x: number; y: number; screenX: number; screenY: number }>;
   ownedUnitVisualScreenPoints: Array<{ id: string; typeId: string; x: number; y: number; screenX: number; screenY: number }>;
   firstOwnedMovableScreenPoint: BrowserSmokeOrderTarget | null;
@@ -4494,7 +4522,10 @@ function publishBrowserSmokeState(force = false): void {
     briefingOpen,
     paused,
     gameSpeed,
+    aiDifficulty: world?.engineSettings.lastDifficultyDefault ?? null,
     sourceGameSpeedDefault: world?.engineSettings.sourceGameSpeedDefault ?? null,
+    tickRate: world?.tickRate ?? null,
+    tileSize: world?.tileSize ?? null,
     aiStates: smokeWorld?.aiStates.map((state) => ({
       player: state.player,
       enabled: state.enabled,
@@ -4517,6 +4548,7 @@ function publishBrowserSmokeState(force = false): void {
       .map((id) => world?.units.find((unit) => unit.id === id)?.typeId)
       .filter((typeId): typeId is string => Boolean(typeId)),
     ownedUnitCounts: browserSmokeOwnedUnitCounts(),
+    visibilityPlayerUnitRecords: browserSmokeVisibilityPlayerUnitRecords(),
     ownedUnitScreenPoints: lightweightSmoke ? [] : browserSmokeOwnedUnitScreenPoints(),
     ownedUnitVisualScreenPoints: lightweightSmoke ? [] : browserSmokeOwnedUnitScreenPoints(true),
     firstOwnedMovableScreenPoint: lightweightSmoke ? null : browserSmokeFirstOwnedMovableScreenPoint(),
@@ -4992,6 +5024,47 @@ function browserSmokeOwnedUnitCounts(): Record<string, number> {
     counts[unit.typeId] = (counts[unit.typeId] ?? 0) + 1;
   }
   return counts;
+}
+
+function browserSmokeVisibilityPlayerUnitRecords(): BrowserSmokeUnitRecord[] {
+  if (!world) {
+    return [];
+  }
+  return world.units
+    .filter((unit) => unit.player === world?.visibilityPlayer && unit.hitPoints > 0)
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .slice(0, 128)
+    .map((unit) => {
+      const order = unit.order as unknown as Record<string, unknown> | null;
+      return {
+        id: unit.id,
+        typeId: unit.typeId,
+        x: unit.x,
+        y: unit.y,
+        hitPoints: unit.hitPoints,
+        maxHitPoints: unit.maxHitPoints,
+        order: order ? {
+          kind: typeof order.kind === "string" ? order.kind : "unknown",
+          phase: typeof order.phase === "string" ? order.phase : null,
+          buildingTypeId: typeof order.buildingTypeId === "string" ? order.buildingTypeId : null,
+          targetId: typeof order.targetId === "string" ? order.targetId : null,
+          targetX: typeof order.targetX === "number" ? order.targetX : null,
+          targetY: typeof order.targetY === "number" ? order.targetY : null,
+          tileX: typeof order.tileX === "number" ? order.tileX : null,
+          tileY: typeof order.tileY === "number" ? order.tileY : null
+        } : null,
+        construction: unit.construction ? {
+          builderId: unit.construction.builderId,
+          totalSeconds: unit.construction.totalSeconds,
+          remainingSeconds: unit.construction.remainingSeconds
+        } : null,
+        productionQueue: unit.productionQueue.slice(0, 6).map((entry) => ({
+          unitTypeId: entry.unitTypeId,
+          totalSeconds: entry.totalSeconds,
+          remainingSeconds: entry.remainingSeconds
+        }))
+      };
+    });
 }
 
 function browserSmokeFirstOwnedMovableUnit(): WorldUnit | null {

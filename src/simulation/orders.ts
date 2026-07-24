@@ -7668,6 +7668,22 @@ export function sourceAiRuntimeEvidence(world: WorldState, playerId: number, sta
       totalSeconds: unit.construction?.totalSeconds ?? null,
       remainingSeconds: unit.construction?.remainingSeconds ?? null
     }));
+  const visibilityPlayerUnits = world.units
+    .filter((unit) => unit.player === world.visibilityPlayer && unit.hitPoints > 0)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const visibilityPlayerUnitIds = new Set(visibilityPlayerUnits.map((unit) => unit.id));
+  const visibilityPlayerDamagedUnits = visibilityPlayerUnits
+    .filter((unit) => !unit.construction && unit.hitPoints < unit.maxHitPoints)
+    .slice(0, 64)
+    .map((unit) => ({ unitId: unit.id, typeId: unit.typeId, hitPoints: unit.hitPoints, maxHitPoints: unit.maxHitPoints }));
+  const visibilityPlayerContactOrders = ownedUnits
+    .map((unit) => {
+      const order = unit.order as (WorldUnit["order"] & { targetId?: unknown }) | null;
+      const targetId = typeof order?.targetId === "string" ? order.targetId : null;
+      return { unitId: unit.id, typeId: unit.typeId, orderKind: order?.kind ?? null, targetId };
+    })
+    .filter((entry) => entry.targetId !== null && visibilityPlayerUnitIds.has(entry.targetId))
+    .slice(0, 64);
   return {
     player: playerId,
     sourceScriptId: state.sourceScriptId,
@@ -7700,6 +7716,8 @@ export function sourceAiRuntimeEvidence(world: WorldState, playerId: number, sta
       nextScoutTick: state.nextScoutTick,
       scoutDestinations
     },
+    visibilityPlayerDamagedUnits,
+    visibilityPlayerContactOrders,
     productionQueues,
     constructions
   };
