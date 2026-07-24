@@ -10,6 +10,9 @@ const MODE = process.env.WARGUS_BROWSER_RUNTIME_MODE ?? "plan014";
 const SERVER_MODE = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev";
 const REPORT_PATH = process.env.WARGUS_BROWSER_RUNTIME_REPORT ?? null;
 const EXPECTED_BACKGROUND_MUSIC = "warcraft-2-ost-human-1-128-ytshorts.savetube.me.mp3";
+const EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED = 45;
+const EXPECTED_FIXED_DEMO_GAME_SPEED = 1.5;
+const EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1;
 let server = null;
 let browserServer = null;
 let browser = null;
@@ -128,6 +131,17 @@ function assertRuntimeSmoke(result) {
   if (!(counts["unit-peasant"] === 1)) failures.push(`fixed-demo owned peasant: ${JSON.stringify(counts)}`);
   if (!(!counts["unit-town-hall"] && !counts["unit-farm"] && !counts["unit-keep"] && !counts["unit-castle"])) failures.push(`fixed-demo starts without buildings: ${JSON.stringify(counts)}`);
   if (!(Number(resources.gold ?? 0) >= 10000 && Number(resources.wood ?? 0) >= 5000 && Number(resources.oil ?? 0) >= 5000)) failures.push(`fixed-demo high resources: ${JSON.stringify(resources)}`);
+  if (
+    result.smoke?.sourceGameSpeedDefault !== EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED
+    || Math.abs(Number(result.smoke?.gameSpeed ?? 0) - EXPECTED_FIXED_DEMO_GAME_SPEED) > 0.01
+    || result.smoke?.fixedDemoMovementPaceMultiplier !== EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER
+  ) {
+    failures.push(`fixed-demo coherent pace: ${JSON.stringify({
+      sourceGameSpeedDefault: result.smoke?.sourceGameSpeedDefault,
+      gameSpeed: result.smoke?.gameSpeed,
+      fixedDemoMovementPaceMultiplier: result.smoke?.fixedDemoMovementPaceMultiplier
+    })}`);
+  }
   const averageUpdateMs = Number(result.performance.averageUpdateMs);
   const averageRenderMs = Number(result.performance.averageRenderMs);
   if (!Number.isFinite(averageUpdateMs) || averageUpdateMs > 20) failures.push(`update budget: ${averageUpdateMs}`);
@@ -183,7 +197,12 @@ async function runBrowserBasics(page, pageErrors, canvas, screenshot) {
     await page.keyboard.press("Enter");
   }
   await page.waitForFunction(() => window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false, null, { timeout: 3_000 });
-  await page.waitForFunction(() => Number(window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMovementPaceMultiplier ?? 0) > 1, null, { timeout: 3_000 });
+  await page.waitForFunction(() => {
+    const state = window.__WARGUS_TS_SMOKE_STATE__;
+    return state?.sourceGameSpeedDefault === 45
+      && Math.abs(Number(state?.gameSpeed ?? 0) - 1.5) <= 0.01
+      && state?.fixedDemoMovementPaceMultiplier === 1;
+  }, null, { timeout: 3_000 });
   await page.waitForFunction(() => {
     const state = window.__WARGUS_TS_SMOKE_STATE__;
     const counts = state?.ownedUnitCounts ?? {};

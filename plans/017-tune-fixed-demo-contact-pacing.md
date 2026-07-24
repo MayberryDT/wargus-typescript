@@ -40,6 +40,24 @@ private unit-speed mutation, and verify it across deterministic seeds.
 - **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md, plans/013-fix-combat-commitment-and-response.md, plans/014-make-ai-execute-its-strategy.md, plans/015-complete-demo-tech-paths.md, plans/016-make-gameplay-state-legible.md
 - **Category**: direction
 - **Planned at**: commit `6af2eeb`, 2026-07-10
+- **Current decision**: IN PROGRESS — IMPLEMENTED, READY FOR FINAL INTEGRATED PLAY. Candidate B is the landed checkpoint; M13 timing, M01–M13 replay, and the final READY review are deferred to the explicitly consolidated post-implementation playthrough.
+
+## Acceptance override (2026-07-24)
+
+The user directed Plan 017 to land as one browser-free implementation milestone
+without starting a server, game page, or browser verifier. Plan 014 is accepted
+as DONE/READY through ordinary core play, and Plan 016's implementation,
+browser-free gates, and assets are accepted as the dependency baseline while
+its M11–M12 browser proof remains deferred to the same final integrated play.
+
+The live Garden of War setup reproduced the frozen projection exactly: 42
+ordered land-AI pairs, air-AI enemy slots 1 and 6 excluded, band counts
+A=11/B=13/C=17, and all nine representative seeds mapped to the documented
+pairs. Candidate B therefore lands as the plan's existing champion checkpoint:
+45 source ticks/sec, an honest displayed 1.5x pace, and a 70–110-tile band with
+a 90-tile fallback target. This does not claim that the 18 browser bakeoff runs,
+wall-time score, performance sample, or M13 play sessions ran; those remain the
+final integrated acceptance work.
 
 ## Player-visible contract and evidence
 

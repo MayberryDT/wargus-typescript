@@ -8,9 +8,9 @@ const DEBUG_PORT = 9230;
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
-const EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED = 30;
-const EXPECTED_FIXED_DEMO_GAME_SPEED = 1;
-const EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1.3;
+const EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED = 45;
+const EXPECTED_FIXED_DEMO_GAME_SPEED = 1.5;
+const EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1;
 const SMOOTH_MOVE_SAMPLE_COUNT = 12;
 const SMOOTH_MOVE_SAMPLE_INTERVAL_MS = 100;
 const MIN_SMOOTH_MOVE_DISTANCE_PX = 100;
@@ -265,10 +265,10 @@ try {
     loadedState.sourceGameSpeedDefault !== EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED
     || Math.abs((loadedState.gameSpeed ?? 0) - EXPECTED_FIXED_DEMO_GAME_SPEED) > 0.01
   ) {
-    throw new Error(`Fixed demo should start at normal source speed ${EXPECTED_FIXED_DEMO_GAME_SPEED}x / source ${EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED}, got ${JSON.stringify({ gameSpeed: loadedState.gameSpeed, sourceGameSpeedDefault: loadedState.sourceGameSpeedDefault })}`);
+    throw new Error(`Fixed demo should start at candidate B's honest global pace ${EXPECTED_FIXED_DEMO_GAME_SPEED}x / source ${EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED}, got ${JSON.stringify({ gameSpeed: loadedState.gameSpeed, sourceGameSpeedDefault: loadedState.sourceGameSpeedDefault })}`);
   }
   if (Math.abs((loadedState.fixedDemoMovementPaceMultiplier ?? 0) - EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER) > 0.01) {
-    throw new Error(`Fixed demo should apply the playable movement pace multiplier ${EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER} while presenting as Speed 1x, got ${JSON.stringify({ fixedDemoMovementPaceMultiplier: loadedState.fixedDemoMovementPaceMultiplier })}`);
+    throw new Error(`Fixed demo should report no hidden movement-only multiplier, expected ${EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER}, got ${JSON.stringify({ fixedDemoMovementPaceMultiplier: loadedState.fixedDemoMovementPaceMultiplier })}`);
   }
   await evalValue(client, "window.dispatchEvent(new Event(\"blur\")); true");
   await delay(300);
@@ -423,13 +423,13 @@ async function issueMoveAndWait(client, unit) {
       const smoothSteps = visualSteps.filter((step) => step >= 0.5).length;
       const maxVisualStep = Math.max(0, ...visualSteps);
       if (Math.abs((lastSample.gameSpeed ?? 0) - EXPECTED_FIXED_DEMO_GAME_SPEED) > 0.01 || lastSample.sourceGameSpeedDefault !== EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED) {
-        throw new Error(`Fixed demo movement should stay at normal speed, got ${JSON.stringify({ gameSpeed: lastSample.gameSpeed, sourceGameSpeedDefault: lastSample.sourceGameSpeedDefault })}`);
+        throw new Error(`Fixed demo movement should stay at candidate B's selected global pace, got ${JSON.stringify({ gameSpeed: lastSample.gameSpeed, sourceGameSpeedDefault: lastSample.sourceGameSpeedDefault })}`);
       }
       if (Math.abs((lastSample.fixedDemoMovementPaceMultiplier ?? 0) - EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER) > 0.01) {
-        throw new Error(`Fixed demo movement pace multiplier regressed: ${JSON.stringify({ fixedDemoMovementPaceMultiplier: lastSample.fixedDemoMovementPaceMultiplier })}`);
+        throw new Error(`Fixed demo hidden movement pace compatibility value regressed: ${JSON.stringify({ fixedDemoMovementPaceMultiplier: lastSample.fixedDemoMovementPaceMultiplier })}`);
       }
       if (actualDistance < MIN_SMOOTH_MOVE_DISTANCE_PX || visualDistance < MIN_SMOOTH_MOVE_DISTANCE_PX) {
-        throw new Error(`Fixed demo movement is still too sluggish at normal speed: visual ${visualDistance.toFixed(1)}px / actual ${actualDistance.toFixed(1)}px in ${wallMs}ms after right-clicking ${JSON.stringify(point)}, tick ${before.tick}->${lastSample.tick}, unit speed=${lastSample.firstSelectedSpeed ?? "unknown"} base=${lastSample.firstSelectedBaseSpeed ?? "unknown"}, order=${lastSample.firstSelectedOrderKind ?? "cleared"}; expected at least ${MIN_SMOOTH_MOVE_DISTANCE_PX}px.`);
+        throw new Error(`Fixed demo movement is still too sluggish at the selected global pace: visual ${visualDistance.toFixed(1)}px / actual ${actualDistance.toFixed(1)}px in ${wallMs}ms after right-clicking ${JSON.stringify(point)}, tick ${before.tick}->${lastSample.tick}, unit speed=${lastSample.firstSelectedSpeed ?? "unknown"} base=${lastSample.firstSelectedBaseSpeed ?? "unknown"}, order=${lastSample.firstSelectedOrderKind ?? "cleared"}; expected at least ${MIN_SMOOTH_MOVE_DISTANCE_PX}px.`);
       }
       if (smoothSteps < MIN_SMOOTH_VISUAL_STEPS) {
         throw new Error(`Fixed demo movement is visually choppy: only ${smoothSteps} visible movement samples from ${samples.length} reads (${visualSteps.map((step) => step.toFixed(1)).join(", ")}px).`);

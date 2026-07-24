@@ -224,7 +224,6 @@ const SIMULATION_TURN_BUDGET: SimulationTurnBudget = {
   maxBacklogSeconds: SIMULATION_MAX_BACKLOG_SECONDS
 };
 const FIXED_DEMO_HUD_REFRESH_SECONDS = 0.5;
-const FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1.3;
 const BROWSER_SMOKE_REFRESH_MS = 250;
 const BROWSER_SMOKE_PAIR_REFRESH_MS = 2000;
 const PLAYTEST_TELEMETRY_STORAGE_KEY = "wargus-ts-playtest-telemetry-v1";
@@ -3810,7 +3809,6 @@ try {
   world = createInitialWorld(activeMap, manifest.units, setup, manifest.upgrades, manifest.missiles, manifest.spells, manifest.allowRules, manifest.dependencies, manifest.buttons, manifest.engineSettings, manifest.aiDefinitions, manifest.unitDatabase, manifest.tilesets, manifest.animations);
   applyFixedBrowserDemoWorldPresentation(activeMap, world);
   captureBrowserSmokeScenarioSnapshot();
-  applyFixedDemoMovementPace(world);
   gameSpeed = sourceGameSpeedMultiplier(world);
   paused = sourceSetupPaused(setup);
   audioEngine.setTileset(setup?.tileset);
@@ -3855,7 +3853,6 @@ app.ticker.add((ticker) => {
           autosaveClock += deltaSeconds;
       }
     }
-    applyFixedDemoMovementPace(world);
     const autosaveIntervalSeconds = sourceAutosaveIntervalSeconds(world);
     if (autosaveIntervalSeconds > 0 && autosaveClock >= autosaveIntervalSeconds) {
       autosaveClock = 0;
@@ -4051,32 +4048,6 @@ function fixedDemoHudStateKey(loadedWorld: WorldState, hoveredUnitId: string | n
     briefingOpen ? 1 : 0,
     titleScreenOpen ? 1 : 0
   ].join(";");
-}
-
-type FixedDemoPacedUnit = WorldUnit & {
-  __fixedDemoPaceBaseSpeed?: number;
-  __fixedDemoPaceMultiplier?: number;
-};
-
-function applyFixedDemoMovementPace(loadedWorld: WorldState): void {
-  if (!isFixedBrowserDemoMap(activeMap)) {
-    return;
-  }
-  for (const rawUnit of loadedWorld.units) {
-    if (rawUnit.hitPoints <= 0 || rawUnit.baseSpeed <= 0 || rawUnit.speed <= 0 || rawUnit.construction) {
-      continue;
-    }
-    const unit = rawUnit as FixedDemoPacedUnit;
-    if (unit.__fixedDemoPaceMultiplier === FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER) {
-      continue;
-    }
-    const sourceBaseSpeed = unit.__fixedDemoPaceBaseSpeed ?? unit.baseSpeed;
-    unit.__fixedDemoPaceBaseSpeed = sourceBaseSpeed;
-    unit.__fixedDemoPaceMultiplier = FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER;
-    unit.baseSpeed = sourceBaseSpeed * FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER;
-    const statusMultiplier = unit.statusEffects.reduce((multiplier, effect) => multiplier * effect.speedMultiplier, 1);
-    unit.speed = Math.max(1, unit.baseSpeed * statusMultiplier);
-  }
 }
 
 function recordFrameTiming(elapsedMs: number): void {
@@ -4448,7 +4419,6 @@ async function loadPlayableMap(map: WargusMap): Promise<void> {
     world = createInitialWorld(activeMap, manifest.units, setup, manifest.upgrades, manifest.missiles, manifest.spells, manifest.allowRules, manifest.dependencies, manifest.buttons, manifest.engineSettings, manifest.aiDefinitions, manifest.unitDatabase, manifest.tilesets, manifest.animations);
     applyFixedBrowserDemoWorldPresentation(activeMap, world);
     captureBrowserSmokeScenarioSnapshot();
-    applyFixedDemoMovementPace(world);
     gameSpeed = sourceGameSpeedMultiplier(world);
     paused = sourceSetupPaused(setup);
     audioEngine?.setTileset(setup?.tileset);
@@ -4591,7 +4561,7 @@ function publishBrowserSmokeState(force = false): void {
     firstSelectedAutoRepair: firstSelectedUnit?.autoRepair ?? null,
     firstSelectedAutoCastSpells: firstSelectedUnit ? [...(firstSelectedUnit.autoCastSpells ?? [])] : null,
     fixedDemoMission: fixedDemoMissionSummary(world, briefingOpen),
-    fixedDemoMovementPaceMultiplier: isFixedBrowserDemoMap(activeMap) ? FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER : 1,
+    fixedDemoMovementPaceMultiplier: 1,
     performance: { ...renderPerformance },
     displayObjects: {
       mapLayerChildren: mapLayer.children.length,

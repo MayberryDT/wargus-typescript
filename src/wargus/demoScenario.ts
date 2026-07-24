@@ -6,10 +6,21 @@ export const FIXED_BROWSER_DEMO_TITLE = "Wargus TS Browser Demo";
 export const FIXED_BROWSER_DEMO_PLAYER_ID = 0;
 export const FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID = 1;
 export const FIXED_BROWSER_DEMO_NEUTRAL_PLAYER_ID = 15;
+export const FIXED_DEMO_SOURCE_GAME_SPEED = 45;
+export const DEMO_MIN_START_DISTANCE_TILES = 70;
+export const DEMO_MAX_START_DISTANCE_TILES = 110;
+export const DEMO_TARGET_START_DISTANCE_TILES = 90;
 
 const DEMO_START_PLAYERS = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 const DEMO_DEFAULT_SEED = "garden-of-war-browser-demo";
 const DEMO_HIGH_RESOURCES = { gold: 10000, wood: 5000, oil: 5000 } as const;
+
+type DemoStartPair = {
+  human: number;
+  enemy: number;
+  enemyAi: "wc2-land-attack";
+  distanceTiles: number;
+};
 
 export function isFixedBrowserDemoMap(map: Pick<WargusMap, "path"> | null | undefined): boolean {
   return map?.path === FIXED_BROWSER_DEMO_MAP_PATH;
@@ -27,7 +38,7 @@ export function applyFixedBrowserDemoSetup(map: WargusMap, setup: WargusMapSetup
   const enemySource = setup.players.find((player) => player.player === enemySourcePlayer);
   const humanStart = setup.starts.find((start) => start.player === humanSourcePlayer);
   const enemyStart = setup.starts.find((start) => start.player === enemySourcePlayer);
-  const enemyAi = enemySource?.ai ?? setup.aiTypeOverrides.find((entry) => entry.player === enemySourcePlayer)?.ai ?? "wc2-land-attack";
+  const enemyAi = starts.enemyAi;
   const humanStartPoint = {
     x: humanStart?.x ?? humanSource?.startView?.x ?? 116,
     y: humanStart?.y ?? humanSource?.startView?.y ?? 116
@@ -214,7 +225,7 @@ export function applyFixedBrowserDemoWorldPresentation(map: WargusMap, world: Wo
   world.engineSettings.selectionStyleDefault = "corners";
   world.engineSettings.doubleClickDelayMsDefault = 0;
   world.engineSettings.pauseOnLeaveDefault = false;
-  world.engineSettings.sourceGameSpeedDefault = world.tickRate;
+  world.engineSettings.sourceGameSpeedDefault = FIXED_DEMO_SOURCE_GAME_SPEED;
   world.engineSettings.fogOfWarEnabled = true;
   world.engineSettings.revealMapMode = "hidden";
   world.engineSettings.fogOfWarType = "fast";
@@ -230,18 +241,63 @@ export function fixedBrowserDemoInitialSelection(world: WorldState): string[] {
     .map((unit) => unit.id);
 }
 
-function chooseFixedDemoStarts(setup: WargusMapSetup): { human: number; enemy: number } {
+function chooseFixedDemoStarts(setup: WargusMapSetup): DemoStartPair {
   const available = DEMO_START_PLAYERS.filter((player) => setup.players.some((candidate) => candidate.player === player));
   if (available.length < 2) {
-    return { human: FIXED_BROWSER_DEMO_PLAYER_ID, enemy: FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID };
+    return {
+      human: FIXED_BROWSER_DEMO_PLAYER_ID,
+      enemy: FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID,
+      enemyAi: "wc2-land-attack",
+      distanceTiles: 0
+    };
   }
+
+  const starts = new Map(setup.starts.map((start) => [start.player, start]));
+  const sourceAi = new Map(setup.players.map((player) => [player.player, player.ai]));
+  for (const override of setup.aiTypeOverrides) {
+    sourceAi.set(override.player, override.ai);
+  }
+  const pairs: DemoStartPair[] = [];
+  for (const human of available) {
+    const humanStart = starts.get(human);
+    if (!humanStart) {
+      continue;
+    }
+    for (const enemy of available) {
+      if (human === enemy || sourceAi.get(enemy) !== "wc2-land-attack") {
+        continue;
+      }
+      const enemyStart = starts.get(enemy);
+      if (!enemyStart) {
+        continue;
+      }
+      pairs.push({
+        human,
+        enemy,
+        enemyAi: "wc2-land-attack",
+        distanceTiles: Math.hypot(humanStart.x - enemyStart.x, humanStart.y - enemyStart.y)
+      });
+    }
+  }
+  if (pairs.length === 0) {
+    throw new Error("Fixed browser demo has no wc2-land-attack enemy source slot with a start point.");
+  }
+  pairs.sort((left, right) => left.human - right.human || left.enemy - right.enemy);
+
   const seed = fixedDemoSeed();
-  const humanIndex = seededIndex(`${seed}:human`, available.length);
-  const human = available[humanIndex] ?? FIXED_BROWSER_DEMO_PLAYER_ID;
-  const enemyPool = available.filter((player) => player !== human);
-  const enemyIndex = seededIndex(`${seed}:enemy:${human}`, enemyPool.length);
-  const enemy = enemyPool[enemyIndex] ?? FIXED_BROWSER_DEMO_ENEMY_PLAYER_ID;
-  return { human, enemy };
+  const inBand = pairs.filter((pair) => (
+    pair.distanceTiles >= DEMO_MIN_START_DISTANCE_TILES
+    && pair.distanceTiles <= DEMO_MAX_START_DISTANCE_TILES
+  ));
+  if (inBand.length > 0) {
+    return inBand[seededIndex(`${seed}:pair`, inBand.length)] ?? inBand[0];
+  }
+  return [...pairs].sort((left, right) => (
+    Math.abs(left.distanceTiles - DEMO_TARGET_START_DISTANCE_TILES)
+    - Math.abs(right.distanceTiles - DEMO_TARGET_START_DISTANCE_TILES)
+    || left.human - right.human
+    || left.enemy - right.enemy
+  ))[0];
 }
 
 function fixedDemoSeed(): string {

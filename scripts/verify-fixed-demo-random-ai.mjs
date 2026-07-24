@@ -1,11 +1,21 @@
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 
 const demoScenario = readFileSync("src/wargus/demoScenario.ts", "utf8");
+const main = readFileSync("src/main.ts", "utf8");
 const indexHtml = readFileSync("index.html", "utf8");
 const orders = readFileSync("src/simulation/orders.ts", "utf8");
 const world = readFileSync("src/simulation/world.ts", "utf8");
 const saveGame = readFileSync("src/wargus/saveGame.ts", "utf8");
 const runtimeSmoke = readFileSync("scripts/verify-browser-runtime-smoke.mjs", "utf8");
+const fixedDemoInput = readFileSync("scripts/verify-browser-fixed-demo-input.mjs", "utf8");
+const gardenSetup = JSON.parse(readFileSync("public/wargus/maps/setups/191-Garden_of_war_BNE.pud.sms.json", "utf8"));
+
+const compiledDemoScenario = ts.transpileModule(demoScenario, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 }
+}).outputText;
+const demo = await import(`data:text/javascript;base64,${Buffer.from(compiledDemoScenario).toString("base64")}`);
 
 function expect(source, needle, message) {
   if (!source.includes(needle)) {
@@ -18,6 +28,94 @@ function reject(source, needle, message) {
     throw new Error(message);
   }
 }
+
+function applyDemoSeed(seed, setup = gardenSetup) {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { search: `?demoSeed=${encodeURIComponent(seed)}` }
+  });
+  try {
+    return demo.applyFixedBrowserDemoSetup(
+      { path: demo.FIXED_BROWSER_DEMO_MAP_PATH },
+      structuredClone(setup)
+    );
+  } finally {
+    if (previousLocation) {
+      Object.defineProperty(globalThis, "location", previousLocation);
+    } else {
+      delete globalThis.location;
+    }
+  }
+}
+
+assert.equal(demo.FIXED_DEMO_SOURCE_GAME_SPEED, 45, "Fixed demo should use candidate B's 45 source ticks per second");
+assert.equal(demo.DEMO_MIN_START_DISTANCE_TILES, 70, "Candidate B should keep starts at least 70 tiles apart");
+assert.equal(demo.DEMO_MAX_START_DISTANCE_TILES, 110, "Candidate B should keep starts at most 110 tiles apart");
+assert.equal(demo.DEMO_TARGET_START_DISTANCE_TILES, 90, "Candidate B fallback should target 90 tiles");
+
+const sourceStarts = new Map(gardenSetup.starts.map((start) => [start.player, start]));
+const representativePairs = [
+  { seed: "plan017-b-min-10", human: 6, enemy: 5, distanceTiles: 70 },
+  { seed: "plan017-b-target-21", human: 0, enemy: 7, distanceTiles: 93.13431161500041 },
+  { seed: "plan017-b-max-0", human: 5, enemy: 7, distanceTiles: 109.48972554536795 }
+];
+for (const expected of representativePairs) {
+  const first = applyDemoSeed(expected.seed);
+  const repeated = applyDemoSeed(expected.seed);
+  const humanStart = first.starts.find((start) => start.player === 0);
+  const enemyStart = first.starts.find((start) => start.player === 1);
+  const sourceHumanStart = sourceStarts.get(expected.human);
+  const sourceEnemyStart = sourceStarts.get(expected.enemy);
+  assert.deepEqual(humanStart, { player: 0, x: sourceHumanStart.x, y: sourceHumanStart.y }, `${expected.seed} should select human source player ${expected.human}`);
+  assert.deepEqual(enemyStart, { player: 1, x: sourceEnemyStart.x, y: sourceEnemyStart.y }, `${expected.seed} should select enemy source player ${expected.enemy}`);
+  assert.deepEqual(
+    repeated.starts.filter((start) => start.player <= 1),
+    first.starts.filter((start) => start.player <= 1),
+    `${expected.seed} should replay the same ordered pair`
+  );
+  assert.equal(first.players.find((player) => player.player === 1)?.ai, "wc2-land-attack", `${expected.seed} should preserve land AI on the remapped enemy`);
+  assert.equal(first.aiTypeOverrides.find((entry) => entry.player === 1)?.ai, "wc2-land-attack", `${expected.seed} should publish the remapped land AI override`);
+  assert.ok(expected.distanceTiles >= 70 && expected.distanceTiles <= 110, `${expected.seed} should remain inside candidate B's band`);
+}
+
+const opening = applyDemoSeed("plan017-b-target-21");
+assert.deepEqual(opening.players.find((player) => player.player === 0)?.resources, { gold: 10000, wood: 5000, oil: 5000 }, "Human fixed-demo resources should remain high");
+assert.deepEqual(opening.players.find((player) => player.player === 1)?.resources, { gold: 10000, wood: 5000, oil: 5000 }, "Enemy fixed-demo resources should remain high");
+assert.equal(opening.units.filter((unit) => unit.player === 0 && unit.typeId === "unit-peasant").length, 1, "Fixed demo should start with one Peasant");
+assert.equal(opening.units.filter((unit) => unit.player === 1 && unit.typeId === "unit-peon").length, 1, "Fixed demo should start with one enemy Peon");
+assert.equal(opening.units.some((unit) => unit.player <= 1 && ["unit-town-hall", "unit-great-hall"].includes(unit.typeId)), false, "Fixed demo should start with no Hall");
+
+const noBandSetup = structuredClone(gardenSetup);
+noBandSetup.starts = noBandSetup.starts.map((start) => ({ ...start, x: start.player, y: 0 }));
+noBandSetup.players = noBandSetup.players.map((player) => player.startView
+  ? { ...player, startView: { x: player.player, y: 0 } }
+  : player);
+const closestFallback = applyDemoSeed("plan017-no-band", noBandSetup);
+assert.deepEqual(closestFallback.starts.find((start) => start.player === 0), { player: 0, x: 0, y: 0 }, "Closest fallback should use the lowest-id human on a distance tie");
+assert.deepEqual(closestFallback.starts.find((start) => start.player === 1), { player: 1, x: 7, y: 0 }, "Closest fallback should use the farthest eligible land enemy then player-id tie-breaks");
+
+const noLandAiSetup = structuredClone(gardenSetup);
+noLandAiSetup.players = noLandAiSetup.players.map((player) => player.player <= 7 ? { ...player, ai: "wc2-air-attack" } : player);
+noLandAiSetup.aiTypeOverrides = [];
+assert.throws(
+  () => applyDemoSeed("plan017-no-land-ai", noLandAiSetup),
+  /no wc2-land-attack enemy source slot/i,
+  "Fixed demo should stop explicitly instead of measuring an air script when no land-AI source exists"
+);
+
+const presentationWorld = {
+  tickRate: 30,
+  visibilityPlayer: 15,
+  units: [
+    { id: "human", player: 0, hitPoints: 30, typeId: "unit-peasant" },
+    { id: "enemy", player: 1, hitPoints: 30, typeId: "unit-peon" },
+    { id: "mine", player: 15, hitPoints: 25500, typeId: "unit-gold-mine" }
+  ],
+  engineSettings: {}
+};
+demo.applyFixedBrowserDemoWorldPresentation({ path: demo.FIXED_BROWSER_DEMO_MAP_PATH }, presentationWorld);
+assert.equal(presentationWorld.engineSettings.sourceGameSpeedDefault, 45, "New fixed-demo worlds should present candidate B's honest global source speed");
 
 expect(demoScenario, "chooseFixedDemoStarts", "Fixed demo should choose randomized Garden of War starts.");
 expect(demoScenario, "DEMO_START_PLAYERS", "Fixed demo should keep the original eight Garden of War start slots as the random pool.");
@@ -39,6 +137,14 @@ reject(demoScenario, "world.aiStates = []", "Fixed demo presentation must not cl
 reject(demoScenario, "fixedDemoRaceUnitType", "Fixed demo should not remap original full start bases.");
 reject(demoScenario, "demoStartingUnits", "Fixed demo should use the original start points, not a custom staged base list.");
 reject(demoScenario, "return `${DEMO_DEFAULT_SEED}:${Date.now()}:${Math.random()}`", "Normal fixed-demo randomness should not use wall-clock or random APIs inside src/**/*.ts.");
+reject(main, "FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER", "Fixed demo should not retain a hidden movement-only pace multiplier.");
+reject(main, "applyFixedDemoMovementPace", "Fixed demo should not mutate mobile unit speeds after world creation or load.");
+reject(main, "__fixedDemoPace", "Fixed demo should not retain private unit movement pace fields.");
+expect(main, "fixedDemoMovementPaceMultiplier: 1", "Smoke compatibility data should truthfully report no movement-only multiplier.");
+expect(fixedDemoInput, "EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED = 45", "Fixed-demo input verifier should expect candidate B's source speed.");
+expect(fixedDemoInput, "EXPECTED_FIXED_DEMO_GAME_SPEED = 1.5", "Fixed-demo input verifier should expect the honest visible 1.5x pace.");
+expect(fixedDemoInput, "EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1", "Fixed-demo input verifier should reject hidden movement acceleration.");
+reject(runtimeSmoke, "fixedDemoMovementPaceMultiplier ?? 0) > 1", "Runtime smoke should not wait for hidden movement acceleration.");
 
 const allowedUnitTypesSource = demoScenario.match(/allowedUnitTypes: \[([\s\S]*?)\],\n\s*allowedUpgradeTypes:/)?.[1] ?? "";
 for (const typeId of [
@@ -97,4 +203,4 @@ expect(runtimeSmoke, "!counts[\"unit-town-hall\"]", "Browser runtime smoke shoul
 expect(runtimeSmoke, "Number(resources.gold ?? 0) >= 10000", "Browser runtime smoke should assert high fixed-demo gold.");
 expect(runtimeSmoke, "Number(resources.wood ?? 0) >= 5000", "Browser runtime smoke should assert high fixed-demo wood.");
 
-console.log("Fixed demo random-start source AI contract verified.");
+console.log("Fixed demo land-AI start-band and honest global pacing contract verified.");
