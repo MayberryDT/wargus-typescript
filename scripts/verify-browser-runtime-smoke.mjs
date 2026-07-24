@@ -1,13 +1,13 @@
 import { execFileSync, spawn } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import { connect } from "node:net";
-import { pathToFileURL } from "node:url";
 
 const PORT = Number(process.env.WARGUS_BROWSER_RUNTIME_PORT ?? 54314);
 const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=ai-staged-pressure`;
 const SESSION_LIMIT_MS = 25_000;
 const MODE = process.env.WARGUS_BROWSER_RUNTIME_MODE ?? "plan014";
-const CHROME = process.env.CHROME_BIN ?? "/home/halla/.cache/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell";
+const SERVER_MODE = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev";
+const EXPECTED_BACKGROUND_MUSIC = "warcraft-2-ost-human-1-128-ytshorts.savetube.me.mp3";
 let server = null;
 let browserServer = null;
 let browser = null;
@@ -16,7 +16,8 @@ let wallTimeMs = 0;
 
 try {
   const { chromium } = await loadPlaywright();
-  server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
+  const browserExecutablePath = process.env.CHROME_BIN ?? chromium.executablePath();
+  server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", ...(SERVER_MODE === "preview" ? ["preview"] : []), "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
     cwd: process.cwd(),
     stdio: "ignore"
   });
@@ -24,7 +25,7 @@ try {
   const manifestResponse = await fetch(`http://127.0.0.1:${PORT}/wargus/manifest.json`);
   if (!manifestResponse.ok) throw new Error(`Critical asset /wargus/manifest.json returned HTTP ${manifestResponse.status}.`);
   browserServer = await chromium.launchServer({
-    executablePath: CHROME,
+    executablePath: browserExecutablePath,
     headless: true,
     args: ["--disable-background-networking", "--disable-extensions", "--disable-dev-shm-usage", "--no-proxy-server"]
   });
@@ -56,6 +57,7 @@ async function runRuntimeSmoke(page) {
   await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 10_000 });
   await page.waitForFunction(() => Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded), null, { timeout: 8_000 });
   await page.waitForFunction((mode) => {
+    if (mode === "basics") return true;
     if (mode === "plan014") return typeof window.__WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__ === "function" && typeof window.__WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__ === "function";
     if (mode === "m01") return typeof window.__WARGUS_TS_RUN_CONSTRUCTION_LIFECYCLE_FIXTURE__ === "function";
     if (mode === "m04") return typeof window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__ === "function";
@@ -75,6 +77,9 @@ async function runRuntimeSmoke(page) {
     imageRendering: element.style.imageRendering
   }));
   const screenshot = pngColorStats(await page.screenshot({ type: "png" }));
+  if (MODE === "basics") {
+    return runBrowserBasics(page, pageErrors, canvas, screenshot);
+  }
   const fixtures = await page.evaluate((mode) => {
     const startedAt = performance.now();
     const result = mode === "plan014"
@@ -126,6 +131,7 @@ function assertRuntimeSmoke(result) {
   else if (MODE === "m01") assertM01(result.m01, failures);
   else if (MODE === "m04") assertM04(result.m04, failures);
   else if (MODE === "m07") assertM07(result.m07, failures);
+  else if (MODE === "basics") assertBrowserBasics(result.basics, failures);
   else failures.push(`unknown verifier mode: ${MODE}`);
   if (failures.length > 0) throw new Error(failures.join("\n"));
 }
@@ -134,7 +140,102 @@ function modeSummary(result) {
   if (MODE === "plan014") return `AI launches ${result.aiScript.launchSizes.slice(0, 3).join("->")}, factors ${Object.values(result.aiKnowledge.difficulty.factors).join("/")}, explored ${result.aiKnowledge.exploration.aiExploredAfterUpdate}`;
   if (MODE === "m01") return "M01 pending/paid/cancel lifecycle";
   if (MODE === "m04") return `M04 ${result.m04.m04.completionCount}/5 formation`;
+  if (MODE === "basics") return `basics fog ${result.basics.fogTelemetry.exploredTiles}/${result.basics.mapTileCount}, audio ${result.basics.smoke.audioContextState}, order ${result.basics.smoke.firstSelectedOrderKind}`;
   return `M07 return ${result.m07.automatic.returnDistance.toFixed(1)}px`;
+}
+
+async function runBrowserBasics(page, pageErrors, canvas, screenshot) {
+  await page.waitForFunction(() => window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false, null, { timeout: 3_000 });
+  if (await page.evaluate(() => window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === true)) {
+    await page.keyboard.press("Enter");
+  }
+  await page.waitForFunction(() => window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false, null, { timeout: 3_000 });
+  await page.waitForFunction(() => Number(window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMovementPaceMultiplier ?? 0) > 1, null, { timeout: 3_000 });
+  await page.waitForFunction(() => {
+    const state = window.__WARGUS_TS_SMOKE_STATE__;
+    const counts = state?.ownedUnitCounts ?? {};
+    const resources = state?.visibilityPlayerResources ?? {};
+    return state?.selectedUnitCount === 1
+      && state?.selectedUnitTypes?.[0] === "unit-peasant"
+      && counts["unit-peasant"] === 1
+      && !counts["unit-town-hall"]
+      && !counts["unit-farm"]
+      && !counts["unit-keep"]
+      && !counts["unit-castle"]
+      && Number(resources.gold ?? 0) >= 10000
+      && Number(resources.wood ?? 0) >= 5000;
+  }, null, { timeout: 3_000 });
+  await page.waitForFunction(() => {
+    const log = window.__WARGUS_TS_PLAYTEST_LOG__?.() ?? [];
+    const fog = [...log].reverse().find((entry) => entry.activeMapPath && entry.fog)?.fog;
+    return fog && Number.isFinite(fog.visibleTiles) && Number.isFinite(fog.exploredTiles) && Number.isFinite(fog.unexploredTiles);
+  }, null, { timeout: 3_000 });
+  const fogTelemetry = await page.evaluate(() => {
+    const log = window.__WARGUS_TS_PLAYTEST_LOG__?.() ?? [];
+    return [...log].reverse().find((entry) => entry.activeMapPath && entry.fog)?.fog ?? null;
+  });
+  const mapTileCount = Number(fogTelemetry?.exploredTiles ?? 0) + Number(fogTelemetry?.unexploredTiles ?? 0);
+  const centered = await page.evaluate(() => window.__WARGUS_TS_CENTER_FIRST_OWNED_MOVABLE__?.() === true);
+  if (!centered) throw new Error("Browser basics could not center the first owned movable unit.");
+  await page.waitForFunction(() => {
+    const point = window.__WARGUS_TS_SMOKE_STATE__?.firstOwnedMovableScreenPoint;
+    return point && Number.isFinite(point.x) && Number.isFinite(point.y);
+  }, null, { timeout: 3_000 });
+  const selectablePoint = await page.evaluate(() => window.__WARGUS_TS_SMOKE_STATE__.firstOwnedMovableScreenPoint);
+  await clickSmokePoint(page, selectablePoint.x, selectablePoint.y);
+  await page.waitForFunction(() => window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitCount === 1 && Number(window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedSpeed ?? 0) > 0, null, { timeout: 3_000 });
+  await page.waitForFunction((expectedMusic) => {
+    const state = window.__WARGUS_TS_SMOKE_STATE__;
+    return state?.audioContextCreated === true
+      && state?.audioContextState === "running"
+      && state?.audioUnlocked === true
+      && state?.audioStereoSound === true
+      && state?.audioCurrentMusic === expectedMusic;
+  }, EXPECTED_BACKGROUND_MUSIC, { timeout: 8_000 });
+  await page.waitForFunction(() => {
+    const state = window.__WARGUS_TS_SMOKE_STATE__;
+    return Number(state?.audioPlayStarts ?? 0) > 0
+      && (Number(state?.audioBufferedSounds ?? 0) > 0 || Number(state?.audioHtmlPlayStarts ?? 0) > 0)
+      && Number(state?.audioHtmlPlayFailures ?? 0) === 0
+      && !state?.audioLastError
+      && typeof window.__WARGUS_TS_PLAY_AUDIO_FIXTURE__ === "function";
+  }, null, { timeout: 5_000 });
+  const audioFixture = await page.evaluate(() => window.__WARGUS_TS_PLAY_AUDIO_FIXTURE__());
+  await delay(500);
+  const inputStats = pngColorStats(await page.screenshot({ type: "png" }));
+  await clickSmokePoint(page, Math.min(900, selectablePoint.x + 220), Math.min(620, selectablePoint.y + 120), "right");
+  await page.waitForFunction(() => window.__WARGUS_TS_SMOKE_STATE__?.selectedUnitCount > 0 && window.__WARGUS_TS_SMOKE_STATE__?.firstSelectedOrderKind !== null, null, { timeout: 5_000 });
+  await delay(500);
+  const commandStats = pngColorStats(await page.screenshot({ type: "png" }));
+  const smoke = await page.evaluate(() => window.__WARGUS_TS_SMOKE_STATE__);
+  if (pageErrors.length > 0) throw new Error(`Browser page exceptions: ${pageErrors.join("; ")}`);
+  return {
+    basics: { fogTelemetry, mapTileCount, audioFixture, inputStats, commandStats, smoke },
+    canvas,
+    screenshot,
+    smoke,
+    performance: smoke?.performance ?? {}
+  };
+}
+
+function assertBrowserBasics(result, failures) {
+  const fog = result?.fogTelemetry;
+  if (!(fog?.visibleTiles > 0 && fog?.exploredTiles > 0 && fog?.unexploredTiles > 0 && fog.exploredTiles < result.mapTileCount)) failures.push(`starting-area fog: ${JSON.stringify(fog)}`);
+  const smoke = result?.smoke ?? {};
+  if (!(smoke.audioContextCreated === true && smoke.audioContextState === "running" && smoke.audioUnlocked === true && smoke.audioStereoSound === true)) failures.push(`audio unlock/stereo: ${JSON.stringify(smoke)}`);
+  if (smoke.audioCurrentMusic !== EXPECTED_BACKGROUND_MUSIC) failures.push(`background music: ${smoke.audioCurrentMusic}`);
+  if (!(Number(smoke.audioPlayStarts ?? 0) > 0 && (Number(smoke.audioBufferedSounds ?? 0) > 0 || Number(smoke.audioHtmlPlayStarts ?? 0) > 0) && Number(smoke.audioHtmlPlayFailures ?? 0) === 0 && !smoke.audioLastError)) failures.push(`audio playback: ${JSON.stringify(smoke)}`);
+  if (!result?.audioFixture?.ok) failures.push(`audio fixture: ${JSON.stringify(result?.audioFixture)}`);
+  if (!(smoke.selectedUnitCount > 0 && smoke.firstSelectedOrderKind !== null)) failures.push(`selection/right-click order: ${JSON.stringify({ selectedUnitCount: smoke.selectedUnitCount, order: smoke.firstSelectedOrderKind })}`);
+  if (sameScreenshotStats(result?.inputStats, result?.commandStats)) failures.push(`render transition after right-click: ${JSON.stringify({ input: result?.inputStats, command: result?.commandStats })}`);
+}
+
+async function clickSmokePoint(page, x, y, button = "left", clickCount = 1) {
+  await page.mouse.click(x, y, { button, clickCount });
+}
+
+function sameScreenshotStats(left, right) {
+  return left?.uniqueColors === right?.uniqueColors && left?.brightPixels === right?.brightPixels;
 }
 
 function assertPlan014(script, knowledge, failures) {
@@ -168,11 +269,7 @@ function assertM07(result, failures) {
 }
 
 async function loadPlaywright() {
-  try { return await import("playwright"); } catch (error) {
-    const modulePath = process.env.PLAYWRIGHT_MODULE;
-    if (!modulePath) throw new Error(`Playwright is unavailable; set PLAYWRIGHT_MODULE (${error instanceof Error ? error.message : String(error)}).`);
-    return import(pathToFileURL(modulePath).href);
-  }
+  return await import("playwright");
 }
 
 function processTreePids(rootPid) {

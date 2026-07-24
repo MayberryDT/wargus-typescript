@@ -6,6 +6,8 @@ const cssSource = readFileSync("src/styles.css", "utf8");
 const renderHudSource = readFileSync("src/view/renderHud.ts", "utf8");
 const readmeSource = readFileSync("README.md", "utf8");
 const packageSource = readFileSync("package.json", "utf8");
+const packageJson = JSON.parse(packageSource);
+const packageLock = JSON.parse(readFileSync("package-lock.json", "utf8"));
 const runtimeSmokeSource = readFileSync("scripts/verify-browser-runtime-smoke.mjs", "utf8");
 const mapLoadSource = readFileSync("scripts/verify-browser-map-loads.mjs", "utf8");
 const browserHarnessSource = readFileSync("scripts/browser-smoke-harness.mjs", "utf8");
@@ -101,11 +103,17 @@ expect(packageSource.includes('"verify:browser-train-session"'), "package.json s
 expect(packageSource.includes('"verify:browser-demo-victory"'), "package.json should expose the fixed-demo victory verifier.");
 expect(packageSource.includes("npm run verify:browser-demo-victory"), "Browser demo-session verifier should run the fixed-demo victory verifier.");
 expect(packageSource.includes('"verify:browser-production-smoke"'), "package.json should expose the production browser runtime smoke verifier.");
+expect(packageSource.includes('"verify:browser-runtime-basics"'), "package.json should expose the focused browser basics verifier.");
 expect(packageSource.includes('"verify:browser-production"'), "package.json should expose the combined production browser verifier.");
 expect(packageSource.includes('"verify:browser-production:all"'), "package.json should expose the exhaustive combined production browser verifier.");
+expect(packageSource.includes("WARGUS_BROWSER_SMOKE_SERVER=preview node scripts/verify-browser-runtime-smoke.mjs && WARGUS_BROWSER_SMOKE_SERVER=preview npm run verify:browser-runtime-basics"), "Production browser smoke should run both Plan014 and restored browser basics against Vite preview.");
 expect(packageSource.includes("npm run verify:browser-production-smoke && WARGUS_BROWSER_MAP_SERVER=preview node scripts/verify-browser-map-loads.mjs"), "Combined production browser verifier should run production smoke and production map loads without rebuilding twice.");
 expect(packageSource.includes("npm run verify:browser-production-smoke && WARGUS_BROWSER_MAP_SERVER=preview WARGUS_BROWSER_MAP_LOADS=all node scripts/verify-browser-map-loads.mjs"), "Exhaustive combined production browser verifier should run production smoke and all production map loads without rebuilding twice.");
-expect(runtimeSmokeSource.includes('const serverMode = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev"'), "Browser runtime smoke should support production preview mode.");
+expect(runtimeSmokeSource.includes('const SERVER_MODE = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev"'), "Browser runtime smoke should support production preview mode.");
+expect(runtimeSmokeSource.includes('...(SERVER_MODE === "preview" ? ["preview"] : [])'), "Browser runtime smoke should pass the preview subcommand to Vite only in production mode.");
+expect(packageJson.devDependencies?.playwright === "1.61.1", "package.json should pin the installed Playwright verifier runtime.");
+expect(packageLock.packages?.[""]?.devDependencies?.playwright === "1.61.1", "The lockfile root should pin the Playwright verifier runtime.");
+expect(packageLock.packages?.["node_modules/playwright"]?.version === "1.61.1", "The lockfile should resolve the pinned Playwright verifier runtime.");
 expect(packageSource.includes('"verify:browser-map-loads"'), "package.json should expose the browser map-load verifier.");
 expect(packageSource.includes('"verify:browser-map-loads:all"'), "package.json should expose the exhaustive browser map-load verifier.");
 expect(packageSource.includes('"verify:browser-production-map-loads"'), "package.json should expose the production browser map-load verifier.");
@@ -125,43 +133,40 @@ for (const scriptName of [
   expect(packageSource.includes(`npm run ${scriptName}`), `Full verify should include ${scriptName}.`);
 }
 
-expect(runtimeSmokeSource.includes("const DEBUG_PORT = 9224"), "Browser runtime smoke should use a named Chrome debug port.");
-expect(runtimeSmokeSource.includes('from "./browser-smoke-harness.mjs"'), "Browser runtime smoke should use the shared browser smoke harness.");
+expect(runtimeSmokeSource.includes('await import("playwright")'), "Browser runtime smoke should load its declared Playwright dependency directly.");
+expect(runtimeSmokeSource.includes("process.env.CHROME_BIN ?? chromium.executablePath()"), "Browser runtime smoke should resolve Chromium portably while retaining an explicit override.");
+expect(!runtimeSmokeSource.includes("/home/halla/"), "Browser runtime smoke must not contain Halla-specific executable paths.");
+expect(!runtimeSmokeSource.includes("PLAYWRIGHT_MODULE"), "Browser runtime smoke should be self-contained after npm install.");
 expect(mapLoadSource.includes('from "./browser-smoke-harness.mjs"'), "Browser map-load smoke should use the shared browser smoke harness.");
 expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGTERM\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGTERM.");
 expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGKILL\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGKILL.");
-expect(!runtimeSmokeSource.includes("function waitForHttp"), "Browser runtime smoke should rely on the shared harness waitForHttp helper.");
 expect(!mapLoadSource.includes("function waitForHttp"), "Browser map-load smoke should rely on the shared harness waitForHttp helper.");
-expect(!runtimeSmokeSource.includes("function connectDevTools"), "Browser runtime smoke should rely on the shared harness DevTools helper.");
 expect(!mapLoadSource.includes("function connectDevTools"), "Browser map-load smoke should rely on the shared harness DevTools helper.");
-expect(!runtimeSmokeSource.includes("async function stopProcess"), "Browser runtime smoke should rely on the shared harness process cleanup helper.");
 expect(!mapLoadSource.includes("async function stopProcess"), "Browser map-load smoke should rely on the shared harness process cleanup helper.");
 expect(!browserHarnessSource.includes("async function stopProcess(process)"), "Browser smoke harness should avoid shadowing the Node process global.");
 expect(!browserHarnessSource.includes("process.kill(-process.pid"), "Browser smoke harness should not call process-group kill through a shadowed child variable.");
 
 for (const fragment of [
-  "/usr/bin/google-chrome",
-  "?smoke=1",
-  "Page.captureScreenshot",
-  "Input.dispatchKeyEvent",
-  "Input.dispatchMouseEvent",
+  "?smoke=1&demoSeed=ai-staged-pressure",
+  'MODE === "basics"',
+  "page.screenshot",
+  "page.keyboard.press",
+  "page.mouse.click",
   "selectedUnitCount",
-  "audioContextCreated === true",
+  "audioContextCreated",
   "audioPlayStarts",
-  'audioContextState === \\"running\\"',
+  'audioContextState === "running"',
+  "audioCurrentMusic",
+  "__WARGUS_TS_PLAY_AUDIO_FIXTURE__",
+  "__WARGUS_TS_PLAYTEST_LOG__",
   "__WARGUS_TS_CENTER_FIRST_OWNED_MOVABLE__",
-  "firstSelectedOrderKind !== null",
-  "readSmokeState",
-  "waitForSmokePoint",
-  "captureNonBlankScreenshot(client, \"playable world\"",
-  "captureNonBlankScreenshot(client, \"post-input playable world\"",
-  "captureNonBlankScreenshot(client, \"post-command playable world\"",
-  "sameScreenshotStats(inputStats, commandStats)",
-  "const selectablePoint = await waitForSmokePoint(client, \"firstOwnedMovableScreenPoint\", 10_000)",
-  "dispatchMouseClick(client, selectablePoint.x, selectablePoint.y)",
-  "dispatchMouseClick(client, Math.min(900, selectablePoint.x + 220), Math.min(620, selectablePoint.y + 120), \"right\")",
+  "firstOwnedMovableScreenPoint",
+  "firstSelectedOrderKind",
+  "sameScreenshotStats(result?.inputStats, result?.commandStats)",
   "pngColorStats",
-  "document.querySelector(\"canvas\")",
+  "processTreePids",
+  "stopExactPids",
+  "isPortOpen",
   "Browser runtime smoke verified"
 ]) {
   expect(runtimeSmokeSource.includes(fragment), `Browser runtime smoke verifier missing fragment: ${fragment}`);
