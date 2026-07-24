@@ -4,7 +4,7 @@
 >
 > **Executor instructions**: Follow all steps and verification gates. This plan repairs the existing source-style AI; it does not invent a new strategy system. Stop on any STOP condition and update `plans/README.md` when complete unless a coordinator owns it.
 >
-> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- package.json package-lock.json src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts src/view/renderHud.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-ai-difficulty.mjs scripts/verify-source-ai-force-plans.mjs scripts/verify-source-ai-explores.mjs scripts/verify-plan014-ai-manager.mjs scripts/verify-browser-runtime-smoke.mjs scripts/verify-browser-native-viewport.mjs scripts/verify-minimap-render-cache.mjs plans/evidence/014.md plans/014-make-ai-execute-its-strategy.md plans/README.md`
+> **Drift check (run first)**: `git diff --stat 6af2eeb..HEAD -- package.json package-lock.json src/simulation/world.ts src/simulation/orders.ts src/wargus/saveGame.ts src/main.ts src/view/renderHud.ts scripts/verify-fixed-demo-random-ai.mjs scripts/verify-source-ai-difficulty.mjs scripts/verify-source-ai-force-plans.mjs scripts/verify-source-ai-explores.mjs scripts/verify-plan014-ai-manager.mjs scripts/verify-save-schema.mjs scripts/verify-browser-runtime-smoke.mjs scripts/verify-browser-native-viewport.mjs scripts/verify-minimap-render-cache.mjs plans/evidence/014.md plans/014-make-ai-execute-its-strategy.md plans/README.md`
 > If the source AI instruction loop, build-order representation, difficulty factors, or exploration state changed, STOP and reconcile.
 
 **Goal:** Make the AI execute original Wargus script semantics at human-scale
@@ -48,7 +48,7 @@ percentages at the timing boundary, and persist explored tiles per player.
 - **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md, plans/013-fix-combat-commitment-and-response.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug
 - **Planned at**: commit `6af2eeb`, 2026-07-10
-- **Current decision**: IN PROGRESS — independent review at `7de113c` was NOT READY; construction, force, save, and browser-gate fixes are committed, while Task 9 and a new independent review remain pending.
+- **Current decision**: IN PROGRESS — the remaining transaction defects and scope omission from the review-fix re-review are corrected in the current changeset, while Task 9 and a new independent READY review remain pending.
 
 ## Player-visible contract and evidence
 
@@ -175,6 +175,7 @@ Index by player id. `exploredTiles` remains the rendering alias for `visibilityP
 - `scripts/verify-source-ai-force-plans.mjs`
 - `scripts/verify-source-ai-explores.mjs`
 - `scripts/verify-plan014-ai-manager.mjs`
+- `scripts/verify-save-schema.mjs`
 - `scripts/verify-browser-runtime-smoke.mjs`
 - `scripts/verify-browser-native-viewport.mjs`
 - `scripts/verify-minimap-render-cache.mjs`
@@ -202,7 +203,7 @@ Index by player id. `exploredTiles` remains the rendering alias for `visibilityP
 
 | Checkpoint | Tasks | Allowed result | Acceptance before continuing |
 |---|---|---|---|
-| 014-A — script execution | 2–4 | Once-per-second execution, zero/positive sleeps, waits, distinct upgrades, installed research order, detached attacks, `Need`/`Set`, and pending reservation are source-correct and bounded. | M08 at source-neutral level 3 shows detached 1 -> 4 -> 16 launches and two Barracks without reusing units or orphaning a Hall; Catapult/Ballista remain Barracks units; no difficulty/fog state changes yet. |
+| 014-A — script execution | 2–4 | Once-per-second execution, zero/positive sleeps, waits, distinct upgrades, installed research order, detached attacks, `Need`/`Set`, and pending reservation across all AI spending are source-correct and bounded. | M08 at source-neutral level 3 shows detached 1 -> 4 -> 16 launches and two Barracks without reusing units or orphaning a Hall; Catapult/Ballista remain Barracks units; no difficulty/fog state changes yet. |
 | 014-B — timing boundary | 5 | Imported percentages become bounded runtime factors and every difficulty selection resets all factors. | M09 factors/durations pass for difficulties 1–5 and switching back to normal; no save-schema diff. |
 | 014-C — AI knowledge | 6–9 | Each AI persists and consults its own explored map at a bounded update cadence. | Save round-trip passes, AI exploration never reads the human buffer, update time stays under 20ms, and M01/M04/M07 replay passes. |
 
@@ -275,8 +276,9 @@ next wait.
   Source `Need` records desire and advances; the resource/build manager fulfills
   it on subsequent AI work.
 - [x] Count the costs of every valid AI `build` order in `phase: "to-site"` as
-  reserved when deciding whether another AI build request is affordable. Do not
-  deduct those resources before arrival.
+  reserved when deciding whether any AI construction, training, producer
+  upgrade, or research spend is affordable. Do not deduct those resources
+  before arrival, and do not apply this AI-only resource view to human actions.
 - [x] Select source-eligible builders without ever stealing `build`,
   `build-oil-platform`, `repair`, or active gathering phases. A worker merely
   travelling to a resource may be retasked, matching Wargus; keep deterministic
@@ -301,7 +303,10 @@ instruction adds nothing; pending construction costs prevent overcommit.
   - deterministically assign free, non-launched unit ids to the scripted slot;
   - exclude ids assigned to other active slots or any prior bounded launch;
   - choose only assigned ids satisfying that scripted force's targets;
-  - issue their real attack/attack-move orders immediately;
+  - plan every member's real attack/attack-move destination and path before
+    mutating any member; if one cannot receive an order, preserve every member's
+    pre-call order, the scripted slot, and launch history;
+  - after every plan is feasible, issue and verify all real orders atomically;
   - append `{ sourceForceId, unitIds, launchedTick }`, then remove/reset that
     scripted force slot before the interpreter advances;
   - exclude those now-attacking units from readiness/allocation for the next
@@ -422,9 +427,11 @@ Expected observable behavior:
 - [x] Zero-cycle sleep advances, positive sleep/waits block correctly, EOF does
   not replay, and attack launch advances to the next barrier.
 - [x] The AI activates 1-, 4-, and 16-unit attack stages in order.
-- [x] Launched unit ids detach and cannot satisfy the next scripted force.
+- [x] Launched unit ids detach and cannot satisfy the next scripted force; a
+  failed multi-unit launch leaves zero partial orders and remains retryable.
 - [x] `Need` adds one, `Set` is absolute, duplicate desires remain bounded, and
-  unpaid construction costs are reserved.
+  unpaid construction costs are reserved from every immediate AI spend without
+  blocking human actions.
 - [x] AI speed factors are 0.75/1/1/1.2/1.5 and reset after every difficulty change.
 - [x] AI exploration reads persistent knowledge for its own player.
 - [x] Existing saves load; new saves preserve per-player exploration.

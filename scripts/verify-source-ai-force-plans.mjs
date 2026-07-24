@@ -634,9 +634,16 @@ for (const fragment of [
   "assignedUnitIds: []",
   "function assignSourceAiForceUnits",
   "state.sourceScriptLaunches.flatMap",
+  "function planSourceAiLaunchOrder",
   "function launchSourceAiAttackForce",
   'return launchSourceAiAttackForce(world, playerId, state, instruction.id) ? "advance" : "block"',
-  "unitIds.length !== force.assignedUnitIds.length",
+  "const order = planSourceAiLaunchOrder(world, playerId, unit);",
+  "previousOrder: unit.order",
+  "previousMoveQueue: unit.moveQueue",
+  "plan.unit.order = plan.order;",
+  "plan.unit.order = plan.previousOrder;",
+  "plan.unit.moveQueue = plan.previousMoveQueue;",
+  "const unitIds = plans.map((plan) => plan.unit.id);",
   "return unit.typeId === unitTypeId",
   "const claimed = new Set<string>()",
   "launchedTick: world.tick",
@@ -658,6 +665,23 @@ for (const forbidden of [
   if (ordersSource.includes(forbidden)) {
     error(`Plan 014-A retained obsolete behavior: ${forbidden}`);
   }
+}
+
+const sourceAiLaunchBody = ordersSource.match(/function launchSourceAiAttackForce[\s\S]*?\n}\n\nfunction sourceAiForceReady/)?.[0] ?? "";
+const launchPlanIndex = sourceAiLaunchBody.indexOf("const order = planSourceAiLaunchOrder");
+const launchApplyIndex = sourceAiLaunchBody.indexOf("plan.unit.order = plan.order;");
+const launchVerifyIndex = sourceAiLaunchBody.indexOf("if (plans.some");
+const launchRecordIndex = sourceAiLaunchBody.indexOf("state.sourceScriptLaunches =");
+const launchDetachIndex = sourceAiLaunchBody.indexOf("state.sourceScriptForces = state.sourceScriptForces.filter");
+if (!(launchPlanIndex >= 0
+  && launchPlanIndex < launchApplyIndex
+  && launchApplyIndex < launchVerifyIndex
+  && launchVerifyIndex < launchRecordIndex
+  && launchRecordIndex < launchDetachIndex)) {
+  error("Plan 014-A force launch must plan every order before applying, verify the batch, then record and detach.");
+}
+if (sourceAiLaunchBody.includes("issueAttackOrder(") || sourceAiLaunchBody.includes("issueAttackMoveOrder(")) {
+  error("Plan 014-A force launch must not mutate member orders while it is still planning feasibility.");
 }
 
 for (const fragment of [

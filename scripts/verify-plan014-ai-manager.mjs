@@ -167,6 +167,25 @@ try {
     || result?.competingCosts?.arrivalDeductionMatches !== true) {
     failures.push(`competing unpaid costs: ${JSON.stringify(result?.competingCosts)}`);
   }
+  if (result?.productionReservation?.pendingReservationType !== result?.productionReservation?.barracksTypeId
+    || !(Number(result?.productionReservation?.reservedDuringTravel?.gold ?? 0) > 0)
+    || result?.productionReservation?.spendBlockedInSameThink !== true
+    || result?.productionReservation?.spendBlockedInLaterThink !== true
+    || result?.productionReservation?.sameThinkQueues?.worker !== 0
+    || result?.productionReservation?.sameThinkQueues?.combat !== 0
+    || result?.productionReservation?.sameThinkQueues?.research !== 0
+    || result?.productionReservation?.laterThinkQueues?.worker !== 0
+    || result?.productionReservation?.laterThinkQueues?.combat !== 0
+    || result?.productionReservation?.laterThinkQueues?.research !== 0
+    || result?.productionReservation?.foundationReached !== true
+    || result?.productionReservation?.foundationCancelled !== false
+    || Object.values(result?.productionReservation?.reservedAfterArrival ?? {}).some((amount) => amount !== 0)
+    || result?.productionReservation?.spendingAllowedAfterResolution !== true
+    || !(result?.productionReservation?.afterResolutionQueues?.worker > 0)
+    || !(result?.productionReservation?.afterResolutionQueues?.combat > 0)
+    || !(result?.productionReservation?.afterResolutionQueues?.research > 0)) {
+    failures.push(`production respects unpaid build reservation: ${JSON.stringify(result?.productionReservation)}`);
+  }
   const oneHallBuild = result?.oneHall?.evidence?.buildRoles?.find((entry) => entry.role === "town-center");
   const secondBarracksBuild = result?.secondBarracks?.evidence?.buildRoles?.find((entry) => entry.role === "barracks");
   if (oneHallBuild?.desired !== 1
@@ -194,6 +213,19 @@ try {
     || forceSafety?.noPressure?.unitOrderKind !== null
     || forceSafety?.noPressure?.retryEligible !== true) {
     failures.push(`blocked orderless launch: ${JSON.stringify(forceSafety?.noPressure)}`);
+  }
+  if (forceSafety?.mixedReachability?.ready !== true
+    || forceSafety?.mixedReachability?.blockedLaunchSucceeded !== false
+    || forceSafety?.mixedReachability?.ordersUnchangedAfterFailure !== true
+    || forceSafety?.mixedReachability?.forceCountAfterFailure !== 1
+    || forceSafety?.mixedReachability?.launchCountAfterFailure !== 0
+    || forceSafety?.mixedReachability?.retrySucceeded !== true
+    || forceSafety?.mixedReachability?.retryLaunchCount !== 1
+    || forceSafety?.mixedReachability?.retryLaunchUnitIds?.length !== 2
+    || new Set(forceSafety?.mixedReachability?.retryLaunchUnitIds ?? []).size !== 2
+    || forceSafety?.mixedReachability?.activeForceCountAfterRetry !== 0
+    || !forceSafety?.mixedReachability?.retryOrderKinds?.every((kind) => kind === "attack" || kind === "attack-move")) {
+    failures.push(`atomic mixed-reachability launch: ${JSON.stringify(forceSafety?.mixedReachability)}`);
   }
   if (saveSafety.scriptIndex !== saveSafety.scriptLength
     || saveSafety.forceCount !== 1
@@ -233,7 +265,7 @@ try {
     failures.push(`bounded live AI evidence: ${JSON.stringify(liveEvidence)}`);
   }
   if (failures.length > 0) throw new Error(failures.join("\n"));
-  console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, competing unpaid costs, exact mixed force, blocked orderless launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);
+  console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, production-safe unpaid reservation, exact mixed force, atomic mixed-reachability launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

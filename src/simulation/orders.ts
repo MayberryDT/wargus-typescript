@@ -6702,29 +6702,79 @@ function setSourceAiForce(world: WorldState, playerId: number, state: WorldAiSta
   }
 }
 
+type SourceAiLaunchOrder = Extract<NonNullable<WorldUnit["order"]>, { kind: "attack" | "attack-move" }>;
+
+function planSourceAiLaunchOrder(world: WorldState, playerId: number, unit: WorldUnit): SourceAiLaunchOrder | null {
+  const target = findPrimaryEnemyTargetForUnit(world, playerId, unit);
+  if (target) {
+    if (!canIssueAttackTargetWithPath(world, unit, target)) {
+      return null;
+    }
+    const path = sourceAttackTargetPath(world, unit, target);
+    return {
+      kind: "attack",
+      targetId: target.id,
+      targetX: target.x,
+      targetY: target.y,
+      autoReturn: null,
+      path,
+      pathIndex: path.length > 1 ? 1 : 0
+    };
+  }
+  const pressurePoint = findAiPressurePointForUnit(world, playerId, unit);
+  if (!pressurePoint || !canIssueCombatMoveAt(world, unit, pressurePoint.x, pressurePoint.y)) {
+    return null;
+  }
+  const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, pressurePoint.x));
+  const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, pressurePoint.y));
+  const path = findPath(world, unit, clampedX, clampedY);
+  if (path.length === 0) {
+    return null;
+  }
+  return {
+    kind: "attack-move",
+    targetId: null,
+    targetX: path.at(-1)?.x ?? clampedX,
+    targetY: path.at(-1)?.y ?? clampedY,
+    path,
+    pathIndex: path.length > 1 ? 1 : 0
+  };
+}
+
 function launchSourceAiAttackForce(world: WorldState, playerId: number, state: WorldAiState, id: number): boolean {
   const force = state.sourceScriptForces.find((candidate) => candidate.id === id);
   if (!force || !sourceAiForceReady(world, playerId, state, id)) {
     return false;
   }
-  const unitIds = force.assignedUnitIds.filter((unitId) => {
+  const plans: Array<{
+    unit: WorldUnit;
+    order: SourceAiLaunchOrder;
+    previousOrder: WorldUnit["order"];
+    previousMoveQueue: WorldUnit["moveQueue"];
+  }> = [];
+  for (const unitId of force.assignedUnitIds) {
     const unit = findUnit(world, unitId);
     if (!unit || unit.hitPoints <= 0) {
       return false;
     }
-    const target = findPrimaryEnemyTargetForUnit(world, playerId, unit);
-    if (target) {
-      return issueAttackOrder(world, unit.id, target.id);
+    const order = planSourceAiLaunchOrder(world, playerId, unit);
+    if (!order) {
+      return false;
     }
-    const pressurePoint = findAiPressurePointForUnit(world, playerId, unit);
-    return Boolean(pressurePoint && issueAttackMoveOrder(world, unit.id, pressurePoint.x, pressurePoint.y));
-  });
-  if (unitIds.length !== force.assignedUnitIds.length || unitIds.some((unitId) => {
-    const order = findUnit(world, unitId)?.order;
-    return order?.kind !== "attack" && order?.kind !== "attack-move";
-  })) {
+    plans.push({ unit, order, previousOrder: unit.order, previousMoveQueue: unit.moveQueue });
+  }
+  for (const plan of plans) {
+    plan.unit.moveQueue = [];
+    plan.unit.order = plan.order;
+  }
+  if (plans.some((plan) => plan.unit.order !== plan.order || plan.unit.moveQueue.length !== 0)) {
+    for (const plan of plans) {
+      plan.unit.order = plan.previousOrder;
+      plan.unit.moveQueue = plan.previousMoveQueue;
+    }
     return false;
   }
+  const unitIds = plans.map((plan) => plan.unit.id);
   const launchLimit = sourceAiScriptForState(state)?.filter((instruction) => instruction.kind === "attack-force").length ?? 0;
   state.sourceScriptLaunches = [
     ...state.sourceScriptLaunches,
@@ -6968,6 +7018,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
   const army = completedUnits.filter((unit) => unit.canAttack && !isWorker(unit) && canReceiveMoveOrders(unit));
   const casters = completedUnits.filter((unit) => unit.manaEnabled && unit.canCastSpells.length > 0);
   const race = world.players.find((player) => player.id === playerId)?.race;
+  const sourceRace = race === "orc" ? "orc" : "human";
   const attackForceId = currentAiAttackForceId(state);
   const attackUnitTargets = sourceAiDifficultyUnitTargets(world, currentAiAttackUnitTargets(state, attackForceId));
 
@@ -7008,7 +7059,9 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
   const workerTarget = Math.max(1, Math.floor(state.workerTarget ?? 7));
   for (const hall of halls) {
     if (workers.length + hall.productionQueue.length < workerTarget) {
-      issueTrainWorkerOrder(world, hall.id, world.unitDefinitions);
+      const fallbackWorkerTypeId = fallbackWorkerUnitTypeForPlayer(world, playerId, race)
+        ?? (sourceRace === "human" ? "unit-peasant" : "unit-peon");
+      issueSourceAiTrainByRole(world, hall, isGoldOrWoodWorkerDefinition, fallbackWorkerTypeId);
     }
   }
 
@@ -7034,7 +7087,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
     if (!hasTownCenterTier(world, playerId, 2)) {
       const hall = halls.find((candidate) => canAiUpgradeTownCenter(world, candidate));
       if (hall) {
-        issueUpgradeTownCenterOrder(world, hall.id, world.unitDefinitions);
+        issueSourceAiUpgradeOrder(world, hall);
       }
     } else {
       issueSourceAiConstructionRequest(world, playerId, "advanced-melee", 1, race, state.buildDepots ?? true);
@@ -7044,7 +7097,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
   if (advancedProducers.length > 0 && !hasTownCenterTier(world, playerId, 3) && army.length >= (state.strategy === "air" ? 3 : 6)) {
     const hall = halls.find((candidate) => canAiUpgradeTownCenter(world, candidate));
     if (hall) {
-      issueUpgradeTownCenterOrder(world, hall.id, world.unitDefinitions);
+      issueSourceAiUpgradeOrder(world, hall);
     }
   }
 
@@ -7095,14 +7148,22 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
       continue;
     }
     const role = army.length % 3 === 2 ? "ranged" : "melee";
+    const matchesRole = (definition: WargusUnit): boolean => (
+      isOrdinaryBarracksCombatDefinition(definition)
+      && (role === "ranged" ? isRangedLandCombatDefinition(definition) : isMeleeLandCombatDefinition(definition))
+      && !isSourceConversionTarget(world, definition.id)
+    );
+    const fallbackUnitTypeId = role === "ranged"
+      ? sourceRace === "human" ? "unit-archer" : "unit-axethrower"
+      : sourceRace === "human" ? "unit-footman" : "unit-grunt";
     issueAiSourceTrainOrder(world, building, (definition) => sourceAttackUnitTrainScore(world, playerId, definition, attackUnitTargets) || aiBarracksTrainScore(definition, role))
-      || issueTrainBarracksUnitOrder(world, building.id, role, world.unitDefinitions);
+      || issueSourceAiTrainByRole(world, building, matchesRole, fallbackUnitTypeId);
   }
 
   for (const building of advancedProducers) {
     if (building.productionQueue.length === 0 && army.length >= 4) {
       issueAiSourceTrainOrder(world, building, (definition) => sourceAttackUnitTrainScore(world, playerId, definition, attackUnitTargets) || 1)
-        || issueTrainAdvancedUnitOrder(world, building.id, world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, building, isAdvancedMeleeCombatDefinition, sourceRace === "human" ? "unit-knight" : "unit-ogre");
     }
   }
 
@@ -7117,7 +7178,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
       issueNextAiResearchByRole(world, building, (upgradeId) => isCasterResearchUpgradeId(world, upgradeId), state.researchOrder);
       if (building.productionQueue.length === 0 && casters.length < 3) {
         issueAiSourceTrainOrder(world, building, (definition) => sourceAttackUnitTrainScore(world, playerId, definition, attackUnitTargets) || 1)
-          || issueTrainCasterOrder(world, building.id, world.unitDefinitions);
+          || issueSourceAiTrainByRole(world, building, isCasterDefinition, sourceRace === "human" ? "unit-mage" : "unit-death-knight");
       }
     }
   }
@@ -7149,17 +7210,22 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
     const transportTarget = Math.max(0, Math.floor(state.transportTarget ?? 0));
     if (tankers.length < tankerTarget && findNearestOilPatch(world, shipyard)) {
       issueAiSourceTrainOrder(world, shipyard, (definition) => isOilTankerDefinition(definition) ? 100 : 0)
-        || issueTrainNavalUnitOrder(world, shipyard.id, "tanker", world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, shipyard, isOilTankerDefinition, navalUnitForRole("tanker", race));
     } else if (transports.length < transportTarget) {
       issueAiSourceTrainOrder(world, shipyard, (definition) => isNavalRoleDefinition(definition, "transport") ? 100 : 0)
-        || issueTrainNavalUnitOrder(world, shipyard.id, "transport", world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, shipyard, (definition) => isNavalRoleDefinition(definition, "transport"), navalUnitForRole("transport", race));
     } else if (army.length >= (state.strategy === "sea" ? 2 : 6)) {
       const desiredRole = navalArmy.length % (state.strategy === "sea" ? 3 : 4) === 2 ? "warship" : "destroyer";
       const issued = issueAiSourceTrainOrder(world, shipyard, (definition) => sourceAttackUnitTrainScore(world, playerId, definition, attackUnitTargets) || aiNavalTrainScore(definition, desiredRole))
-        || issueTrainNavalUnitOrder(world, shipyard.id, desiredRole, world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, shipyard, (definition) => isNavalRoleDefinition(definition, desiredRole), navalUnitForRole(desiredRole, race));
       if (!issued && desiredRole === "warship") {
         issueAiSourceTrainOrder(world, shipyard, (definition) => definition.canAttack && definition.seaUnit ? 50 : 0)
-          || issueTrainNavalUnitOrder(world, shipyard.id, race === "human" ? "submarine" : "destroyer", world.unitDefinitions);
+          || issueSourceAiTrainByRole(
+            world,
+            shipyard,
+            (definition) => isNavalRoleDefinition(definition, sourceRace === "human" ? "submarine" : "destroyer"),
+            navalUnitForRole(sourceRace === "human" ? "submarine" : "destroyer", race)
+          );
       }
     }
   }
@@ -7173,7 +7239,7 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
   for (const building of airProducers) {
     if (!building.construction && building.productionQueue.length === 0 && army.length >= (state.strategy === "air" ? 3 : 6)) {
       issueAiSourceTrainOrder(world, building, (definition) => sourceAttackUnitTrainScore(world, playerId, definition, attackUnitTargets) || 1)
-        || issueTrainAirUnitOrder(world, building.id, world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, building, isAirCombatDefinition, sourceRace === "human" ? "unit-gryphon-rider" : "unit-dragon");
     }
   }
 
@@ -7185,13 +7251,13 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
     const sourceScore = (definition: WargusUnit): number => sourceAttackUnitTrainScore(world, playerId, definition, attackUnitTargets);
     if (count % 5 === 4) {
       issueAiSourceTrainOrder(world, building, (definition) => sourceScore(definition) || (definition.airUnit && !definition.canAttack ? 100 : 0))
-        || issueTrainScoutAirOrder(world, building.id, world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, building, isScoutAirDefinition, sourceRace === "human" ? "unit-balloon" : "unit-zeppelin");
     } else if (count % 3 === 2) {
       issueAiSourceTrainOrder(world, building, (definition) => sourceScore(definition) || (definition.volatile || definition.clicksToExplode ? 100 : 0))
-        || issueTrainDemolitionOrder(world, building.id, world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, building, isDemolitionUnitDefinition, sourceRace === "human" ? "unit-dwarves" : "unit-goblin-sappers");
     } else {
       issueAiSourceTrainOrder(world, building, (definition) => sourceScore(definition) || (definition.groundAttack || Math.max(0, definition.minAttackRange ?? 0) > 0 ? 100 : 0))
-        || issueTrainSiegeUnitOrder(world, building.id, world.unitDefinitions);
+        || issueSourceAiTrainByRole(world, building, isSiegeDefinition, sourceRace === "human" ? "unit-ballista" : "unit-catapult");
     }
   }
 
@@ -7408,23 +7474,32 @@ function sourceAiBuilderAvailable(unit: WorldUnit): boolean {
   return unit.order.kind === "harvest" && unit.order.phase === "to-resource";
 }
 
-function sourceAiCanAffordBuildNeed(world: WorldState, playerId: number, role: string, race: string | null | undefined): boolean {
+function sourceAiAvailableResources(world: WorldState, playerId: number): Record<string, number> {
   const player = world.players.find((candidate) => candidate.id === playerId);
-  const need = sourceAiBuildNeedForRole(world, playerId, role, race);
-  if (!player || !need) {
-    return false;
-  }
-  const definition = world.unitDefinitions.find((candidate) => need.matches(candidate))
-    ?? world.unitDefinitions.find((candidate) => candidate.id === need.fallback);
-  if (!definition) {
-    return false;
+  if (!player) {
+    return {};
   }
   const available = { ...player.resources };
   const reserved = sourceAiReservedBuildResources(world, playerId);
   for (const [resource, amount] of Object.entries(reserved)) {
     available[resource] = (available[resource] ?? 0) - amount;
   }
-  return canAfford(available, definition.costs);
+  return available;
+}
+
+function sourceAiCanAfford(world: WorldState, playerId: number, costs: string[]): boolean {
+  return world.players.some((candidate) => candidate.id === playerId)
+    && canAfford(sourceAiAvailableResources(world, playerId), costs);
+}
+
+function sourceAiCanAffordBuildNeed(world: WorldState, playerId: number, role: string, race: string | null | undefined): boolean {
+  const need = sourceAiBuildNeedForRole(world, playerId, role, race);
+  if (!need) {
+    return false;
+  }
+  const definition = world.unitDefinitions.find((candidate) => need.matches(candidate))
+    ?? world.unitDefinitions.find((candidate) => candidate.id === need.fallback);
+  return Boolean(definition && sourceAiCanAfford(world, playerId, definition.costs));
 }
 
 function sourceAiReservedBuildResources(world: WorldState, playerId: number): Record<string, number> {
@@ -7452,6 +7527,19 @@ function isSourceAiDepotRole(role: string): boolean {
   return role === "refinery";
 }
 
+function issueSourceAiUpgradeOrder(world: WorldState, building: WorldUnit, role: "guard" | "cannon" | null = null): boolean {
+  if (building.construction || building.productionQueue.length > 0 || (role === null && !isTownCenter(building))) {
+    return false;
+  }
+  const upgradeTypeId = role === null
+    ? sourceUpgradeTargetForBuilding(world, building) ?? (hasSourceUpgradeButtonsForBuilding(world, building) ? null : nextTownCenterTypeId(building.typeId))
+    : sourceUpgradeTargetForBuilding(world, building, role);
+  if (!upgradeTypeId || !canSourceUpgradeToType(world, building, upgradeTypeId)) {
+    return false;
+  }
+  return issueSourceAiTrainUnitOrder(world, building, upgradeTypeId);
+}
+
 function issueSourceAiUpgradeNeed(world: WorldState, playerId: number, role: string): boolean {
   const buildings = world.units.filter((unit) => unit.player === playerId && isSourceAiBuilding(unit) && unit.hitPoints > 0 && !unit.construction);
   if (role === "town-center-tier2" || role === "town-center-tier3") {
@@ -7460,11 +7548,11 @@ function issueSourceAiUpgradeNeed(world: WorldState, playerId: number, role: str
       .filter(isTownCenter)
       .filter((candidate) => townCenterTier(world, candidate.typeId, playerId) < targetTier)
       .sort((left, right) => townCenterTier(world, right.typeId, playerId) - townCenterTier(world, left.typeId, playerId))[0];
-    return hall ? issueUpgradeTownCenterOrder(world, hall.id, world.unitDefinitions) : false;
+    return hall ? issueSourceAiUpgradeOrder(world, hall) : false;
   }
   if (role === "guard-tower" || role === "cannon-tower") {
     const tower = buildings.find((candidate) => isWatchTower(world, candidate));
-    return tower ? issueUpgradeTowerOrder(world, tower.id, role === "cannon-tower" ? "cannon" : "guard", world.unitDefinitions) : false;
+    return tower ? issueSourceAiUpgradeOrder(world, tower, role === "cannon-tower" ? "cannon" : "guard") : false;
   }
   return false;
 }
@@ -7702,6 +7790,29 @@ function sourceAiBuildDefinitionMatchesRole(world: WorldState, definition: Wargu
   }
 }
 
+function issueSourceAiTrainUnitOrder(world: WorldState, building: WorldUnit, unitTypeId: string): boolean {
+  const definition = world.unitDefinitions.find((candidate) => candidate.id === unitTypeId);
+  return Boolean(
+    definition
+    && sourceAiCanAfford(world, building.player, definition.costs)
+    && issueTrainUnitOrder(world, building.id, unitTypeId, world.unitDefinitions)
+  );
+}
+
+function issueSourceAiTrainByRole(world: WorldState, building: WorldUnit, matchesRole: (definition: WargusUnit) => boolean, fallbackUnitTypeId: string): boolean {
+  const sourceCandidate = sourceTrainCandidatesForBuilding(world, building)
+    .filter((entry) => matchesRole(entry.definition))
+    .sort((left, right) => left.button.level - right.button.level || left.button.pos - right.button.pos || left.definition.id.localeCompare(right.definition.id))[0];
+  if (sourceCandidate) {
+    return issueSourceAiTrainUnitOrder(world, building, sourceCandidate.definition.id);
+  }
+  if (hasSourceTrainButtonsForUnit(world, building)) {
+    return false;
+  }
+  const unitTypeId = firstTrainableUnitTypeByRole(world, building, world.unitDefinitions, matchesRole) ?? fallbackUnitTypeId;
+  return issueSourceAiTrainUnitOrder(world, building, unitTypeId);
+}
+
 function issueAiSourceTrainOrder(world: WorldState, building: WorldUnit, score: (definition: WargusUnit, button: WargusButton) => number = () => 1): boolean {
   const candidates = sourceTrainCandidatesForBuilding(world, building)
     .map((entry) => {
@@ -7714,7 +7825,7 @@ function issueAiSourceTrainOrder(world: WorldState, building: WorldUnit, score: 
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score || left.button.level - right.button.level || left.button.pos - right.button.pos || left.definition.id.localeCompare(right.definition.id));
   for (const candidate of candidates) {
-    if (issueTrainUnitOrder(world, building.id, candidate.definition.id, world.unitDefinitions)) {
+    if (issueSourceAiTrainUnitOrder(world, building, candidate.definition.id)) {
       return true;
     }
   }
@@ -8671,7 +8782,7 @@ function issueNextAiResearch(world: WorldState, building: WorldUnit, upgradeIds:
 function issueAiResearchOrder(world: WorldState, building: WorldUnit, upgradeId: string, upgrades: WargusUpgrade[]): boolean {
   const player = world.players.find((candidate) => candidate.id === building.player);
   const upgrade = upgrades.find((candidate) => candidate.id === upgradeId);
-  if (!player || !upgrade || !canAiResearchUpgradeAt(world, building, upgradeId, upgrades)) {
+  if (!player || !upgrade || !sourceAiCanAfford(world, building.player, upgradeCostPairs(upgrade)) || !canAiResearchUpgradeAt(world, building, upgradeId, upgrades)) {
     return false;
   }
   spendResources(player.resources, upgradeCostPairs(upgrade));
@@ -19215,7 +19326,8 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   const townCenterTypeId = race === "orc" ? "unit-great-hall" : "unit-town-hall";
   const barracksTypeId = race === "orc" ? "unit-orc-barracks" : "unit-human-barracks";
   const supplyTypeId = race === "orc" ? "unit-pig-farm" : "unit-farm";
-  const requiredTypeIds = [workerTypeId, townCenterTypeId, barracksTypeId, supplyTypeId];
+  const blacksmithTypeId = race === "orc" ? "unit-orc-blacksmith" : "unit-human-blacksmith";
+  const requiredTypeIds = [workerTypeId, townCenterTypeId, barracksTypeId, supplyTypeId, blacksmithTypeId];
   if (requiredTypeIds.some((typeId) => !sourceWorld.unitDefinitions.some((definition) => definition.id === typeId))) {
     return { ok: false, error: `missing fixture definitions: ${requiredTypeIds.join(", ")}` };
   }
@@ -19331,6 +19443,70 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     (competingFixture.player.resources[resource] ?? 0)
       === (competingResourcesBefore[resource] ?? 0) - costValue(townCenterDefinition.costs, resource)
   ));
+
+  const productionReservationFixture = fixture(["town-center", "barracks", "barracks", "blacksmith"]);
+  productionReservationFixture.state.workerTarget = 2;
+  const reservationHall = unit(productionReservationFixture.world, townCenterTypeId, "__plan014-reservation-hall", 3, 3);
+  const reservationBarracks = unit(productionReservationFixture.world, barracksTypeId, "__plan014-reservation-barracks", 10, 3);
+  const reservationBlacksmith = unit(productionReservationFixture.world, blacksmithTypeId, "__plan014-reservation-blacksmith", 17, 3);
+  const reservationSupplyA = unit(productionReservationFixture.world, supplyTypeId, "__plan014-reservation-supply-a", 3, 10);
+  const reservationSupplyB = unit(productionReservationFixture.world, supplyTypeId, "__plan014-reservation-supply-b", 9, 10);
+  const reservationBuilder = unit(productionReservationFixture.world, workerTypeId, "__plan014-reservation-builder", 16, 15);
+  travelToResource(reservationBuilder);
+  productionReservationFixture.world.units = [
+    reservationHall,
+    reservationBarracks,
+    reservationBlacksmith,
+    reservationSupplyA,
+    reservationSupplyB,
+    reservationBuilder
+  ];
+  for (const resource of ["gold", "wood", "oil"]) {
+    productionReservationFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource);
+  }
+  runLandAttackAi(productionReservationFixture.world, productionReservationFixture.state.player, productionReservationFixture.state);
+  const sameThinkQueues = {
+    worker: reservationHall.productionQueue.length,
+    combat: reservationBarracks.productionQueue.length,
+    research: productionReservationFixture.world.activeResearch.filter((entry) => entry.buildingId === reservationBlacksmith.id).length
+  };
+  const pendingReservationType = reservationBuilder.order?.kind === "build" && reservationBuilder.order.phase === "to-site"
+    ? reservationBuilder.order.buildingTypeId
+    : null;
+  const reservedDuringTravel = sourceAiReservedBuildResources(productionReservationFixture.world, productionReservationFixture.state.player);
+  productionReservationFixture.world.tick += productionReservationFixture.world.tickRate;
+  runLandAttackAi(productionReservationFixture.world, productionReservationFixture.state.player, productionReservationFixture.state);
+  const laterThinkQueues = {
+    worker: reservationHall.productionQueue.length,
+    combat: reservationBarracks.productionQueue.length,
+    research: productionReservationFixture.world.activeResearch.filter((entry) => entry.buildingId === reservationBlacksmith.id).length
+  };
+  let productionReservationArrivalTicks = 0;
+  while (reservationBuilder.order?.kind === "build" && reservationBuilder.order.phase === "to-site" && productionReservationArrivalTicks < 1800) {
+    productionReservationFixture.world.tick += 1;
+    stepBuildOrder(productionReservationFixture.world, reservationBuilder, 1 / productionReservationFixture.world.tickRate);
+    productionReservationArrivalTicks += 1;
+  }
+  const reservationFoundation = productionReservationFixture.world.units.find((candidate) => (
+    candidate.player === productionReservationFixture.state.player
+    && candidate.id !== reservationBarracks.id
+    && candidate.typeId === barracksTypeId
+    && Boolean(candidate.construction)
+  ));
+  const reservedAfterArrival = sourceAiReservedBuildResources(productionReservationFixture.world, productionReservationFixture.state.player);
+  productionReservationFixture.player.resources = {
+    ...productionReservationFixture.player.resources,
+    gold: 10000,
+    wood: 10000,
+    oil: 10000
+  };
+  productionReservationFixture.world.tick += productionReservationFixture.world.tickRate;
+  runLandAttackAi(productionReservationFixture.world, productionReservationFixture.state.player, productionReservationFixture.state);
+  const afterResolutionQueues = {
+    worker: reservationHall.productionQueue.length,
+    combat: reservationBarracks.productionQueue.length,
+    research: productionReservationFixture.world.activeResearch.filter((entry) => entry.buildingId === reservationBlacksmith.id).length
+  };
   const oneHall = {
     openingWorkerCount: 1,
     beforeOrder: oneHallBeforeOrder,
@@ -19357,6 +19533,21 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     arrivalDeductionMatches,
     arrivalTicks
   };
+  const productionReservation = {
+    barracksTypeId,
+    pendingReservationType,
+    reservedDuringTravel,
+    sameThinkQueues,
+    laterThinkQueues,
+    spendBlockedInSameThink: Object.values(sameThinkQueues).every((count) => count === 0),
+    spendBlockedInLaterThink: Object.values(laterThinkQueues).every((count) => count === 0),
+    foundationReached: Boolean(reservationFoundation),
+    foundationCancelled: !reservationFoundation,
+    reservedAfterArrival,
+    spendingAllowedAfterResolution: Object.values(afterResolutionQueues).every((count) => count > 0),
+    afterResolutionQueues,
+    arrivalTicks: productionReservationArrivalTicks
+  };
   return {
     ok: oneHall.openingWorkerCount === 1
       && oneHall.beforeOrder === "harvest:to-resource"
@@ -19374,10 +19565,20 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
       && !competingCosts.resourcesChangedBeforeArrival
       && competingCosts.foundationReached
       && !competingCosts.foundationCancelled
-      && competingCosts.arrivalDeductionMatches,
+      && competingCosts.arrivalDeductionMatches
+      && productionReservation.pendingReservationType === barracksTypeId
+      && (productionReservation.reservedDuringTravel.gold ?? 0) === costValue(barracksDefinition.costs, "gold")
+      && (productionReservation.reservedDuringTravel.wood ?? 0) === costValue(barracksDefinition.costs, "wood")
+      && productionReservation.spendBlockedInSameThink
+      && productionReservation.spendBlockedInLaterThink
+      && productionReservation.foundationReached
+      && !productionReservation.foundationCancelled
+      && Object.values(productionReservation.reservedAfterArrival).every((amount) => amount === 0)
+      && productionReservation.spendingAllowedAfterResolution,
     oneHall,
     secondBarracks,
-    competingCosts
+    competingCosts,
+    productionReservation
   };
 }
 
@@ -19446,6 +19647,45 @@ export function runPlan014AiForceSafetyFixture(sourceWorld: WorldState): Record<
     unitOrderKind: noPressureUnit.order?.kind ?? null,
     retryEligible
   };
+
+  const mixedReachabilityFixture = fixture();
+  const orderableUnit = unit(mixedReachabilityFixture.world, soldierTypeId, "__plan014-atomic-a-orderable", 4, 4);
+  const blockedUnit = unit(mixedReachabilityFixture.world, soldierTypeId, "__plan014-atomic-b-blocked", 16, 12);
+  const enemyUnit = unit(mixedReachabilityFixture.world, soldierTypeId, "__plan014-atomic-enemy", 7, 4);
+  enemyUnit.player = mixedReachabilityFixture.world.players.find((player) => player.id !== mixedReachabilityFixture.state.player && player.id !== 15)?.id ?? 0;
+  mixedReachabilityFixture.world.units = [orderableUnit, blockedUnit, enemyUnit];
+  updateVisibility(mixedReachabilityFixture.world);
+  issueHoldPositionOrder(mixedReachabilityFixture.world, orderableUnit.id);
+  issueHoldPositionOrder(mixedReachabilityFixture.world, blockedUnit.id);
+  setSourceAiForce(mixedReachabilityFixture.world, mixedReachabilityFixture.state.player, mixedReachabilityFixture.state, 1, true, [{ role: "soldier", count: 2 }]);
+  const mixedReachabilityReady = sourceAiForceReady(mixedReachabilityFixture.world, mixedReachabilityFixture.state.player, mixedReachabilityFixture.state, 1);
+  const blockedSpeed = blockedUnit.speed;
+  const blockedCanAttack = blockedUnit.canAttack;
+  blockedUnit.speed = 0;
+  blockedUnit.canAttack = false;
+  const preFailureOrders = [orderableUnit, blockedUnit].map((candidate) => JSON.stringify({ order: candidate.order, moveQueue: candidate.moveQueue }));
+  const blockedLaunchSucceeded = launchSourceAiAttackForce(mixedReachabilityFixture.world, mixedReachabilityFixture.state.player, mixedReachabilityFixture.state, 1);
+  const postFailureOrders = [orderableUnit, blockedUnit].map((candidate) => JSON.stringify({ order: candidate.order, moveQueue: candidate.moveQueue }));
+  const forceCountAfterFailure = mixedReachabilityFixture.state.sourceScriptForces.length;
+  const launchCountAfterFailure = mixedReachabilityFixture.state.sourceScriptLaunches.length;
+  blockedUnit.speed = blockedSpeed;
+  blockedUnit.canAttack = blockedCanAttack;
+  const retrySucceeded = launchSourceAiAttackForce(mixedReachabilityFixture.world, mixedReachabilityFixture.state.player, mixedReachabilityFixture.state, 1);
+  const retryLaunch = mixedReachabilityFixture.state.sourceScriptLaunches[0];
+  const mixedReachability = {
+    ready: mixedReachabilityReady,
+    blockedLaunchSucceeded,
+    ordersUnchangedAfterFailure: JSON.stringify(preFailureOrders) === JSON.stringify(postFailureOrders),
+    preFailureOrders,
+    postFailureOrders,
+    forceCountAfterFailure,
+    launchCountAfterFailure,
+    retrySucceeded,
+    retryLaunchCount: mixedReachabilityFixture.state.sourceScriptLaunches.length,
+    retryLaunchUnitIds: retryLaunch?.unitIds ?? [],
+    activeForceCountAfterRetry: mixedReachabilityFixture.state.sourceScriptForces.length,
+    retryOrderKinds: [orderableUnit.order?.kind ?? null, blockedUnit.order?.kind ?? null]
+  };
   return {
     ok: !mixed.readyWithoutMage
       && mixed.readyWithMage
@@ -19458,9 +19698,21 @@ export function runPlan014AiForceSafetyFixture(sourceWorld: WorldState): Record<
       && noPressure.launchCount === 0
       && noPressure.activeForceCount === 1
       && noPressure.unitOrderKind === null
-      && noPressure.retryEligible,
+      && noPressure.retryEligible
+      && mixedReachability.ready
+      && !mixedReachability.blockedLaunchSucceeded
+      && mixedReachability.ordersUnchangedAfterFailure
+      && mixedReachability.forceCountAfterFailure === 1
+      && mixedReachability.launchCountAfterFailure === 0
+      && mixedReachability.retrySucceeded
+      && mixedReachability.retryLaunchCount === 1
+      && mixedReachability.retryLaunchUnitIds.length === 2
+      && new Set(mixedReachability.retryLaunchUnitIds).size === 2
+      && mixedReachability.activeForceCountAfterRetry === 0
+      && mixedReachability.retryOrderKinds.every((kind) => kind === "attack" || kind === "attack-move"),
     mixed,
-    noPressure
+    noPressure,
+    mixedReachability
   };
 }
 
