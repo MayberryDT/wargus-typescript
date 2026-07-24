@@ -2234,8 +2234,22 @@ export function issueRallyPointOrder(world: WorldState, producerId: string, x: n
 export function issueHarvestOrder(world: WorldState, unitId: string, targetId: string): boolean {
   const unit = findUnit(world, unitId);
   const target = findUnit(world, targetId);
-  const dropoff = unit ? findNearestDropoff(world, unit, "gold") : undefined;
-  if (!unit || !target || !dropoff || !canGatherResource(unit, "gold") || !isGoldMine(target) || !isVisibleResourceSource(world, target, unit.player)) {
+  if (!unit || !target) {
+    return false;
+  }
+  return issueGoldHarvestOrder(world, unit, target, false);
+}
+
+function issueKnownGoldHarvestOrder(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
+  return issueGoldHarvestOrder(world, unit, target, true);
+}
+
+function issueGoldHarvestOrder(world: WorldState, unit: WorldUnit, target: WorldUnit, usePersistentKnowledge: boolean): boolean {
+  const dropoff = findNearestDropoff(world, unit, "gold");
+  const targetKnown = usePersistentKnowledge
+    ? isKnownResourceSource(world, target, unit.player)
+    : isVisibleResourceSource(world, target, unit.player);
+  if (!dropoff || !canGatherResource(unit, "gold") || !isGoldMine(target) || !targetKnown) {
     return false;
   }
 
@@ -2247,7 +2261,7 @@ export function issueHarvestOrder(world: WorldState, unitId: string, targetId: s
   unit.moveQueue = [];
   unit.order = {
     kind: "harvest",
-    targetId,
+    targetId: target.id,
     resource: "gold",
       phase: "to-resource",
       targetX: target.x,
@@ -10509,7 +10523,7 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     unit.order.returnSeconds = 0;
     if (unit.order.resource === "gold" && world.aiStates.some((state) => state.enabled && state.player === unit.player)) {
       const mine = findNearestKnownReachableGoldMineAroundDepot(world, unit, latestDropoff);
-      if (mine && issueHarvestOrder(world, unit.id, mine.id)) {
+      if (mine && issueKnownGoldHarvestOrder(world, unit, mine)) {
         return;
       }
     }
@@ -11527,7 +11541,7 @@ function findNearestKnownReachableGoldMineAroundDepot(
   const maxDistanceSquared = maxDistancePixels ** 2;
   return world.units
     .filter((candidate) => isResourceSource(candidate, "gold")
-      && isVisibleResourceSource(world, candidate, unit.player)
+      && isKnownResourceSource(world, candidate, unit.player)
       && distanceSquared(depot, candidate) <= maxDistanceSquared)
     .sort((left, right) => distanceSquared(depot, left) - distanceSquared(depot, right) || left.id.localeCompare(right.id))
     .find((candidate) => isInResourceSourceRange(world, unit, candidate)
@@ -11725,6 +11739,33 @@ function isLiveResourceSource(unit: WorldUnit): boolean {
 
 function isVisibleResourceSource(world: WorldState, unit: WorldUnit, playerId: number): boolean {
   return isLiveResourceSource(unit) && isUnitVisibleToPlayer(world, unit, playerId);
+}
+
+function isKnownResourceSource(world: WorldState, unit: WorldUnit, playerId: number): boolean {
+  if (!isLiveResourceSource(unit)) {
+    return false;
+  }
+  if (!world.engineSettings.fogOfWarEnabled) {
+    return true;
+  }
+  if (!unit.visibleUnderFog) {
+    return false;
+  }
+  const exploredTiles = sourceExploredTilesForPlayer(world, playerId);
+  const { halfWidth, halfHeight } = unitFootprintHalfSize(unit, world.tileSize);
+  const left = Math.floor((unit.x - halfWidth) / world.tileSize);
+  const right = Math.floor((unit.x + halfWidth - 1) / world.tileSize);
+  const top = Math.floor((unit.y - halfHeight) / world.tileSize);
+  const bottom = Math.floor((unit.y + halfHeight - 1) / world.tileSize);
+  for (let tileY = top; tileY <= bottom; tileY += 1) {
+    for (let tileX = left; tileX <= right; tileX += 1) {
+      if (tileX >= 0 && tileY >= 0 && tileX < world.map.width && tileY < world.map.height
+        && exploredTiles[tileY * world.map.width + tileX] !== 0) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function isOilRefinery(unit: WorldUnit): boolean {
