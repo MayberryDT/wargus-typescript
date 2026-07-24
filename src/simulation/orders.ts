@@ -12,6 +12,7 @@ export { findNextIdleWorker, isGoldOrWoodWorkerUnit, isIdleWorkerForPlayer } fro
 
 const MISSILE_SPEED_TO_PIXELS_PER_SECOND = 16;
 const FALLBACK_RAISED_SKELETON_LIFETIME_SECONDS = 40;
+const SOURCE_AI_RESOURCE_SEARCH_RANGE_TILES = 15;
 
 export type PendingWorldCommandName = "move" | "attack-move" | "attack-ground" | "patrol" | "follow" | "repair" | "harvest" | "unload-transport" | "build-oil-platform";
 export type PendingWorldCommand = PendingWorldCommandName | { kind: "build"; buildingTypeId: string } | { kind: "spell"; command: TargetedSpellCommand };
@@ -8527,6 +8528,31 @@ function isSourceResearchStarted(world: WorldState, playerId: number, upgradeId:
     || world.queuedResearch.some((research) => research.player === playerId && research.upgradeId === upgradeId);
 }
 
+type SourceAiResourceScoutFocus = { x: number; y: number; rangeTiles: number };
+
+function findSourceAiResourceScoutFocus(world: WorldState, playerId: number): SourceAiResourceScoutFocus | null {
+  const thresholdPixels = SOURCE_AI_RESOURCE_SEARCH_RANGE_TILES * world.tileSize;
+  const workers = world.units
+    .filter((unit) => unit.player === playerId && unit.hitPoints > 0 && unit.order?.kind === "harvest" && unit.order.resource === "gold")
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const worker of workers) {
+    if (worker.order?.kind !== "harvest" || !worker.order.targetId || !worker.order.dropoffId) {
+      continue;
+    }
+    const resource = findUnit(world, worker.order.targetId);
+    const depot = findUnit(world, worker.order.dropoffId);
+    if (!resource || !depot
+      || !isVisibleResourceSource(world, resource, playerId)
+      || !canDropOffResourceAt(world, worker, depot, "gold")
+      || distanceSquared(resource, depot) <= thresholdPixels ** 2
+      || findNearestKnownReachableGoldMineAroundDepot(world, worker, depot, thresholdPixels)) {
+      continue;
+    }
+    return { x: depot.x, y: depot.y, rangeTiles: SOURCE_AI_RESOURCE_SEARCH_RANGE_TILES };
+  }
+  return null;
+}
+
 function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUnit[]): void {
   if (!world.engineSettings.aiExploresDefault) {
     return;
@@ -8538,6 +8564,7 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
   if (world.units.some((unit) => unit.player === playerId && unit.hitPoints > 0 && unit.order?.kind === "explore")) {
     return;
   }
+  const resourceFocus = findSourceAiResourceScoutFocus(world, playerId);
   for (const scout of [...scouts].sort((left, right) => left.id.localeCompare(right.id))) {
     if (scout.order && scout.order.kind !== "move") {
       continue;
@@ -8547,7 +8574,8 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
     if (scout.order && !nearDestination) {
       return;
     }
-    const target = findAiPressurePointForUnit(world, playerId, scout) ?? fallbackAiScoutPoint(world, scout);
+    const focusedPath = resourceFocus ? findSourceAiScoutExplorationPath(world, scout, resourceFocus) : null;
+    const target = focusedPath?.path.at(-1) ?? findAiPressurePointForUnit(world, playerId, scout) ?? fallbackAiScoutPoint(world, scout);
     if (target) {
       issueMoveOrder(world, scout.id, target.x, target.y);
       if (scout.order?.kind === "move") {
@@ -8570,7 +8598,7 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
   const scout = safeLandUnits.find((unit) => unit.canAttack && !isWorker(unit) && !unit.order)
     ?? safeLandUnits.find((unit) => isWorker(unit) && !unit.order && unit.resourcesHeld === 0 && !findNearestAiRepairTarget(world, unit))
     ?? safeLandUnits.find((unit) => isWorker(unit) && unit.order?.kind === "harvest" && unit.resourcesHeld === 0);
-  if (scout && sourceExploredTilesForPlayer(world, playerId).includes(0) && issueSourceAiScoutExploreOrder(world, scout)) {
+  if (scout && sourceExploredTilesForPlayer(world, playerId).includes(0) && issueSourceAiScoutExploreOrder(world, scout, resourceFocus)) {
     state.nextScoutTick = world.tick + sourceOrderRetryTicks(world, 5 * 30);
   }
 }
@@ -9626,8 +9654,8 @@ export function issueExploreOrder(world: WorldState, unitId: string, options: { 
   return issueExploreOrderForUnit(world, unit, options.clearQueue !== false, false);
 }
 
-function issueSourceAiScoutExploreOrder(world: WorldState, unit: WorldUnit): boolean {
-  return issueExploreOrderForUnit(world, unit, true, true, findSourceAiScoutExplorationPath(world, unit));
+function issueSourceAiScoutExploreOrder(world: WorldState, unit: WorldUnit, focus: SourceAiResourceScoutFocus | null = null): boolean {
+  return issueExploreOrderForUnit(world, unit, true, true, findSourceAiScoutExplorationPath(world, unit, focus));
 }
 
 function issueExploreOrderForUnit(
@@ -9663,7 +9691,17 @@ function issueExploreOrderForUnit(
   return true;
 }
 
-function findSourceAiScoutExplorationPath(world: WorldState, unit: WorldUnit): { target: { x: number; y: number }; path: Array<{ x: number; y: number }> } | null {
+function findSourceAiScoutExplorationPath(
+  world: WorldState,
+  unit: WorldUnit,
+  focus: SourceAiResourceScoutFocus | null = null
+): { target: { x: number; y: number }; path: Array<{ x: number; y: number }> } | null {
+  if (focus) {
+    const focusedPath = findSourceAiFocusedExplorationPath(world, unit, focus);
+    if (focusedPath) {
+      return focusedPath;
+    }
+  }
   const exploredTiles = sourceExploredTilesForPlayer(world, unit.player);
   const origin = worldToTile(world, unit.x, unit.y);
   const maxRadius = Math.max(world.map.width, world.map.height);
@@ -9677,6 +9715,31 @@ function findSourceAiScoutExplorationPath(world: WorldState, unit: WorldUnit): {
           continue;
         }
         const target = { x: x * world.tileSize + world.tileSize / 2, y: y * world.tileSize + world.tileSize / 2 };
+        const path = findPath(world, unit, target.x, target.y);
+        return path.length > 0 ? { target, path } : null;
+      }
+    }
+  }
+  return null;
+}
+
+function findSourceAiFocusedExplorationPath(
+  world: WorldState,
+  unit: WorldUnit,
+  focus: SourceAiResourceScoutFocus
+): { target: { x: number; y: number }; path: Array<{ x: number; y: number }> } | null {
+  const exploredTiles = sourceExploredTilesForPlayer(world, unit.player);
+  const origin = worldToTile(world, focus.x, focus.y);
+  for (let radius = 1; radius <= focus.rangeTiles; radius += 1) {
+    for (let y = origin.y - radius; y <= origin.y + radius; y += 1) {
+      for (let x = origin.x - radius; x <= origin.x + radius; x += 1) {
+        if (Math.max(Math.abs(x - origin.x), Math.abs(y - origin.y)) !== radius
+          || x < 1 || y < 1 || x >= world.map.width - 1 || y >= world.map.height - 1
+          || exploredTiles[y * world.map.width + x] !== 0
+          || !isTilePassable(world, x, y, movementKindForUnit(unit), unit.id)) {
+          continue;
+        }
+        const target = tileToWorldCenter(world, x, y);
         const path = findPath(world, unit, target.x, target.y);
         return path.length > 0 ? { target, path } : null;
       }
@@ -10444,6 +10507,12 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
       return;
     }
     unit.order.returnSeconds = 0;
+    if (unit.order.resource === "gold" && world.aiStates.some((state) => state.enabled && state.player === unit.player)) {
+      const mine = findNearestKnownReachableGoldMineAroundDepot(world, unit, latestDropoff);
+      if (mine && issueHarvestOrder(world, unit.id, mine.id)) {
+        return;
+      }
+    }
     if ((target?.resourcesHeld ?? 1) <= 0 || !hasHarvestableTarget(world, unit)) {
       retargetHarvestAfterDelivery(world, unit, unit.order.resource);
       return;
@@ -11447,6 +11516,22 @@ function findNearestGoldMine(world: WorldState, unit: WorldUnit): WorldUnit | un
   return world.units
     .filter((candidate) => isResourceSource(candidate, "gold") && isVisibleResourceSource(world, candidate, unit.player))
     .sort((a, b) => distanceSquared(unit, a) - distanceSquared(unit, b))[0];
+}
+
+function findNearestKnownReachableGoldMineAroundDepot(
+  world: WorldState,
+  unit: WorldUnit,
+  depot: WorldUnit,
+  maxDistancePixels = Number.POSITIVE_INFINITY
+): WorldUnit | undefined {
+  const maxDistanceSquared = maxDistancePixels ** 2;
+  return world.units
+    .filter((candidate) => isResourceSource(candidate, "gold")
+      && isVisibleResourceSource(world, candidate, unit.player)
+      && distanceSquared(depot, candidate) <= maxDistanceSquared)
+    .sort((left, right) => distanceSquared(depot, left) - distanceSquared(depot, right) || left.id.localeCompare(right.id))
+    .find((candidate) => isInResourceSourceRange(world, unit, candidate)
+      || sourceUnitInteractionPath(world, unit, candidate, sourceResourceSourceRange(world, unit)).length > 0);
 }
 
 function hasOilOnMap(world: WorldState): boolean {
@@ -19637,6 +19722,180 @@ export function runPlan014AiScoutEligibilityFixture(sourceWorld: WorldState): Re
     priority: { militaryScoutId, idleWorkerScoutId, flyerOrderKind: flyer?.order?.kind ?? null, flyerLandScoutIds, flyerPriority },
     completion: { clearedOrder: completionClearedOrder, economyOrderKind: completionEconomyOrder },
     human: { exploreAccepted: humanExploreAccepted, orderKind: humanWorker.order?.kind ?? null }
+  };
+  Object.defineProperty(result, "saveWorld", { value: noDuplicateWorld, enumerable: false });
+  return result;
+}
+
+export function runPlan014AiDepotMiningFixture(sourceWorld: WorldState): Record<string, unknown> {
+  const sourceState = sourceWorld.aiStates.find((state) => state.enabled);
+  if (!sourceState) return { ok: false, error: "missing enabled AI state" };
+  const race = sourceWorld.players.find((player) => player.id === sourceState.player)?.race === "orc" ? "orc" : "human";
+  const workerTypeId = race === "orc" ? "unit-peon" : "unit-peasant";
+  const hallTypeId = race === "orc" ? "unit-great-hall" : "unit-town-hall";
+  const world = plan014AiFixtureWorld(sourceWorld, 128, 128);
+  world.engineSettings.aiExploresDefault = true;
+  world.engineSettings.lastDifficultyDefault = 3;
+  world.tick = 8239;
+  world.aiStates.forEach((candidate) => { candidate.enabled = false; });
+  const state = world.aiStates.find((candidate) => candidate.player === sourceState.player)!;
+  state.enabled = true;
+  state.strategy = "land";
+  state.sourceScriptForces = [];
+  state.sourceScriptLaunches = [];
+  state.sourceScriptForceRoles = [];
+  state.buildOrder = [];
+  state.workerTarget = 6;
+  state.collectWeights = { gold: 1, wood: 0, oil: 0 };
+  state.nextScoutTick = 0;
+  state.nextExplorationUpdateTick = 0;
+  const player = world.players.find((candidate) => candidate.id === state.player)!;
+  player.resources = { ...player.resources, gold: 0, wood: 0, oil: 0 };
+  const workerDefinition = world.unitDefinitions.find((candidate) => candidate.id === workerTypeId);
+  const hallDefinition = world.unitDefinitions.find((candidate) => candidate.id === hallTypeId);
+  const mineDefinition = world.unitDefinitions.find((candidate) => candidate.id === "unit-gold-mine");
+  if (!workerDefinition || !hallDefinition || !mineDefinition) {
+    return { ok: false, error: "missing depot mining fixture definitions" };
+  }
+  const hall = createWorldUnit({ unit: hallDefinition, id: "__plan014-great-hall-18", player: state.player, tileX: 117, tileY: 114, tileset: null });
+  const farMine = createWorldUnit({ unit: mineDefinition, id: "__plan014-far-gold-mine", player: 15, tileX: 122, tileY: 18, tileset: null });
+  const nearMine = createWorldUnit({ unit: mineDefinition, id: "__plan014-near-gold-mine", player: 15, tileX: 111, tileY: 118, tileset: null });
+  farMine.resourcesHeld = 59500;
+  nearMine.resourcesHeld = 60000;
+  const positions = [
+    { x: 3548.201010126775, y: 2659.798989873225 },
+    { x: 3693.376868606997, y: 3149.376868606997 },
+    { x: 3984, y: 2464.800000000001 },
+    { x: 3780.8642420223077, y: 2180.8642420222986 },
+    { x: 3472, y: 1795.9999999999986 }
+  ];
+  const workers = positions.map((position, index) => {
+    const worker = createWorldUnit({ unit: workerDefinition, id: `__plan014-p29-hauler-${index}`, player: state.player, tileX: 100 + index, tileY: 80, tileset: null });
+    worker.x = position.x;
+    worker.y = position.y;
+    worker.resourcesHeld = 100;
+    worker.carriedResource = "gold";
+    return worker;
+  });
+  const scout = createWorldUnit({ unit: workerDefinition, id: "__plan014-p29-scout", player: state.player, tileX: 103, tileY: 36, tileset: null });
+  scout.x = 3312;
+  scout.y = 1180.4;
+  world.units = [farMine, nearMine, hall, ...workers, scout];
+  for (const worker of workers) {
+    const dropoffPoint = resourceDropoffTargetPoint(world, worker, hall);
+    const path = findPath(world, worker, dropoffPoint.x, dropoffPoint.y);
+    worker.order = {
+      kind: "harvest", targetId: farMine.id, resource: "gold", phase: "to-dropoff",
+      targetX: dropoffPoint.x, targetY: dropoffPoint.y, tileX: null, tileY: null,
+      dropoffId: hall.id, dropoffX: dropoffPoint.x, dropoffY: dropoffPoint.y,
+      gatherSeconds: 0, returnSeconds: 0, path, pathIndex: path.length > 1 ? 1 : 0
+    };
+  }
+  const ownerBuffer = world.exploredTilesByPlayer[state.player]!;
+  const visibilityBuffer = world.exploredTilesByPlayer[world.visibilityPlayer]!;
+  ownerBuffer.fill(1);
+  visibilityBuffer.fill(1);
+  for (let y = 116; y <= 122; y += 1) {
+    for (let x = 108; x <= 114; x += 1) ownerBuffer[y * world.map.width + x] = 0;
+  }
+  for (let y = 33; y <= 35; y += 1) {
+    for (let x = 100; x <= 102; x += 1) ownerBuffer[y * world.map.width + x] = 0;
+  }
+  world.exploredTiles = visibilityBuffer;
+  const nearKnownBefore = isVisibleResourceSource(world, nearMine, state.player);
+  const allPathing = workers.every((worker) => worker.order?.kind === "harvest" && worker.order.path.length > 0);
+  const oldTargetId = workers[0]?.order?.kind === "harvest" ? workers[0].order.targetId : null;
+  const pristineWorld = structuredClone(world) as WorldState;
+
+  runLandAttackAi(world, state.player, state);
+  const evidence = sourceAiRuntimeEvidence(world, state.player, state).exploration.scoutDestinations;
+  const assignment = evidence[0];
+  const hallTile = worldToTile(world, hall.x, hall.y);
+  const assignmentDistance = assignment
+    ? Math.max(Math.abs((assignment.assignmentTargetTileX ?? -1000) - hallTile.x), Math.abs((assignment.assignmentTargetTileY ?? -1000) - hallTile.y))
+    : Number.POSITIVE_INFINITY;
+  const ownerUnexploredDepotRing = assignmentDistance <= 15;
+  const provenanceExact = assignment?.assignmentPlayer === state.player
+    && assignment.ownerBufferValueAtAssignment === 0
+    && assignment.visibilityPlayerAtAssignment === world.visibilityPlayer
+    && assignment.visibilityBufferValueAtAssignment === 1
+    && assignment.selectedFromOwnerUnexploredAtAssignment === true;
+  const nearMineSelectedBeforeReveal = workers.some((worker) => worker.order?.kind === "harvest" && worker.order.targetId === nearMine.id);
+  const cargoPreserved = workers.every((worker) => worker.resourcesHeld === 100 && worker.carriedResource === "gold" && worker.order?.kind === "harvest");
+
+  const noDuplicateWorld = structuredClone(world) as WorldState;
+  noDuplicateWorld.tick += noDuplicateWorld.tickRate;
+  const noDuplicateState = noDuplicateWorld.aiStates.find((candidate) => candidate.player === state.player)!;
+  runLandAttackAi(noDuplicateWorld, noDuplicateState.player, noDuplicateState);
+  const secondThinkCount = sourceAiRuntimeEvidence(noDuplicateWorld, noDuplicateState.player, noDuplicateState).exploration.scoutDestinations.length;
+
+  if (scout.order?.kind === "explore") {
+    scout.x = scout.order.targetX;
+    scout.y = scout.order.targetY;
+    world.tick += world.tickRate;
+    state.nextExplorationUpdateTick = 0;
+    updateVisibility(world);
+  }
+  const nearKnownAfterReveal = isVisibleResourceSource(world, nearMine, state.player);
+  const deliveryWorker = workers[0]!;
+  const deliveryPoint = resourceDropoffTargetPoint(world, deliveryWorker, hall);
+  deliveryWorker.x = deliveryPoint.x;
+  deliveryWorker.y = deliveryPoint.y;
+  if (deliveryWorker.order?.kind === "harvest") {
+    deliveryWorker.order.path = [];
+    deliveryWorker.order.pathIndex = 0;
+    deliveryWorker.order.returnSeconds = 0;
+  }
+  const goldBefore = player.resources.gold;
+  for (let step = 0; step <= world.tickRate; step += 1) {
+    stepHarvestOrder(world, deliveryWorker, 1 / world.tickRate);
+    world.tick += 1;
+  }
+  const creditedGold = player.resources.gold - goldBefore;
+  const targetId = deliveryWorker.order?.kind === "harvest" ? deliveryWorker.order.targetId : null;
+
+  const nonManagerWorld = structuredClone(pristineWorld) as WorldState;
+  nonManagerWorld.aiStates.forEach((candidate) => { candidate.enabled = false; });
+  const nonManagerPlayer = nonManagerWorld.players.find((candidate) => candidate.id === state.player)!;
+  nonManagerPlayer.playerType = "person";
+  nonManagerPlayer.resources.gold = 0;
+  nonManagerWorld.exploredTilesByPlayer[state.player]!.fill(1);
+  const nonManagerWorker = nonManagerWorld.units.find((unit) => unit.id === workers[0]!.id)!;
+  const nonManagerHall = nonManagerWorld.units.find((unit) => unit.id === hall.id)!;
+  const nonManagerPoint = resourceDropoffTargetPoint(nonManagerWorld, nonManagerWorker, nonManagerHall);
+  nonManagerWorker.x = nonManagerPoint.x;
+  nonManagerWorker.y = nonManagerPoint.y;
+  if (nonManagerWorker.order?.kind === "harvest") {
+    nonManagerWorker.order.path = [];
+    nonManagerWorker.order.pathIndex = 0;
+    nonManagerWorker.order.returnSeconds = 0;
+  }
+  for (let step = 0; step <= nonManagerWorld.tickRate; step += 1) {
+    stepHarvestOrder(nonManagerWorld, nonManagerWorker, 1 / nonManagerWorld.tickRate);
+    nonManagerWorld.tick += 1;
+  }
+  const nonManagerTargetId = nonManagerWorker.order?.kind === "harvest" ? nonManagerWorker.order.targetId : null;
+  const nonManagerCredit = nonManagerPlayer.resources.gold;
+
+  const result: Record<string, unknown> = {
+    ok: allPathing && ownerUnexploredDepotRing && provenanceExact && evidence.length === 1 && secondThinkCount === 1
+      && !nearKnownBefore && !nearMineSelectedBeforeReveal && nearKnownAfterReveal && cargoPreserved
+      && creditedGold === 100 && deliveryWorker.resourcesHeld === 0 && targetId === nearMine.id
+      && nonManagerCredit === 100 && nonManagerTargetId === farMine.id,
+    playerId: state.player,
+    scoutId: scout.id,
+    longHaul: {
+      workerCount: workers.length,
+      commutePixels: Math.hypot(farMine.x - hall.x, farMine.y - hall.y),
+      thresholdPixels: 15 * world.tileSize,
+      allPathing,
+      commuteFlagged: ownerUnexploredDepotRing,
+      cargoPreserved
+    },
+    knowledge: { nearMineKnownBefore: nearKnownBefore, nearMineSelectedBeforeReveal, nearMineKnownAfterReveal: nearKnownAfterReveal },
+    scout: { count: evidence.length, secondThinkCount, ownerUnexploredDepotRing, provenanceExact, assignment },
+    delivery: { creditedGold, resourcesHeld: deliveryWorker.resourcesHeld, oldTargetId, targetId },
+    nonManager: { creditedGold: nonManagerCredit, targetId: nonManagerTargetId }
   };
   Object.defineProperty(result, "saveWorld", { value: noDuplicateWorld, enumerable: false });
   return result;
