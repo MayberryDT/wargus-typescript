@@ -2472,8 +2472,17 @@ function drawSourceMenuOverlay(
     const button = buttons[index];
     const column = index % columns;
     const row = Math.floor(index / columns);
-    const buttonX = startX + column * (buttonWidth + gap);
-    const buttonY = startY + row * rowGap;
+    const flowButtonX = startX + column * (buttonWidth + gap);
+    const flowButtonY = startY + row * rowGap;
+    const preferencesOk = menu === "preferences" && button.command === "preferences-ok";
+    const preferencesOkSideX = x + width + gap;
+    const preferencesOkFitsBesidePanel = preferencesOkSideX + buttonWidth <= app.screen.width - 8;
+    let buttonX = flowButtonX;
+    let buttonY = flowButtonY;
+    if (preferencesOk) {
+      buttonX = preferencesOkFitsBesidePanel ? preferencesOkSideX : startX + (columns - 1) * (buttonWidth + gap);
+      buttonY = preferencesOkFitsBesidePanel ? y + panelHeight - 34 - gap : startY - rowGap;
+    }
     if (debug && debug.menuButtonControls.length < MAX_MENU_BUTTON_CONTROLS) {
       debug.menuButtonControls.push({
         x: buttonX,
