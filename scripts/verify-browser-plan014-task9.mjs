@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, u
 import { connect } from "node:net";
 import path from "node:path";
 import { boundedAwaitMs, boundedExecFileSyncOptions, correlateNextPressureContact, deriveSegmentTiming, finalizeAttemptAudit, pageWorkDeadline, validateScoutDestinationProvenance } from "./lib/plan014-task9-contract.mjs";
+import { rebaseCheckpointStorageState } from "./lib/plan014-task9-storage-state.mjs";
 
 const DEMO_SEED = "ai-staged-pressure";
 const VIEWPORT = { width: 1280, height: 720 };
@@ -290,7 +291,18 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
     if (runError) throw runError;
     console.log(`Task 9 segment ${attemptId} tracked browser PID ${browserServer.process().pid}.`);
     browser = await withTimeout(chromium.connect(browserServer.wsEndpoint()), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Playwright did not connect before forced cleanup.");
-    const storageState = checkpoint ? checkpoint.storageStatePath : undefined;
+    let storageState;
+    if (checkpoint) {
+      const capturedStorageState = JSON.parse(readFileSync(checkpoint.storageStatePath, "utf8"));
+      const handoff = rebaseCheckpointStorageState(capturedStorageState, {
+        targetOrigin: new URL(url).origin,
+        expectedSourceOrigin: `http://127.0.0.1:${checkpoint.port}`,
+        saveSlotKey: SAVE_SLOT_KEY,
+        expectedRawSha256: checkpoint.slotIdentity.rawSha256
+      });
+      assertSlotIdentity(handoff.rawSlot, checkpoint.slotIdentity, "checkpoint storageState handoff");
+      storageState = handoff.storageState;
+    }
     context = await withTimeout(browser.newContext({ viewport: VIEWPORT, storageState: storageState ?? undefined }), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Browser context did not start before forced cleanup.");
     page = await withTimeout(context.newPage(), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Browser page did not start before forced cleanup.");
     if (context.pages().length !== 1) throw new Error(`Segment ${attemptId} expected one page, found ${context.pages().length}.`);
