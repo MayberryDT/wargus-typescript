@@ -205,35 +205,35 @@ commit. Do not hide an interpreter failure with difficulty or exploration work.
 
 ### Task 1: Confirm dependencies and baseline
 
-- [ ] Confirm plans 011, 012, 013, and 015 are `DONE` with READY evidence packets.
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:fixed-demo-random-ai`.
-- [ ] Run `npm run verify:source-ai-difficulty`.
-- [ ] Run `npm run verify:source-ai-forces`.
-- [ ] Run `npm run verify:source-ai-explores`.
+- [x] Confirm plans 011, 012, 013, and 015 are `DONE` with READY evidence packets.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:fixed-demo-random-ai`.
+- [x] Run `npm run verify:source-ai-difficulty`.
+- [x] Run `npm run verify:source-ai-forces`.
+- [x] Run `npm run verify:source-ai-explores`.
 
 Expected: all exit 0 before edits. STOP if a dependency is incomplete or a focused baseline is red.
 
 ### Task 2: Restore source instruction barriers and script completion
 
-- [ ] Schedule each enabled AI exactly once per `tickRate` simulation ticks,
+- [x] Schedule each enabled AI exactly once per `tickRate` simulation ticks,
   independent of difficulty. Resource bonus/manager work therefore also runs
   once per simulated second. Update the save/load `nextThinkTick` cap to the
   same fixed cadence.
-- [ ] Change `applySourceAiInstruction` to return `"advance" | "block"`.
-- [ ] Change `advanceSourceAiScript` to increment only on `advance`, return on
+- [x] Change `applySourceAiInstruction` to return `"advance" | "block"`.
+- [x] Change `advanceSourceAiScript` to increment only on `advance`, return on
   `block`, stop at EOF without rewinding, and use `script.length` only as a
   malformed no-barrier safety bound.
-- [ ] Sleep with zero effective cycles advances immediately. A positive sleep
+- [x] Sleep with zero effective cycles advances immediately. A positive sleep
   sets `sourceScriptSleepUntilTick`, holds the current instruction, then
   advances exactly once when the deadline is reached.
-- [ ] Unmet `wait` and `wait-force` block at their current index.
-- [ ] `need`, `upgrade-to`, `set`, force declarations, force-role, research,
+- [x] Unmet `wait` and `wait-force` block at their current index.
+- [x] `need`, `upgrade-to`, `set`, force declarations, force-role, research,
   and a successful `attack-force` advance in the same think.
-- [ ] Replace the hard-coded initial land/air sleep `120` with the installed
+- [x] Replace the hard-coded initial land/air sleep `120` with the installed
   default zero cycles. Add a separate positive-sleep fixture instead of
   preserving an artificial opening delay.
-- [ ] Restore the four installed race-resolved Blacksmith weapon/armor research
+- [x] Restore the four installed race-resolved Blacksmith weapon/armor research
   instructions before the first land force, without changing their order.
 
 Target loop:
@@ -252,24 +252,24 @@ next wait.
 
 ### Task 3: Preserve additive `Need`, absolute `Set`, and construction reservation
 
-- [ ] Keep `addSourceAiBuildNeed`, but make every executed `need` append exactly
+- [x] Keep `addSourceAiBuildNeed`, but make every executed `need` append exactly
   one normalized base/build role. Route `upgrade-to` through a distinct
   `addSourceAiUpgradeNeed` so tier and Guard/Cannon Tower requests survive.
-- [ ] Add `setSourceAiBuildNeed`, which removes/re-adds the normalized role until
+- [x] Add `setSourceAiBuildNeed`, which removes/re-adds the normalized role until
   its count equals the declared non-negative absolute count.
-- [ ] Make worker `set` assign its declared absolute target rather than
+- [x] Make worker `set` assign its declared absolute target rather than
   `Math.max` with the old value.
-- [ ] Normalize only base-tower `need`/`set` counts to `tower`; never collapse a
+- [x] Normalize only base-tower `need`/`set` counts to `tower`; never collapse a
   Guard/Cannon Tower `upgrade-to` request into that base role.
-- [ ] Preserve duplicate `buildOrder` entries through save/load; never convert
+- [x] Preserve duplicate `buildOrder` entries through save/load; never convert
   them to a `Set`.
-- [ ] Remove the current immediate `issueSourceAiNeedNow` barrier semantics.
+- [x] Remove the current immediate `issueSourceAiNeedNow` barrier semantics.
   Source `Need` records desire and advances; the resource/build manager fulfills
   it on subsequent AI work.
-- [ ] Count the costs of every valid AI `build` order in `phase: "to-site"` as
+- [x] Count the costs of every valid AI `build` order in `phase: "to-site"` as
   reserved when deciding whether another AI build request is affordable. Do not
   deduct those resources before arrival.
-- [ ] Select source-eligible builders without ever stealing `build`,
+- [x] Select source-eligible builders without ever stealing `build`,
   `build-oil-platform`, `repair`, or active gathering phases. A worker merely
   travelling to a resource may be retasked, matching Wargus; keep deterministic
   selection in place of Wargus's random worker choice.
@@ -280,16 +280,16 @@ instruction adds nothing; pending construction costs prevent overcommit.
 
 ### Task 4: Preserve the original producer graph
 
-- [ ] Keep Ballista/Catapult production on Human/Orc Barracks, as defined by
+- [x] Keep Ballista/Catapult production on Human/Orc Barracks, as defined by
   the installed Wargus button scripts.
-- [ ] Keep Flying Machine/Dwarves on Inventor and Zeppelin/Goblin Sappers on
+- [x] Keep Flying Machine/Dwarves on Inventor and Zeppelin/Goblin Sappers on
   Alchemist. Do not insert a demolition-producer need for a Catapult force.
-- [ ] If a source AI force later requests Dwarves or Goblin Sappers, derive the
+- [x] If a source AI force later requests Dwarves or Goblin Sappers, derive the
   corresponding Inventor/Alchemist need from that actual unit target rather
   than treating the `catapult` role as demolition.
-- [ ] Do not add or remove force members in this plan.
+- [x] Do not add or remove force members in this plan.
 
-- [ ] Implement `attack-force` as an immediate detached launch:
+- [x] Implement `attack-force` as an immediate detached launch:
   - deterministically assign free, non-launched unit ids to the scripted slot;
   - exclude ids assigned to other active slots or any prior bounded launch;
   - choose only assigned ids satisfying that scripted force's targets;
@@ -300,9 +300,9 @@ instruction adds nothing; pending construction costs prevent overcommit.
     force;
   - allow the next declaration to execute in the same think and block at its
     `wait-force`.
-- [ ] Source-script players must not also pass through the legacy mutable wave
+- [x] Source-script players must not also pass through the legacy mutable wave
   selector in `runLandAttackAi`; retain that path only for non-source AI plans.
-- [ ] When no currently known/visible enemy exists, choose a deterministic
+- [x] When no currently known/visible enemy exists, choose a deterministic
   unexplored point from that AI player's own buffer. Do not fall back to an
   enemy player's start coordinates.
 
@@ -313,14 +313,14 @@ reused by the next scripted force.
 
 ### Task 5: Normalize and reset difficulty speed factors
 
-- [ ] Rename `setSourceAiSpeedFactors` to `setSourceAiSpeedFactorsFromPercent`.
-- [ ] Divide source percentages by 100 exactly once inside that function.
-- [ ] At the start of `applySourceAiDifficultyBonuses` for every computer player, reset timing factors with 100% before applying easy/hard/very-hard overrides.
-- [ ] Keep existing resource-bonus amounts, but apply them only at the fixed
+- [x] Rename `setSourceAiSpeedFactors` to `setSourceAiSpeedFactorsFromPercent`.
+- [x] Divide source percentages by 100 exactly once inside that function.
+- [x] At the start of `applySourceAiDifficultyBonuses` for every computer player, reset timing factors with 100% before applying easy/hard/very-hard overrides.
+- [x] Keep existing resource-bonus amounts, but apply them only at the fixed
   once-per-second AI cadence. Difficulty scales explicit script sleeps, not the
   whole think loop.
-- [ ] Difficulty 1 should use factor 0.75; 2/3 should use 1; 4 should use 1.2; 5 should use 1.5.
-- [ ] Changing from one difficulty to another must update existing AI players on their next think.
+- [x] Difficulty 1 should use factor 0.75; 2/3 should use 1; 4 should use 1.2; 5 should use 1.5.
+- [x] Changing from one difficulty to another must update existing AI players on their next think.
 
 **Verify**: update `scripts/verify-source-ai-difficulty.mjs` to evaluate or inspect normalized factors rather than requiring raw assignments. Expected values: `0.75, 1, 1, 1.2, 1.5`.
 
@@ -328,35 +328,35 @@ reused by the next scripted force.
 
 ### Task 6: Add per-player explored state
 
-- [ ] Add `exploredTilesByPlayer` to `WorldState` and initialize one `Uint8Array(tileCount)` for every player id represented in the world.
-- [ ] Make `exploredTiles` reference `exploredTilesByPlayer[visibilityPlayer]` after world creation and load.
-- [ ] Extract the current vision-marking loop into `markExploredTilesForPlayer(world, playerId, buffer)`.
-- [ ] Update the local player's buffer every visibility update as today.
-- [ ] Update enabled AI players' persistent buffers at most once per `tickRate` ticks to avoid multiplying fog work every frame.
-- [ ] Make `findExplorationCandidates` and `findUnexploredExplorationCandidates` read the unit owner's buffer.
-- [ ] Current visibility and target acquisition still use `isWorldPositionVisibleToPlayer`; persistent exploration is only for choosing scout destinations.
-- [ ] Throttle assignment of a new AI explorer/scout destination to at most
+- [x] Add `exploredTilesByPlayer` to `WorldState` and initialize one `Uint8Array(tileCount)` for every player id represented in the world.
+- [x] Make `exploredTiles` reference `exploredTilesByPlayer[visibilityPlayer]` after world creation and load.
+- [x] Extract the current vision-marking loop into `markExploredTilesForPlayer(world, playerId, buffer)`.
+- [x] Update the local player's buffer every visibility update as today.
+- [x] Update enabled AI players' persistent buffers at most once per `tickRate` ticks to avoid multiplying fog work every frame.
+- [x] Make `findExplorationCandidates` and `findUnexploredExplorationCandidates` read the unit owner's buffer.
+- [x] Current visibility and target acquisition still use `isWorldPositionVisibleToPlayer`; persistent exploration is only for choosing scout destinations.
+- [x] Throttle assignment of a new AI explorer/scout destination to at most
   once per five simulated seconds per AI; existing explore orders continue.
 
 **Verify**: `npm run verify:source-ai-explores` -> exits 0 and asserts AI exploration reads its own player buffer.
 
 ### Task 7: Preserve exploration in save/load
 
-- [ ] Add optional `exploredTilesByPlayer?: number[][]` to the saved world shape.
-- [ ] Save/normalize `assignedUnitIds`, bounded launch records, and any explicit
+- [x] Add optional `exploredTilesByPlayer?: number[][]` to the saved world shape.
+- [x] Save/normalize `assignedUnitIds`, bounded launch records, and any explicit
   scout-cadence tick. Deduplicate ids deterministically and discard missing ids
   from active membership without unbounding historical launch evidence.
-- [ ] Save each buffer as an array.
-- [ ] On load, normalize each buffer to exactly `map.width * map.height` bytes.
-- [ ] Backward compatibility: if the field is absent, copy saved `exploredTiles` only into `visibilityPlayer`; initialize all other players to zero.
-- [ ] Rebind `world.exploredTiles` to the visibility player's restored buffer.
+- [x] Save each buffer as an array.
+- [x] On load, normalize each buffer to exactly `map.width * map.height` bytes.
+- [x] Backward compatibility: if the field is absent, copy saved `exploredTiles` only into `visibilityPlayer`; initialize all other players to zero.
+- [x] Rebind `world.exploredTiles` to the visibility player's restored buffer.
 
 **Verify**: `npm run verify:save-schema` -> exits 0.
 
 ### Task 8: Add live AI progression evidence
 
-- [ ] Extend the browser smoke state in `src/main.ts` only if required to expose these data-only fields per AI state: selected attack force id(s), build-order role counts, completed building counts, and normalized speed factors.
-- [ ] Extend `scripts/verify-browser-runtime-smoke.mjs` to run deterministic
+- [x] Extend the browser smoke state in `src/main.ts` only if required to expose these data-only fields per AI state: selected attack force id(s), build-order role counts, completed building counts, and normalized speed factors.
+- [x] Extend `scripts/verify-browser-runtime-smoke.mjs` to run deterministic
   fixed-demo seed `ai-staged-pressure` at source-neutral difficulty level 3 and
   accelerated verifier speed, recording actual source slots/AI id, and assert:
   1. The installed default zero-cycle initial sleep advances without an
@@ -367,7 +367,7 @@ reused by the next scripted force.
   3. The detached 4-soldier attack launches before the 16-soldier force waits.
   4. The desired Barracks count reaches two once resources/space/builders allow it.
   5. AI speed factors remain within `0.75..1.5` for all menu difficulties.
-- [ ] Do not require exact wall-clock timing; assert ordering and bounded factor values.
+- [x] Do not require exact wall-clock timing; assert ordering and bounded factor values.
 
 **Verify**: `npm run verify:browser-runtime-smoke` -> exits 0 and reports staged AI progression.
 
@@ -390,28 +390,28 @@ Expected observable behavior:
 
 ### Task 10: Close out
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:fixed-demo-random-ai`.
-- [ ] Run `npm run verify:source-ai-difficulty`.
-- [ ] Run `npm run verify:source-ai-forces`.
-- [ ] Run `npm run verify:source-ai-explores`.
-- [ ] Run `npm run verify:browser-runtime-smoke`.
-- [ ] Run `npm run verify:save-schema`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:fixed-demo-random-ai`.
+- [x] Run `npm run verify:source-ai-difficulty`.
+- [x] Run `npm run verify:source-ai-forces`.
+- [x] Run `npm run verify:source-ai-explores`.
+- [x] Run `npm run verify:browser-runtime-smoke`.
+- [x] Run `npm run verify:save-schema`.
 - [ ] Replay M01/M04/M07 and record M08–M09 in `plans/evidence/014.md`; obtain a READY review decision.
-- [ ] Run `git diff --check` and confirm only in-scope files changed.
+- [x] Run `git diff --check` and confirm only in-scope files changed.
 - [ ] Update plan 014 to `DONE` in `plans/README.md`.
 
 ## Done criteria
 
-- [ ] Zero-cycle sleep advances, positive sleep/waits block correctly, EOF does
+- [x] Zero-cycle sleep advances, positive sleep/waits block correctly, EOF does
   not replay, and attack launch advances to the next barrier.
-- [ ] The AI activates 1-, 4-, and 16-unit attack stages in order.
-- [ ] Launched unit ids detach and cannot satisfy the next scripted force.
-- [ ] `Need` adds one, `Set` is absolute, duplicate desires remain bounded, and
+- [x] The AI activates 1-, 4-, and 16-unit attack stages in order.
+- [x] Launched unit ids detach and cannot satisfy the next scripted force.
+- [x] `Need` adds one, `Set` is absolute, duplicate desires remain bounded, and
   unpaid construction costs are reserved.
-- [ ] AI speed factors are 0.75/1/1/1.2/1.5 and reset after every difficulty change.
-- [ ] AI exploration reads persistent knowledge for its own player.
-- [ ] Existing saves load; new saves preserve per-player exploration.
+- [x] AI speed factors are 0.75/1/1/1.2/1.5 and reset after every difficulty change.
+- [x] AI exploration reads persistent knowledge for its own player.
+- [x] Existing saves load; new saves preserve per-player exploration.
 - [ ] The deterministic browser progression check and manual staged-pressure session pass.
 - [ ] M01, M04, and M07–M09 evidence is recorded and plan 014 has a READY review decision.
 
