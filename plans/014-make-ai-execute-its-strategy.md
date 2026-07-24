@@ -48,7 +48,17 @@ percentages at the timing boundary, and persist explored tiles per player.
 - **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md, plans/013-fix-combat-commitment-and-response.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug
 - **Planned at**: commit `6af2eeb`, 2026-07-10
-- **Current decision**: IN PROGRESS — the remaining transaction defects and scope omission from the review-fix re-review are corrected in the current changeset, while Task 9 and a new independent READY review remain pending.
+- **Current decision**: DONE — READY under the 2026-07-24 user acceptance override. The ordinary core-loop session plus preserved live progression evidence supersedes exhaustive Gate A/Task 9 segmentation, same-session 4/16-wave proof, verifier expansion, and a separate independent READY review.
+
+## Acceptance override (2026-07-24)
+
+The user explicitly replaced the remaining exhaustive Gate A/Task 9 proof with
+one ordinary core-loop acceptance decision and prohibited more verifier
+infrastructure. The accepted record combines the fresh one-Peasant retry with
+the existing live Hall/Farm/Barracks/Footman, economy, scout, launch-1/contact,
+and reviewed fix evidence in `plans/evidence/014.md`. This closeout does not
+claim a same-session 4- or 16-unit wave, the full difficulty sweep, or a new M07
+replay; those original gates are waived, not silently reconstructed.
 
 ## Player-visible contract and evidence
 
@@ -369,36 +379,32 @@ reused by the next scripted force.
 ### Task 8: Add live AI progression evidence
 
 - [x] Extend the browser smoke state in `src/main.ts` only if required to expose these data-only fields per AI state: selected attack force id(s), build-order role counts, completed building counts, and normalized speed factors.
-- [ ] Extend `scripts/verify-browser-runtime-smoke.mjs` to run deterministic
-  fixed-demo seed `ai-staged-pressure` at source-neutral difficulty level 3 and
-  accelerated verifier speed, recording actual source slots/AI id, and assert:
-  1. The installed default zero-cycle initial sleep advances without an
-     artificial delay; a separate nonzero-sleep fixture blocks then advances
-     once.
-  2. The 1-soldier attack is issued to detached unit ids before the 4-soldier
-     force waits, and those ids are not counted into the next force.
-  3. The detached 4-soldier attack launches before the 16-soldier force waits.
-  4. The desired Barracks count reaches two once resources/space/builders allow it.
-  5. AI speed factors remain within `0.75..1.5` for all menu difficulties.
+- [x] Dispositioned by the explicit user acceptance override: do not extend the
+  browser verifier. Existing focused checks retain interpreter/force/factor
+  coverage, while ordinary play and preserved live observations supply the
+  player-visible core-loop decision. Exact same-session 4/16 progression is not
+  claimed.
 - [x] Do not require exact wall-clock timing; assert ordering and bounded factor values.
 
-The review-fix browser mode now reads bounded evidence from the running world
+The review-fix browser mode reads bounded evidence from the running world
 and no longer invokes the preseeded script/knowledge fixtures. The focused
-fixtures remain unit/integration checks under `verify:plan014-ai-runtime`; the
-literal live 1/4/16 progression, real duration sample, and progressed-stage
-performance capture remain part of Task 9.
+fixtures remain unit/integration checks under `verify:plan014-ai-runtime`.
+Under the final override, the preserved live one-unit launch/contact, real
+duration sample, economy/scout observations, and ordinary core-play retry are
+accepted without reconstructing the exhaustive 1/4/16 chain.
 
-**Verify**: use the Codex in-app Browser for the segmented Task 9 chain. The
-shell verifier's opt-in `WARGUS_BROWSER_RUNTIME_REPORT` path is an artifact
-format for a separately authorized run, not a substitute for visible play.
+**Verify**: completed through the user-approved ordinary core-play evidence
+package at `/home/halla/workspaces/Wargus-TypeScript-artifacts/plan014-core-play/`.
 
 ### Task 9: Perform the playable AI acceptance session
 
-- [ ] Start the fixed demo with a deterministic seed and play normally from one Peasant.
-- [ ] Use source-neutral difficulty level 3 and build enough defense to observe
-  the literal 1-, 4-, and 16-unit force stages. Do not label level 3 as the
-  current UI's “Normal” level 2.
-- [ ] Change difficulty down and up once through the visible menu.
+- [x] Start the fixed demo with deterministic seed `ai-staged-pressure` and use
+  normal rendered controls from the selected one-Peasant/no-Hall opening.
+- [x] Exercise the accepted ordinary core-loop subset at visible difficulty
+  level 3 and combine it with preserved live Barracks/Footman and launch-1
+  contact evidence. The user waived same-session 4/16-wave proof.
+- [x] Exercise visible Speed/Preferences controls and responsive Pause/Resume.
+  The user waived the exhaustive down/up difficulty sequence.
 
 Expected observable behavior:
 
@@ -416,11 +422,14 @@ Expected observable behavior:
 - [x] Run `npm run verify:source-ai-difficulty`.
 - [x] Run `npm run verify:source-ai-forces`.
 - [x] Run `npm run verify:source-ai-explores`.
-- [ ] Run the production-honest `npm run verify:browser-runtime-smoke` through the approved browser path.
+- [x] Browser-verifier expansion/run waived by explicit user instruction; the
+  production UI was exercised through ordinary play instead.
 - [x] Run `npm run verify:save-schema`.
-- [ ] Replay M01/M04/M07 and record M08–M09 in `plans/evidence/014.md`; obtain a READY review decision.
+- [x] Record the accepted M08/M09 core-loop evidence and the M01/M04/M07
+  disposition in `plans/evidence/014.md`; READY is granted by the explicit user
+  override rather than a new exhaustive replay/reviewer.
 - [x] Run `git diff --check` and confirm only the expanded in-scope files changed.
-- [ ] Update plan 014 to `DONE` in `plans/README.md`.
+- [x] Update plan 014 to `DONE` in `plans/README.md`.
 
 ## Done criteria
 
@@ -435,8 +444,11 @@ Expected observable behavior:
 - [x] AI speed factors are 0.75/1/1/1.2/1.5 and reset after every difficulty change.
 - [x] AI exploration reads persistent knowledge for its own player.
 - [x] Existing saves load; new saves preserve per-player exploration.
-- [ ] The deterministic browser progression check and manual staged-pressure session pass.
-- [ ] M01, M04, and M07–M09 evidence is recorded and plan 014 has a READY review decision.
+- [x] The user-approved ordinary core-loop session plus preserved live
+  progression evidence satisfies the player-visible acceptance subset; no
+  exhaustive same-session 4/16 claim is made.
+- [x] M01, M04, and the override disposition for M07–M09 are recorded, and Plan
+  014 has a user-granted READY decision.
 
 ## STOP conditions
 
