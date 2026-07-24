@@ -1,5 +1,6 @@
 import type { WargusEngineSettings, WargusManifest, WargusMap, WargusSpeedFactors, WargusSpell, WargusUnit } from "./types";
 import { isExploreOnReadyValue } from "./sourceActions";
+import { normalizeScoutAssignmentProvenance } from "./scoutProvenance.mjs";
 import { boxDimensionsForUnit, createInitialWorld, createPlayerStats, defaultForestTileResources, imageForTileset, initialForestResourcesForWorld, isSourceBuildingDefinition, isUnitVisibleToPlayer, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, resourcesHeldForSourceUnit, sightRangeForUnit, sourceAiDefinitionForName, sourceAiDefinitionIsPassive, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, updateVisibility, worldKindForUnitDefinition, type WorldProjectile, type WorldState } from "../simulation/world";
 import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, canTrainUnitAt, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
 import { isSourceHarvestableWoodTile } from "../simulation/passability";
@@ -3750,24 +3751,11 @@ function normalizeLoadedOrder(world: WorldState, order: unknown, unit: WorldStat
     } : null;
   }
   if (kind === "explore") {
-    const nullableNonNegativeInteger = (value: unknown): number | null => {
-      const normalized = Math.floor(finiteNumberOr(value, -1));
-      return normalized >= 0 ? normalized : null;
-    };
     return {
       kind,
       targetX,
       targetY,
-      assignmentTick: nullableNonNegativeInteger(record.assignmentTick),
-      assignmentPlayer: nullableNonNegativeInteger(record.assignmentPlayer),
-      assignmentTargetTileX: nullableNonNegativeInteger(record.assignmentTargetTileX),
-      assignmentTargetTileY: nullableNonNegativeInteger(record.assignmentTargetTileY),
-      assignmentTargetTileIndex: nullableNonNegativeInteger(record.assignmentTargetTileIndex),
-      assignmentMapWidth: nullableNonNegativeInteger(record.assignmentMapWidth),
-      ownerBufferValueAtAssignment: nullableNonNegativeInteger(record.ownerBufferValueAtAssignment),
-      visibilityPlayerAtAssignment: nullableNonNegativeInteger(record.visibilityPlayerAtAssignment),
-      visibilityBufferValueAtAssignment: nullableNonNegativeInteger(record.visibilityBufferValueAtAssignment),
-      selectedFromOwnerUnexploredAtAssignment: record.selectedFromOwnerUnexploredAtAssignment === true,
+      ...normalizeScoutAssignmentProvenance(record),
       exploreRange: Math.max(0, Math.min(64, Math.floor(finiteNumberOr(record.exploreRange, 0)))),
       exploreWaitingCycle: Math.max(0, Math.min(5, Math.floor(finiteNumberOr(record.exploreWaitingCycle, 0)))),
       path,

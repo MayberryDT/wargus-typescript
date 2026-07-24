@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 const runnerPath = "scripts/verify-browser-plan014-task9.mjs";
 const pureContractPath = "scripts/lib/plan014-task9-contract.mjs";
+const productionScoutProvenancePath = "src/wargus/scoutProvenance.mjs";
 const failures = [];
 
 function requireFile(path, label) {
@@ -56,6 +57,17 @@ function expectFunction(label, value) {
   return true;
 }
 
+function expectEveryCallHasMultipleArguments(label, source, functionName) {
+  const calls = [...source.matchAll(new RegExp(`${functionName}\\(([^)]*)\\)`, "g"))];
+  if (calls.length === 0) {
+    failures.push(`${label}: found no ${functionName} calls`);
+    return;
+  }
+  for (const call of calls) {
+    if (!call[1].includes(",")) failures.push(`${label}: unbounded call ${call[0]}`);
+  }
+}
+
 const runner = requireFile(runnerPath, "Plan 014 Task 9 runner");
 const packageSource = requireFile("package.json", "package manifest");
 const hudSource = requireFile("src/view/renderHud.ts", "HUD source");
@@ -67,6 +79,12 @@ if (!existsSync(pureContractPath)) {
   failures.push(`Task 9 pure semantic contract is missing: ${pureContractPath}`);
 } else {
   pureContract = await import(`../${pureContractPath}`);
+}
+let productionScoutProvenance = null;
+if (!existsSync(productionScoutProvenancePath)) {
+  failures.push(`production scout provenance normalizer is missing: ${productionScoutProvenancePath}`);
+} else {
+  productionScoutProvenance = await import(`../${productionScoutProvenancePath}`);
 }
 
 expectIncludes("package manifest", packageSource, [
@@ -111,6 +129,20 @@ expectIncludes("Task 9 bounded startup failure capture", runner, [
   "serverSpawnError",
   "Vite preview failed to spawn"
 ]);
+expectIncludes("Task 9 abortable readiness and bounded process discovery", runner, [
+  "waitForHttp(url, timing.cleanupStartAt",
+  "fetchBeforeDeadline(url, deadline, 400, \"preview readiness probe\")",
+  "boundedExecFileSyncOptions",
+  "timeout: execOptions.timeout",
+  "maxBuffer: execOptions.maxBuffer",
+  "killSignal: \"SIGKILL\"",
+  "process-tree discovery failed",
+  "runError ??="
+]);
+expectExcludes("Task 9 raw readiness fetch", runner, [
+  "const response = await fetch(url);"
+]);
+expectEveryCallHasMultipleArguments("Task 9 process-tree deadline propagation", runner, "processTreePids");
 expectMatches("explicit cleanup disarms watchdogs before final audit", runner, /catch \(error\) \{[\s\S]*?runError = error;[\s\S]*?\}\s*clearTimeout\(cleanupTimer\);\s*clearTimeout\(completionTimer\);[\s\S]*?const closePromises/);
 expectIncludes("Task 9 truthful duration proof", runner, [
   "const durationRelation = attemptAudit.segmentWallMs < SEGMENT_LIMIT_MS ? \"<\" : \">=\"",
@@ -129,18 +161,33 @@ if (pureContract) {
   expectEqual("page work ends before cleanup", pureContract.pageWorkDeadline(2_000, 25_000, timing), 25_000);
   expectEqual("startup await is bounded by cleanup", pureContract.boundedAwaitMs(timing.cleanupStartAt, 20_000, 10_000), 5_000);
   expectThrows("startup await refuses exhausted budget", () => pureContract.boundedAwaitMs(timing.cleanupStartAt, timing.cleanupStartAt, 10_000), "deadline exhausted");
+  if (expectFunction("bounded subprocess option builder", pureContract.boundedExecFileSyncOptions)) {
+    const execOptions = pureContract.boundedExecFileSyncOptions(25_000, 24_000, { maximumMs: 750, maxBuffer: 1_048_576 });
+    expectEqual("bounded subprocess timeout", execOptions.timeout, 750);
+    expectEqual("bounded subprocess maxBuffer", execOptions.maxBuffer, 1_048_576);
+    expectEqual("bounded subprocess kill signal", execOptions.killSignal, "SIGKILL");
+    expectThrows("bounded subprocess refuses exhausted deadline", () => pureContract.boundedExecFileSyncOptions(25_000, 25_000, { maximumMs: 750, maxBuffer: 1_048_576 }), "deadline exhausted");
+  }
 }
 
 expectIncludes("Task 9 scout provenance integration", runner, [
   "validateScoutDestinationProvenance",
-  "acceptedScout"
+  "acceptedScout",
+  "revalidateLoadedScoutProvenance",
+  "assertScoutProvenancePresentAtCheckpoint",
+  "loadValidation",
+  "post-F12 scout provenance revalidation"
 ]);
+expectMatches("post-F12 scout revalidation precedes visible Run", runner, /assertLoadedCheckpoint\(state, checkpoint\.slotIdentity\);\s*revalidateLoadedScoutProvenance\(state, candidateLedger\);[\s\S]*?clickMapControl\(page, "toggle-pause", pageDeadline, "Run"\)/);
+expectMatches("scout provenance must be present in the saved checkpoint", runner, /state = await pauseVisibly[\s\S]*?assertScoutProvenancePresentAtCheckpoint\(state, candidateLedger\);[\s\S]*?page\.keyboard\.press\("F11"\)/);
 
 expectIncludes("AI scout assignment provenance", ordersSource, [
   "assignmentTick",
   "assignmentPlayer",
   "assignmentTargetTileIndex",
   "assignmentMapWidth",
+  "assignmentMapHeight",
+  "assignmentTileSize",
   "ownerBufferValueAtAssignment",
   "visibilityPlayerAtAssignment",
   "visibilityBufferValueAtAssignment",
@@ -148,12 +195,8 @@ expectIncludes("AI scout assignment provenance", ordersSource, [
 ]);
 
 expectIncludes("scout provenance save/load", saveSource, [
-  "assignmentTick: nullableNonNegativeInteger(record.assignmentTick)",
-  "assignmentPlayer: nullableNonNegativeInteger(record.assignmentPlayer)",
-  "assignmentTargetTileIndex: nullableNonNegativeInteger(record.assignmentTargetTileIndex)",
-  "ownerBufferValueAtAssignment: nullableNonNegativeInteger(record.ownerBufferValueAtAssignment)",
-  "visibilityBufferValueAtAssignment: nullableNonNegativeInteger(record.visibilityBufferValueAtAssignment)",
-  "selectedFromOwnerUnexploredAtAssignment: record.selectedFromOwnerUnexploredAtAssignment === true"
+  'import { normalizeScoutAssignmentProvenance } from "./scoutProvenance.mjs"',
+  "...normalizeScoutAssignmentProvenance(record)"
 ]);
 
 if (pureContract && expectFunction("scout provenance validator", pureContract.validateScoutDestinationProvenance)) {
@@ -167,6 +210,8 @@ if (pureContract && expectFunction("scout provenance validator", pureContract.va
     assignmentTargetTileY: 12,
     assignmentTargetTileIndex: 394,
     assignmentMapWidth: 32,
+    assignmentMapHeight: 32,
+    assignmentTileSize: 32,
     ownerBufferValueAtAssignment: 0,
     visibilityPlayerAtAssignment: 0,
     visibilityBufferValueAtAssignment: 1,
@@ -178,10 +223,19 @@ if (pureContract && expectFunction("scout provenance validator", pureContract.va
   expectThrows("scout provenance rejects explored owner tile", () => pureContract.validateScoutDestinationProvenance({ ...scout, ownerBufferValueAtAssignment: 1 }, { expectedPlayer: 1, observationTick: 145 }), "owner buffer byte");
   expectThrows("scout provenance rejects inconsistent tile membership", () => pureContract.validateScoutDestinationProvenance({ ...scout, assignmentTargetTileIndex: 395 }, { expectedPlayer: 1, observationTick: 145 }), "tile index");
   expectThrows("scout provenance rejects zero-width membership", () => pureContract.validateScoutDestinationProvenance({ ...scout, assignmentMapWidth: 0, assignmentTargetTileIndex: 10 }, { expectedPlayer: 1, observationTick: 145 }), "map width");
+  expectThrows("scout provenance rejects mismatched live coordinates", () => pureContract.validateScoutDestinationProvenance({ ...scout, targetX: 9999, targetY: 7777 }, { expectedPlayer: 1, observationTick: 145 }), "target coordinates");
+  expectThrows("scout provenance rejects tile X outside map", () => pureContract.validateScoutDestinationProvenance({ ...scout, assignmentTargetTileX: 32, assignmentTargetTileIndex: 416 }, { expectedPlayer: 1, observationTick: 145 }), "tile bounds");
+  expectThrows("scout provenance rejects tile Y outside map", () => pureContract.validateScoutDestinationProvenance({ ...scout, assignmentTargetTileY: 32, assignmentTargetTileIndex: 1034 }, { expectedPlayer: 1, observationTick: 145 }), "tile bounds");
+  if (productionScoutProvenance && expectFunction("production scout provenance normalizer", productionScoutProvenance.normalizeScoutAssignmentProvenance)) {
+    const serialized = JSON.parse(JSON.stringify(scout));
+    const restored = productionScoutProvenance.normalizeScoutAssignmentProvenance(serialized);
+    const expectedRoundTrip = Object.fromEntries(Object.keys(restored).map((key) => [key, scout[key]]));
+    expectEqual("production scout provenance save/restore round trip", JSON.stringify(restored), JSON.stringify(expectedRoundTrip));
+  }
 }
 
 expectIncludes("Task 9 launch/contact causality integration", runner, [
-  "const LEDGER_SCHEMA_VERSION = 2",
+  "const LEDGER_SCHEMA_VERSION = 3",
   "correlateNextPressureContact",
   "pressureContacts",
   "first 1-unit launch contact",

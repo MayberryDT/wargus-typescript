@@ -29,6 +29,15 @@ export function boundedAwaitMs(deadline, now, maximumMs) {
   return Math.max(1, Math.min(maximumMs, remaining));
 }
 
+export function boundedExecFileSyncOptions(deadline, now, { maximumMs, maxBuffer }) {
+  if (!Number.isInteger(maxBuffer) || maxBuffer <= 0) throw new Error("subprocess maxBuffer must be a positive integer");
+  return {
+    timeout: boundedAwaitMs(deadline, now, maximumMs),
+    maxBuffer,
+    killSignal: "SIGKILL"
+  };
+}
+
 export function validateScoutDestinationProvenance(scout, { expectedPlayer, observationTick }) {
   if (!scout || typeof scout !== "object") throw new Error("scout provenance is missing");
   if (scout.assignmentPlayer !== expectedPlayer) {
@@ -37,10 +46,15 @@ export function validateScoutDestinationProvenance(scout, { expectedPlayer, obse
   if (!Number.isInteger(scout.assignmentTick) || scout.assignmentTick < 0 || scout.assignmentTick > observationTick) {
     throw new Error(`scout assignment tick ${scout.assignmentTick} is invalid at observation ${observationTick}`);
   }
-  for (const field of ["assignmentTargetTileX", "assignmentTargetTileY", "assignmentTargetTileIndex", "assignmentMapWidth"]) {
+  for (const field of ["assignmentTargetTileX", "assignmentTargetTileY", "assignmentTargetTileIndex", "assignmentMapWidth", "assignmentMapHeight", "assignmentTileSize"]) {
     if (!Number.isInteger(scout[field]) || scout[field] < 0) throw new Error(`scout ${field} must be a non-negative integer`);
   }
   if (scout.assignmentMapWidth <= 0) throw new Error("scout assignment map width must be positive");
+  if (scout.assignmentMapHeight <= 0) throw new Error("scout assignment map height must be positive");
+  if (scout.assignmentTileSize <= 0) throw new Error("scout assignment tile size must be positive");
+  if (scout.assignmentTargetTileX >= scout.assignmentMapWidth || scout.assignmentTargetTileY >= scout.assignmentMapHeight) {
+    throw new Error(`scout tile bounds ${scout.assignmentTargetTileX},${scout.assignmentTargetTileY} exceed ${scout.assignmentMapWidth}x${scout.assignmentMapHeight}`);
+  }
   const expectedIndex = scout.assignmentTargetTileY * scout.assignmentMapWidth + scout.assignmentTargetTileX;
   if (scout.assignmentTargetTileIndex !== expectedIndex) {
     throw new Error(`scout tile index ${scout.assignmentTargetTileIndex} does not match ${expectedIndex}`);
@@ -51,7 +65,17 @@ export function validateScoutDestinationProvenance(scout, { expectedPlayer, obse
   if (!Number.isInteger(scout.visibilityPlayerAtAssignment) || !Number.isInteger(scout.visibilityBufferValueAtAssignment)) {
     throw new Error("scout visibility-buffer comparison is missing");
   }
-  if (!Number.isFinite(scout.targetX) || !Number.isFinite(scout.targetY)) throw new Error("scout target coordinates are missing");
+  if (!Number.isFinite(scout.targetX) || !Number.isFinite(scout.targetY)
+    || scout.targetX < 0 || scout.targetY < 0
+    || scout.targetX >= scout.assignmentMapWidth * scout.assignmentTileSize
+    || scout.targetY >= scout.assignmentMapHeight * scout.assignmentTileSize) {
+    throw new Error("scout target coordinates are missing or outside the assigned map");
+  }
+  const coordinateTileX = Math.floor(scout.targetX / scout.assignmentTileSize);
+  const coordinateTileY = Math.floor(scout.targetY / scout.assignmentTileSize);
+  if (coordinateTileX !== scout.assignmentTargetTileX || coordinateTileY !== scout.assignmentTargetTileY) {
+    throw new Error(`scout target coordinates map to tile ${coordinateTileX},${coordinateTileY}, not ${scout.assignmentTargetTileX},${scout.assignmentTargetTileY}`);
+  }
   return { ...scout };
 }
 

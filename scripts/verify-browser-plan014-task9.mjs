@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import path from "node:path";
-import { boundedAwaitMs, correlateNextPressureContact, deriveSegmentTiming, finalizeAttemptAudit, pageWorkDeadline, validateScoutDestinationProvenance } from "./lib/plan014-task9-contract.mjs";
+import { boundedAwaitMs, boundedExecFileSyncOptions, correlateNextPressureContact, deriveSegmentTiming, finalizeAttemptAudit, pageWorkDeadline, validateScoutDestinationProvenance } from "./lib/plan014-task9-contract.mjs";
 
 const DEMO_SEED = "ai-staged-pressure";
 const VIEWPORT = { width: 1280, height: 720 };
@@ -18,7 +18,7 @@ const DIFFICULTY_SEQUENCE = [1, 2, 3, 4, 5, 3];
 const EXPECTED_DIFFICULTY_FACTORS = new Map([[1, 0.75], [2, 1], [3, 1], [4, 1.2], [5, 1.5]]);
 const EXPECTED_LAUNCH_SIZES = [1, 4, 16];
 const REQUIRED_DEFENDERS = 4;
-const LEDGER_SCHEMA_VERSION = 2;
+const LEDGER_SCHEMA_VERSION = 3;
 const MAX_ATTEMPTS = 512;
 const SERVER_MODE = "preview";
 const PORT_BASE = boundedInteger(process.env.WARGUS_PLAN014_TASK9_PORT_BASE, 55_100, 10_240, 64_000);
@@ -218,15 +218,26 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
   const cleanupErrors = [];
   const terminationAttempts = [];
   let forcedCleanupChain = Promise.resolve();
-  const refreshOwnedPids = () => {
-    if (browserServer?.process()?.pid) browserPids = uniquePids([...browserPids, ...processTreePids(browserServer.process().pid)]);
-    if (server?.pid) serverPids = uniquePids([...serverPids, ...processTreePids(server.pid)]);
+  const recordProcessTreeFailure = (error) => {
+    const message = `process-tree discovery failed: ${error instanceof Error ? error.message : String(error)}`;
+    cleanupErrors.push(message);
+    runError ??= new Error(message);
+  };
+  const refreshOwnedPids = (deadline = timing.completionDeadline) => {
+    try {
+      const browserRootPid = browserServer?.process()?.pid;
+      if (browserRootPid) browserPids = uniquePids([...browserPids, ...processTreePids(browserRootPid, deadline)]);
+      const serverRootPid = server?.pid;
+      if (serverRootPid) serverPids = uniquePids([...serverPids, ...processTreePids(serverRootPid, deadline)]);
+    } catch (error) {
+      recordProcessTreeFailure(error);
+    }
   };
   const requestForcedCleanup = (reason) => {
     cleanupForced = true;
     cleanupStartedAtMs ??= Date.now();
     cleanupReasons.push(reason);
-    refreshOwnedPids();
+    refreshOwnedPids(timing.completionDeadline);
     if (browser) void browser.close().catch(() => { /* Exact PID cleanup follows. */ });
     const exactPids = uniquePids([...browserPids, ...serverPids]);
     forcedCleanupChain = forcedCleanupChain
@@ -255,7 +266,9 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
     server.once("error", (error) => { serverSpawnError = error; });
     serverPids = [server.pid];
     console.log(`Task 9 segment ${attemptId} tracked server PID ${server.pid} on unique port ${port}.`);
-    await waitForHttp(url, boundedAwaitMs(timing.cleanupStartAt, Date.now(), 5_000), () => serverSpawnError ?? server.exitCode);
+    await waitForHttp(url, timing.cleanupStartAt, () => serverSpawnError ?? server.exitCode);
+    refreshOwnedPids(timing.cleanupStartAt);
+    if (runError) throw runError;
     const manifestResponse = await fetchBeforeDeadline(`http://127.0.0.1:${port}/wargus/manifest.json`, timing.cleanupStartAt, 2_000, "critical manifest fetch");
     if (!manifestResponse.ok) throw new Error(`Critical asset /wargus/manifest.json returned HTTP ${manifestResponse.status}.`);
 
@@ -269,11 +282,12 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
     });
     void launchPromise.then((launchedServer) => {
       browserServer = launchedServer;
-      refreshOwnedPids();
+      refreshOwnedPids(timing.cleanupStartAt);
       if (cleanupForced) void requestForcedCleanup("browser launch settled after cleanup began");
     }).catch(() => { /* Playwright owns failed native-timeout teardown. */ });
     browserServer = await launchPromise;
-    browserPids = processTreePids(browserServer.process().pid);
+    refreshOwnedPids(timing.cleanupStartAt);
+    if (runError) throw runError;
     console.log(`Task 9 segment ${attemptId} tracked browser PID ${browserServer.process().pid}.`);
     browser = await withTimeout(chromium.connect(browserServer.wsEndpoint()), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Playwright did not connect before forced cleanup.");
     const storageState = checkpoint ? checkpoint.storageStatePath : undefined;
@@ -297,7 +311,7 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
   clearTimeout(completionTimer);
   cleanupStartedAtMs ??= Date.now();
   cleanupReasons.push(runError ? `segment failure: ${runError instanceof Error ? runError.message : String(runError)}` : "normal completion");
-  refreshOwnedPids();
+  refreshOwnedPids(timing.completionDeadline);
   const closePromises = [context?.close(), browser?.close(), browserServer?.close()].filter(Boolean);
   if (closePromises.length > 0 && Date.now() < timing.completionDeadline) {
     try {
@@ -311,7 +325,7 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
   } catch (error) {
     cleanupErrors.push(`forced cleanup join: ${error instanceof Error ? error.message : String(error)}`);
   }
-  refreshOwnedPids();
+  refreshOwnedPids(timing.completionDeadline);
   try {
     const outcome = await stopExactPids([...browserPids, ...serverPids], timing.completionDeadline);
     terminationAttempts.push({ reason: "final exact cleanup", ...outcome });
@@ -323,7 +337,6 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
   cleanupFinishedAtMs = Date.now();
   clearTimeout(cleanupTimer);
   clearTimeout(completionTimer);
-  refreshOwnedPids();
 
   const attemptAudit = finalizeAttemptAudit({
     selectedPort: port,
@@ -377,6 +390,7 @@ async function runPageSegment({ page, context, url, port, attemptId, candidateLe
     await clickMenuControl(page, "load-game", pageDeadline);
     state = await waitForSmoke(page, (smoke) => smoke?.tick === checkpoint.slotIdentity.tick && smoke?.activeMapPath === checkpoint.slotIdentity.mapPath && smoke?.paused === true, Math.min(8_000, remainingMs(pageDeadline)), "visible F12 restored checkpoint");
     assertLoadedCheckpoint(state, checkpoint.slotIdentity);
+    revalidateLoadedScoutProvenance(state, candidateLedger);
     await clickMapControl(page, "toggle-pause", pageDeadline, "Run");
     state = await waitForSmoke(page, (smoke) => smoke?.paused === false && Number(smoke.tick) >= checkpoint.slotIdentity.tick, Math.min(2_000, remainingMs(pageDeadline)), "visible Run after load");
   } else {
@@ -403,6 +417,7 @@ async function runPageSegment({ page, context, url, port, attemptId, candidateLe
   observeEvidence(candidateLedger, state);
   const checkpointTick = Number(state.tick);
   if (!Number.isInteger(checkpointTick) || checkpointTick < startTick) throw new Error(`Invalid checkpoint tick ${checkpointTick} after segment start ${startTick}.`);
+  assertScoutProvenancePresentAtCheckpoint(state, candidateLedger);
 
   await page.keyboard.press("F11");
   await waitForMenu(page, "save-menu", pageDeadline);
@@ -855,9 +870,46 @@ function observeAiExploration(ai, evidence, state) {
       aiPlayer: evidence.player,
       exploredTiles: evidence.exploration.exploredTiles,
       totalTiles: evidence.exploration.totalTiles,
-      scoutDestination: acceptedScout
+      scoutDestination: acceptedScout,
+      loadValidation: null
     };
   }
+}
+
+function matchingLoadedScoutProvenance(state, currentLedger, context) {
+  const exploration = currentLedger.evidence.ai.exploration;
+  if (!exploration) return null;
+  const aiState = currentAiState(state, currentLedger.evidence.ai.playerId);
+  if (!aiState?.evidence || aiState.player !== exploration.aiPlayer) {
+    throw new Error(`${context}: accepted scout AI player ${exploration.aiPlayer} is unavailable after load.`);
+  }
+  const acceptedScout = exploration.scoutDestination;
+  const loadedScout = aiState.evidence.exploration?.scoutDestinations?.find((candidate) => candidate.unitId === acceptedScout.unitId
+    && candidate.assignmentTick === acceptedScout.assignmentTick
+    && candidate.assignmentTargetTileIndex === acceptedScout.assignmentTargetTileIndex);
+  if (!loadedScout) throw new Error(`${context}: accepted scout assignment is absent from the loaded AI state.`);
+  const validatedScout = validateScoutDestinationProvenance(loadedScout, { expectedPlayer: exploration.aiPlayer, observationTick: state.tick });
+  if (stableJson(validatedScout) !== stableJson(acceptedScout)) {
+    throw new Error(`${context}: loaded scout provenance differs from the accepted pre-save assignment.`);
+  }
+  return validatedScout;
+}
+
+function revalidateLoadedScoutProvenance(state, currentLedger) {
+  const exploration = currentLedger.evidence.ai.exploration;
+  if (!exploration || exploration.loadValidation) return;
+  const scoutDestination = matchingLoadedScoutProvenance(state, currentLedger, "visible F12 scout revalidation");
+  exploration.loadValidation = {
+    loadedTick: state.tick,
+    aiPlayer: exploration.aiPlayer,
+    scoutDestination
+  };
+}
+
+function assertScoutProvenancePresentAtCheckpoint(state, currentLedger) {
+  const exploration = currentLedger.evidence.ai.exploration;
+  if (!exploration || exploration.loadValidation) return;
+  matchingLoadedScoutProvenance(state, currentLedger, "pre-F11 scout checkpoint");
 }
 
 function observeAiLaunches(ai, evidence, state) {
@@ -966,6 +1018,7 @@ function unmetMilestone(currentLedger) {
   if (ai.barracksCompletions.length < 2) return "AI second Barracks completion";
   if (!ai.buildDuration && !ai.trainDuration) return "one live AI build/train total+remaining duration";
   if (!ai.exploration) return "AI-owned exploration/scout destination";
+  if (!ai.exploration.loadValidation) return "post-F12 scout provenance revalidation";
   if (ai.launches.length < 1) return "literal live level-3 launch size 1";
   if (ai.launches.length < 2) return "literal live level-3 launch size 4";
   if (ai.launches.length < 3) return "literal live level-3 launch size 16";
@@ -1182,19 +1235,19 @@ function smokeDiagnostic(state) {
   };
 }
 
-async function waitForHttp(url, timeoutMs, exitCode) {
-  const deadline = Date.now() + timeoutMs;
+async function waitForHttp(url, deadline, exitCode) {
   while (Date.now() < deadline) {
     const exit = exitCode();
     if (exit instanceof Error) throw new Error(`Vite preview failed to spawn: ${exit.message}`);
     if (exit !== null) throw new Error(`Vite preview exited early with code ${exit}.`);
     try {
-      const response = await fetch(url);
+      const response = await fetchBeforeDeadline(url, deadline, 400, "preview readiness probe");
       if (response.ok) return;
     } catch {
       // Retry only until this segment's bounded startup deadline.
     }
-    await delay(80);
+    const retryDelayMs = Math.max(0, Math.min(80, deadline - Date.now()));
+    if (retryDelayMs > 0) await delay(retryDelayMs);
   }
   throw new Error(`Timed out waiting for production preview ${url}.`);
 }
@@ -1265,20 +1318,25 @@ async function emergencyAttemptAudit(port, error) {
   });
 }
 
-function processTreePids(rootPid) {
+function processTreePids(rootPid, deadline) {
   if (!Number.isInteger(rootPid) || rootPid <= 0) return [];
-  let output = "";
+  const execOptions = boundedExecFileSyncOptions(deadline, Date.now(), { maximumMs: 250, maxBuffer: 1_048_576 });
   try {
-    output = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" });
-  } catch {
-    return [rootPid];
+    const output = execFileSync("ps", ["-eo", "pid=,ppid="], {
+      encoding: "utf8",
+      timeout: execOptions.timeout,
+      maxBuffer: execOptions.maxBuffer,
+      killSignal: "SIGKILL"
+    });
+    const rows = output.trim().split("\n").map((line) => line.trim().split(/\s+/).map(Number)).filter(([pid, parentPid]) => Number.isInteger(pid) && Number.isInteger(parentPid));
+    const pids = [rootPid];
+    for (let index = 0; index < pids.length; index += 1) {
+      for (const [pid, parentPid] of rows) if (parentPid === pids[index] && !pids.includes(pid)) pids.push(pid);
+    }
+    return pids;
+  } catch (error) {
+    throw new Error(`bounded ps failed before ${deadline}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const rows = output.trim().split("\n").map((line) => line.trim().split(/\s+/).map(Number)).filter(([pid, parentPid]) => Number.isInteger(pid) && Number.isInteger(parentPid));
-  const pids = [rootPid];
-  for (let index = 0; index < pids.length; index += 1) {
-    for (const [pid, parentPid] of rows) if (parentPid === pids[index] && !pids.includes(pid)) pids.push(pid);
-  }
-  return pids;
 }
 
 async function stopExactPids(pids, deadline = Number.POSITIVE_INFINITY) {

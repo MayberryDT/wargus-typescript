@@ -586,6 +586,8 @@ export type WorldOrder =
       assignmentTargetTileY: number | null;
       assignmentTargetTileIndex: number | null;
       assignmentMapWidth: number | null;
+      assignmentMapHeight: number | null;
+      assignmentTileSize: number | null;
       ownerBufferValueAtAssignment: number | null;
       visibilityPlayerAtAssignment: number | null;
       visibilityBufferValueAtAssignment: number | null;
