@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, u
 import { connect } from "node:net";
 import path from "node:path";
 import { boundedAwaitMs, boundedExecFileSyncOptions, correlateNextPressureContact, deriveSegmentTiming, finalizeAttemptAudit, pageWorkDeadline, validateScoutDestinationProvenance } from "./lib/plan014-task9-contract.mjs";
+import { TASK9_LEDGER_SCHEMA_VERSION, assertCompatibleTask9Ledger, createTask9RunIdentity, resolveTask9RunDirectory } from "./lib/plan014-task9-run-state.mjs";
 import { rebaseCheckpointStorageState } from "./lib/plan014-task9-storage-state.mjs";
 
 const DEMO_SEED = "ai-staged-pressure";
@@ -19,14 +20,16 @@ const DIFFICULTY_SEQUENCE = [1, 2, 3, 4, 5, 3];
 const EXPECTED_DIFFICULTY_FACTORS = new Map([[1, 0.75], [2, 1], [3, 1], [4, 1.2], [5, 1.5]]);
 const EXPECTED_LAUNCH_SIZES = [1, 4, 16];
 const REQUIRED_DEFENDERS = 4;
-const LEDGER_SCHEMA_VERSION = 3;
 const MAX_ATTEMPTS = 512;
 const SERVER_MODE = "preview";
 const PORT_BASE = boundedInteger(process.env.WARGUS_PLAN014_TASK9_PORT_BASE, 55_100, 10_240, 64_000);
 const MAX_SEGMENTS = boundedInteger(process.env.WARGUS_PLAN014_TASK9_MAX_SEGMENTS, 96, 1, 256);
-const ARTIFACT_DIR = path.resolve(process.env.WARGUS_PLAN014_TASK9_ARTIFACT_DIR ?? path.resolve(process.cwd(), "..", "Wargus-TypeScript-artifacts", "plan014-task9"));
-const LEDGER_PATH = path.join(ARTIFACT_DIR, "checkpoint-ledger.json");
-const LOCK_PATH = path.join(ARTIFACT_DIR, "runner.lock");
+const ARTIFACT_ROOT = path.resolve(process.env.WARGUS_PLAN014_TASK9_ARTIFACT_DIR ?? path.resolve(process.cwd(), "..", "Wargus-TypeScript-artifacts", "plan014-task9"));
+const REQUESTED_RUN_ID = process.env.WARGUS_PLAN014_TASK9_RUN_ID ?? "";
+
+let runDirectory = null;
+let ledgerPath = null;
+let lockPath = null;
 
 let ledger = null;
 let lockFd = null;
@@ -40,13 +43,17 @@ class SegmentAttemptError extends Error {
 }
 
 try {
-  assertArtifactDirectoryOutsideRepo(ARTIFACT_DIR);
+  assertArtifactDirectoryOutsideRepo(ARTIFACT_ROOT);
   if (!existsSync(path.join(process.cwd(), "dist", "index.html"))) {
     throw new Error("Production-honest Task 9 requires an existing dist/index.html; run npm run build before the browser runner.");
   }
-  mkdirSync(ARTIFACT_DIR, { recursive: true });
+  const runIdentity = createTask9RunIdentity({ sourceCommit: exactCleanSourceCommit(), runId: REQUESTED_RUN_ID });
+  runDirectory = resolveTask9RunDirectory(ARTIFACT_ROOT, runIdentity.runId);
+  ledgerPath = path.join(runDirectory, "checkpoint-ledger.json");
+  lockPath = path.join(ARTIFACT_ROOT, "runner.lock");
+  mkdirSync(runDirectory, { recursive: true });
   lockFd = acquireLock();
-  ledger = loadLedger();
+  ledger = loadLedger(runIdentity, runDirectory);
   const { chromium } = await import("playwright");
 
   for (let segment = 0; segment < MAX_SEGMENTS && !ledger.completed; segment += 1) {
@@ -97,9 +104,10 @@ try {
   releaseLock(lockFd);
 }
 
-function createLedger() {
+function createLedger(runIdentity) {
   return {
-    schemaVersion: LEDGER_SCHEMA_VERSION,
+    schemaVersion: TASK9_LEDGER_SCHEMA_VERSION,
+    runIdentity: { ...runIdentity },
     seed: DEMO_SEED,
     viewport: VIEWPORT,
     saveSlot: SAVE_SLOT,
@@ -142,28 +150,27 @@ function emptyStructureEvidence(typeId) {
   return { typeId, order: null, foundation: null, completion: null };
 }
 
-function loadLedger() {
-  if (!existsSync(LEDGER_PATH)) return createLedger();
-  const parsed = JSON.parse(readFileSync(LEDGER_PATH, "utf8"));
-  if (parsed?.schemaVersion !== LEDGER_SCHEMA_VERSION || parsed.seed !== DEMO_SEED || parsed.saveSlot !== SAVE_SLOT || JSON.stringify(parsed.viewport) !== JSON.stringify(VIEWPORT)) {
-    throw new Error(`Checkpoint ledger does not match fixed Task 9 identity: ${LEDGER_PATH}`);
-  }
-  if (parsed.acceptedCheckpoint && !existsSync(parsed.acceptedCheckpoint.storageStatePath)) {
-    throw new Error(`Accepted checkpoint storage state is missing: ${parsed.acceptedCheckpoint.storageStatePath}`);
+function loadLedger(runIdentity, expectedRunDirectory) {
+  if (!existsSync(ledgerPath)) return createLedger(runIdentity);
+  const parsed = JSON.parse(readFileSync(ledgerPath, "utf8"));
+  assertCompatibleTask9Ledger(parsed, { runIdentity, runDirectory: expectedRunDirectory, storageStateExists: existsSync });
+  if (parsed.seed !== DEMO_SEED || parsed.saveSlot !== SAVE_SLOT || JSON.stringify(parsed.viewport) !== JSON.stringify(VIEWPORT)) {
+    throw new Error(`Checkpoint ledger does not match fixed Task 9 scenario: ${ledgerPath}`);
   }
   return parsed;
 }
 
 function writeLedger(nextLedger) {
-  const temporary = `${LEDGER_PATH}.tmp-${process.pid}`;
+  const temporary = `${ledgerPath}.tmp-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(nextLedger, null, 2)}\n`, "utf8");
-  renameSync(temporary, LEDGER_PATH);
+  renameSync(temporary, ledgerPath);
 }
 
 function beginAttempt(currentLedger, port, target) {
   currentLedger.attemptSequence += 1;
   const attempt = {
     id: currentLedger.attemptSequence,
+    runId: currentLedger.runIdentity.runId,
     port,
     target,
     status: "started",
@@ -441,10 +448,11 @@ async function runPageSegment({ page, context, url, port, attemptId, candidateLe
   if (pageErrors.length > 0) throw new Error(`Interrupted before accepted F11 save due to page exceptions: ${pageErrors.join("; ")}`);
 
   candidateLedger.acceptedSegment += 1;
-  const storageStatePath = path.join(ARTIFACT_DIR, `storage-state-segment-${String(candidateLedger.acceptedSegment).padStart(4, "0")}.json`);
+  const storageStatePath = path.join(runDirectory, `storage-state-segment-${String(candidateLedger.acceptedSegment).padStart(4, "0")}.json`);
   await saveAcceptedCheckpoint(context, storageStatePath);
   candidateLedger.acceptedCheckpoint = {
     acceptedSegment: candidateLedger.acceptedSegment,
+    runId: candidateLedger.runIdentity.runId,
     attemptId,
     port,
     target,
@@ -1391,12 +1399,12 @@ function processAlive(pid) {
 }
 
 function acquireLock() {
-  if (existsSync(LOCK_PATH)) {
-    const existingPid = Number(readFileSync(LOCK_PATH, "utf8").trim());
+  if (existsSync(lockPath)) {
+    const existingPid = Number(readFileSync(lockPath, "utf8").trim());
     if (Number.isInteger(existingPid) && processAlive(existingPid)) throw new Error(`Another Task 9 runner is active as PID ${existingPid}.`);
-    unlinkSync(LOCK_PATH);
+    unlinkSync(lockPath);
   }
-  const fd = openSync(LOCK_PATH, "wx");
+  const fd = openSync(lockPath, "wx");
   writeFileSync(fd, `${process.pid}\n`, "utf8");
   return fd;
 }
@@ -1404,7 +1412,15 @@ function acquireLock() {
 function releaseLock(fd) {
   if (fd === null) return;
   try { closeSync(fd); } catch { /* Already closed. */ }
-  try { unlinkSync(LOCK_PATH); } catch { /* Already removed. */ }
+  try { unlinkSync(lockPath); } catch { /* Already removed. */ }
+}
+
+function exactCleanSourceCommit() {
+  const options = { cwd: process.cwd(), encoding: "utf8", timeout: 3_000, maxBuffer: 1_048_576 };
+  const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], options).trim();
+  const trackedStatus = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], options).trim();
+  if (trackedStatus) throw new Error(`Task 9 requires a clean tracked worktree for exact commit identity: ${trackedStatus}`);
+  return sourceCommit;
 }
 
 function assertArtifactDirectoryOutsideRepo(directory) {
@@ -1456,6 +1472,6 @@ function printSummary(currentLedger, passed) {
   const status = passed ? "PASS" : "INCOMPLETE";
   console.log(`Plan 014 Task 9 ${status}: accepted segments=${currentLedger.acceptedSegment}, next=${unmetMilestone(currentLedger) ?? "none"}.`);
   console.log(`Difficulty samples=${currentLedger.evidence.difficultySamples.map((sample) => `${sample.difficulty}:${sample.factors?.build}`).join(",") || "none"}; launches=${ai.launches.map((launch) => launch.unitIds.length).join("/") || "none"}; defenders=${currentLedger.evidence.player.defenderCompletions.length}/${REQUIRED_DEFENDERS}.`);
-  console.log(`Machine checkpoint ledger: ${LEDGER_PATH}`);
+  console.log(`Machine checkpoint ledger: ${ledgerPath}`);
   if (currentLedger.acceptedCheckpoint) console.log(`Latest accepted browser storageState: ${currentLedger.acceptedCheckpoint.storageStatePath}`);
 }

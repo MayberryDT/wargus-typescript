@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 const runnerPath = "scripts/verify-browser-plan014-task9.mjs";
 const pureContractPath = "scripts/lib/plan014-task9-contract.mjs";
+const storageHandoffPath = "scripts/lib/plan014-task9-storage-state.mjs";
 const productionScoutProvenancePath = "src/wargus/scoutProvenance.mjs";
 const failures = [];
 
@@ -69,6 +70,7 @@ function expectEveryCallHasMultipleArguments(label, source, functionName) {
 }
 
 const runner = requireFile(runnerPath, "Plan 014 Task 9 runner");
+const storageHandoff = requireFile(storageHandoffPath, "Task 9 storage handoff");
 const packageSource = requireFile("package.json", "package manifest");
 const hudSource = requireFile("src/view/renderHud.ts", "HUD source");
 const mainSource = requireFile("src/main.ts", "browser smoke source");
@@ -89,7 +91,7 @@ if (!existsSync(productionScoutProvenancePath)) {
 
 expectIncludes("package manifest", packageSource, [
   '"verify:browser-plan014-task9": "node scripts/verify-browser-plan014-task9.mjs"',
-  '"verify:plan014-task9-contract": "node scripts/verify-plan014-task9-contract.mjs"'
+  '"verify:plan014-task9-contract": "node scripts/verify-plan014-task9-storage-state.mjs && node scripts/verify-plan014-task9-run-state.mjs && node scripts/verify-plan014-task9-contract.mjs"'
 ]);
 
 expectIncludes("Task 9 runner fixed scenario", runner, [
@@ -235,7 +237,7 @@ if (pureContract && expectFunction("scout provenance validator", pureContract.va
 }
 
 expectIncludes("Task 9 launch/contact causality integration", runner, [
-  "const LEDGER_SCHEMA_VERSION = 3",
+  "TASK9_LEDGER_SCHEMA_VERSION",
   "correlateNextPressureContact",
   "pressureContacts",
   "first 1-unit launch contact",
@@ -416,6 +418,20 @@ expectIncludes("Task 9 checkpoint protocol", runner, [
   "paused === true",
   "Interrupted before accepted F11 save"
 ]);
+expectIncludes("Task 9 immutable run identity", runner, [
+  "WARGUS_PLAN014_TASK9_RUN_ID",
+  "createTask9RunIdentity",
+  "exactCleanSourceCommit",
+  "resolveTask9RunDirectory",
+  "assertCompatibleTask9Ledger",
+  "path.join(runDirectory, \"checkpoint-ledger.json\")",
+  "runId: currentLedger.runIdentity.runId",
+  "runId: candidateLedger.runIdentity.runId"
+]);
+expectMatches("run identity is validated before ledger load and port allocation", runner, /const runIdentity = createTask9RunIdentity\(\{ sourceCommit: exactCleanSourceCommit\(\), runId: REQUESTED_RUN_ID \}\);[\s\S]*?runDirectory = resolveTask9RunDirectory\(ARTIFACT_ROOT, runIdentity\.runId\);[\s\S]*?ledger = loadLedger\(runIdentity, runDirectory\);[\s\S]*?allocatePort\(ledger\)/);
+expectMatches("storage handoff validates raw SHA before cloning and rebasing only the origin", storageHandoff, /const actualRawSha256 = createHash\("sha256"\)\.update\(rawSlot\)\.digest\("hex"\);[\s\S]*?actualRawSha256 !== expectedRawSha256[\s\S]*?const rebased = structuredClone\(storageState\);\s*rebased\.origins\[originIndex\]\.origin = new URL\(targetOrigin\)\.origin;\s*return \{ storageState: rebased, rawSlot \};/);
+expectMatches("runner hands validated storage to the destination context", runner, /const capturedStorageState = JSON\.parse\(readFileSync\(checkpoint\.storageStatePath, "utf8"\)\);\s*const handoff = rebaseCheckpointStorageState\(capturedStorageState, \{\s*targetOrigin: new URL\(url\)\.origin,\s*expectedSourceOrigin: `http:\/\/127\.0\.0\.1:\$\{checkpoint\.port\}`,\s*saveSlotKey: SAVE_SLOT_KEY,\s*expectedRawSha256: checkpoint\.slotIdentity\.rawSha256\s*\}\);\s*assertSlotIdentity\(handoff\.rawSlot, checkpoint\.slotIdentity, "checkpoint storageState handoff"\);\s*storageState = handoff\.storageState;[\s\S]*?browser\.newContext\(\{ viewport: VIEWPORT, storageState: storageState \?\? undefined \}\)/);
+expectMatches("destination page validates the slot before visible F12", runner, /const rawBeforeLoad = await readSaveSlot\(page\);\s*assertSlotIdentity\(rawBeforeLoad, checkpoint\.slotIdentity, "storageState before visible F12 load"\);\s*await page\.keyboard\.press\("F12"\)/);
 
 expectIncludes("Task 9 M08/M09 evidence", runner, [
   "const DIFFICULTY_SEQUENCE = [1, 2, 3, 4, 5, 3]",
