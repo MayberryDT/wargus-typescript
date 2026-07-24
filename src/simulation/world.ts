@@ -580,6 +580,16 @@ export type WorldOrder =
       kind: "explore";
       targetX: number;
       targetY: number;
+      assignmentTick: number | null;
+      assignmentPlayer: number | null;
+      assignmentTargetTileX: number | null;
+      assignmentTargetTileY: number | null;
+      assignmentTargetTileIndex: number | null;
+      assignmentMapWidth: number | null;
+      ownerBufferValueAtAssignment: number | null;
+      visibilityPlayerAtAssignment: number | null;
+      visibilityBufferValueAtAssignment: number | null;
+      selectedFromOwnerUnexploredAtAssignment: boolean;
       exploreRange: number;
       exploreWaitingCycle: number;
       path: WorldPathPoint[];

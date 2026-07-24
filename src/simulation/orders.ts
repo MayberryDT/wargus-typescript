@@ -7644,7 +7644,22 @@ export function sourceAiRuntimeEvidence(world: WorldState, playerId: number, sta
     .filter((unit): unit is WorldUnit & { order: Extract<WorldUnit["order"], { kind: "explore" }> } => unit.order?.kind === "explore")
     .sort((left, right) => left.id.localeCompare(right.id))
     .slice(0, 16)
-    .map((unit) => ({ unitId: unit.id, targetX: unit.order.targetX, targetY: unit.order.targetY, orderKind: unit.order.kind }));
+    .map((unit) => ({
+      unitId: unit.id,
+      targetX: unit.order.targetX,
+      targetY: unit.order.targetY,
+      orderKind: unit.order.kind,
+      assignmentTick: unit.order.assignmentTick,
+      assignmentPlayer: unit.order.assignmentPlayer,
+      assignmentTargetTileX: unit.order.assignmentTargetTileX,
+      assignmentTargetTileY: unit.order.assignmentTargetTileY,
+      assignmentTargetTileIndex: unit.order.assignmentTargetTileIndex,
+      assignmentMapWidth: unit.order.assignmentMapWidth,
+      ownerBufferValueAtAssignment: unit.order.ownerBufferValueAtAssignment,
+      visibilityPlayerAtAssignment: unit.order.visibilityPlayerAtAssignment,
+      visibilityBufferValueAtAssignment: unit.order.visibilityBufferValueAtAssignment,
+      selectedFromOwnerUnexploredAtAssignment: unit.order.selectedFromOwnerUnexploredAtAssignment
+    }));
   const productionQueues = completedBuildings
     .filter((unit) => unit.productionQueue.length > 0)
     .sort((left, right) => left.id.localeCompare(right.id))
@@ -7680,7 +7695,7 @@ export function sourceAiRuntimeEvidence(world: WorldState, playerId: number, sta
     .map((unit) => {
       const order = unit.order as (WorldUnit["order"] & { targetId?: unknown }) | null;
       const targetId = typeof order?.targetId === "string" ? order.targetId : null;
-      return { unitId: unit.id, typeId: unit.typeId, orderKind: order?.kind ?? null, targetId };
+      return { attackerId: unit.id, typeId: unit.typeId, orderKind: order?.kind ?? null, targetId, observedTick: world.tick };
     })
     .filter((entry) => entry.targetId !== null && visibilityPlayerUnitIds.has(entry.targetId))
     .slice(0, 64);
@@ -9566,16 +9581,39 @@ export function issueExploreOrder(world: WorldState, unitId: string, options: { 
   if (options.clearQueue !== false) {
     unit.moveQueue = [];
   }
+  const targetX = path.at(-1)?.x ?? target.x;
+  const targetY = path.at(-1)?.y ?? target.y;
   unit.order = {
     kind: "explore",
-    targetX: path.at(-1)?.x ?? target.x,
-    targetY: path.at(-1)?.y ?? target.y,
+    targetX,
+    targetY,
+    ...sourceExploreAssignmentEvidence(world, unit.player, targetX, targetY),
     exploreRange: 0,
     exploreWaitingCycle: 0,
     path,
     pathIndex: path.length > 1 ? 1 : 0
   };
   return true;
+}
+
+function sourceExploreAssignmentEvidence(world: WorldState, playerId: number, targetX: number, targetY: number) {
+  const targetTile = worldToTile(world, targetX, targetY);
+  const assignmentTargetTileIndex = targetTile.y * world.map.width + targetTile.x;
+  const ownerBuffer = sourceExploredTilesForPlayer(world, playerId);
+  const visibilityBuffer = sourceExploredTilesForPlayer(world, world.visibilityPlayer);
+  const ownerBufferValueAtAssignment = ownerBuffer[assignmentTargetTileIndex] ?? null;
+  return {
+    assignmentTick: world.tick,
+    assignmentPlayer: playerId,
+    assignmentTargetTileX: targetTile.x,
+    assignmentTargetTileY: targetTile.y,
+    assignmentTargetTileIndex,
+    assignmentMapWidth: world.map.width,
+    ownerBufferValueAtAssignment,
+    visibilityPlayerAtAssignment: world.visibilityPlayer,
+    visibilityBufferValueAtAssignment: visibilityBuffer[assignmentTargetTileIndex] ?? null,
+    selectedFromOwnerUnexploredAtAssignment: ownerBufferValueAtAssignment === 0
+  };
 }
 
 function findExplorationPath(world: WorldState, unit: WorldUnit): { target: { x: number; y: number }; path: Array<{ x: number; y: number }> } | null {
@@ -9628,6 +9666,7 @@ function retargetExploreOrder(world: WorldState, unit: WorldUnit): void {
   }
   unit.order.targetX = explorationPath.path.at(-1)?.x ?? explorationPath.target.x;
   unit.order.targetY = explorationPath.path.at(-1)?.y ?? explorationPath.target.y;
+  Object.assign(unit.order, sourceExploreAssignmentEvidence(world, unit.player, unit.order.targetX, unit.order.targetY));
   unit.order.path = explorationPath.path;
   unit.order.pathIndex = explorationPath.path.length > 1 ? 1 : 0;
 }

@@ -3750,10 +3750,24 @@ function normalizeLoadedOrder(world: WorldState, order: unknown, unit: WorldStat
     } : null;
   }
   if (kind === "explore") {
+    const nullableNonNegativeInteger = (value: unknown): number | null => {
+      const normalized = Math.floor(finiteNumberOr(value, -1));
+      return normalized >= 0 ? normalized : null;
+    };
     return {
       kind,
       targetX,
       targetY,
+      assignmentTick: nullableNonNegativeInteger(record.assignmentTick),
+      assignmentPlayer: nullableNonNegativeInteger(record.assignmentPlayer),
+      assignmentTargetTileX: nullableNonNegativeInteger(record.assignmentTargetTileX),
+      assignmentTargetTileY: nullableNonNegativeInteger(record.assignmentTargetTileY),
+      assignmentTargetTileIndex: nullableNonNegativeInteger(record.assignmentTargetTileIndex),
+      assignmentMapWidth: nullableNonNegativeInteger(record.assignmentMapWidth),
+      ownerBufferValueAtAssignment: nullableNonNegativeInteger(record.ownerBufferValueAtAssignment),
+      visibilityPlayerAtAssignment: nullableNonNegativeInteger(record.visibilityPlayerAtAssignment),
+      visibilityBufferValueAtAssignment: nullableNonNegativeInteger(record.visibilityBufferValueAtAssignment),
+      selectedFromOwnerUnexploredAtAssignment: record.selectedFromOwnerUnexploredAtAssignment === true,
       exploreRange: Math.max(0, Math.min(64, Math.floor(finiteNumberOr(record.exploreRange, 0)))),
       exploreWaitingCycle: Math.max(0, Math.min(5, Math.floor(finiteNumberOr(record.exploreWaitingCycle, 0)))),
       path,

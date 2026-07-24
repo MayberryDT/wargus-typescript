@@ -3,12 +3,14 @@ import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import path from "node:path";
+import { boundedAwaitMs, correlateNextPressureContact, deriveSegmentTiming, finalizeAttemptAudit, pageWorkDeadline, validateScoutDestinationProvenance } from "./lib/plan014-task9-contract.mjs";
 
 const DEMO_SEED = "ai-staged-pressure";
 const VIEWPORT = { width: 1280, height: 720 };
 const PAGE_LIMIT_MS = 25_000;
 const SEGMENT_LIMIT_MS = 30_000;
-const SEGMENT_CLEANUP_RESERVE_MS = 4_000;
+const SEGMENT_CLEANUP_RESERVE_MS = 5_000;
+const SEGMENT_RETURN_MARGIN_MS = 1_000;
 const SAVE_SLOT = 1;
 const SAVE_SLOT_KEY = "wargus-ts-save-slot-v1-1";
 const EXPECTED_MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
@@ -16,6 +18,7 @@ const DIFFICULTY_SEQUENCE = [1, 2, 3, 4, 5, 3];
 const EXPECTED_DIFFICULTY_FACTORS = new Map([[1, 0.75], [2, 1], [3, 1], [4, 1.2], [5, 1.5]]);
 const EXPECTED_LAUNCH_SIZES = [1, 4, 16];
 const REQUIRED_DEFENDERS = 4;
+const LEDGER_SCHEMA_VERSION = 2;
 const MAX_ATTEMPTS = 512;
 const SERVER_MODE = "preview";
 const PORT_BASE = boundedInteger(process.env.WARGUS_PLAN014_TASK9_PORT_BASE, 55_100, 10_240, 64_000);
@@ -26,6 +29,14 @@ const LOCK_PATH = path.join(ARTIFACT_DIR, "runner.lock");
 
 let ledger = null;
 let lockFd = null;
+
+class SegmentAttemptError extends Error {
+  constructor(message, attemptAudit, cause) {
+    super(message, { cause });
+    this.name = "SegmentAttemptError";
+    this.attemptAudit = attemptAudit;
+  }
+}
 
 try {
   assertArtifactDirectoryOutsideRepo(ARTIFACT_DIR);
@@ -53,19 +64,19 @@ try {
       finishAttempt(ledger, attemptId, {
         status: "accepted",
         pageWallMs: result.pageWallMs,
-        segmentWallMs: result.segmentWallMs,
-        serverPid: result.serverPid,
-        browserPid: result.browserPid,
-        stoppedPids: result.stoppedPids,
-        cleanup: "port-clear"
+        ...result.attemptAudit
       });
       ledger.completed = unmetMilestone(ledger) === null;
       writeLedger(ledger);
       printAcceptedSegment(ledger, target, result);
     } catch (error) {
+      const attemptAudit = error instanceof SegmentAttemptError
+        ? error.attemptAudit
+        : await emergencyAttemptAudit(port, error);
       finishAttempt(ledger, attemptId, {
         status: "failed",
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        ...attemptAudit
       });
       writeLedger(ledger);
       throw error;
@@ -87,7 +98,7 @@ try {
 
 function createLedger() {
   return {
-    schemaVersion: 1,
+    schemaVersion: LEDGER_SCHEMA_VERSION,
     seed: DEMO_SEED,
     viewport: VIEWPORT,
     saveSlot: SAVE_SLOT,
@@ -119,7 +130,7 @@ function createLedger() {
         trainDuration: null,
         exploration: null,
         launches: [],
-        contact: null,
+        pressureContacts: [],
         performanceSamples: []
       }
     }
@@ -133,7 +144,7 @@ function emptyStructureEvidence(typeId) {
 function loadLedger() {
   if (!existsSync(LEDGER_PATH)) return createLedger();
   const parsed = JSON.parse(readFileSync(LEDGER_PATH, "utf8"));
-  if (parsed?.schemaVersion !== 1 || parsed.seed !== DEMO_SEED || parsed.saveSlot !== SAVE_SLOT || JSON.stringify(parsed.viewport) !== JSON.stringify(VIEWPORT)) {
+  if (parsed?.schemaVersion !== LEDGER_SCHEMA_VERSION || parsed.seed !== DEMO_SEED || parsed.saveSlot !== SAVE_SLOT || JSON.stringify(parsed.viewport) !== JSON.stringify(VIEWPORT)) {
     throw new Error(`Checkpoint ledger does not match fixed Task 9 identity: ${LEDGER_PATH}`);
   }
   if (parsed.acceptedCheckpoint && !existsSync(parsed.acceptedCheckpoint.storageStatePath)) {
@@ -182,9 +193,14 @@ async function allocatePort(currentLedger) {
 
 async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoint }) {
   const segmentStartedAt = Date.now();
-  const segmentDeadline = segmentStartedAt + SEGMENT_LIMIT_MS;
+  const timing = deriveSegmentTiming(segmentStartedAt, {
+    segmentLimitMs: SEGMENT_LIMIT_MS,
+    cleanupReserveMs: SEGMENT_CLEANUP_RESERVE_MS,
+    returnMarginMs: SEGMENT_RETURN_MARGIN_MS
+  });
   const url = `http://127.0.0.1:${port}/?smoke=1&demoSeed=${encodeURIComponent(DEMO_SEED)}`;
   let server = null;
+  let serverSpawnError = null;
   let browserServer = null;
   let browser = null;
   let context = null;
@@ -193,14 +209,42 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
   let browserPids = [];
   let pageWallMs = 0;
   let pageResult = null;
-  let outerExpired = false;
-  const outerTimer = setTimeout(() => {
-    outerExpired = true;
+  let runError = null;
+  let cleanupForced = false;
+  let completionExpired = false;
+  let cleanupStartedAtMs = null;
+  let cleanupFinishedAtMs = null;
+  const cleanupReasons = [];
+  const cleanupErrors = [];
+  const terminationAttempts = [];
+  let forcedCleanupChain = Promise.resolve();
+  const refreshOwnedPids = () => {
     if (browserServer?.process()?.pid) browserPids = uniquePids([...browserPids, ...processTreePids(browserServer.process().pid)]);
     if (server?.pid) serverPids = uniquePids([...serverPids, ...processTreePids(server.pid)]);
+  };
+  const requestForcedCleanup = (reason) => {
+    cleanupForced = true;
+    cleanupStartedAtMs ??= Date.now();
+    cleanupReasons.push(reason);
+    refreshOwnedPids();
     if (browser) void browser.close().catch(() => { /* Exact PID cleanup follows. */ });
-    void stopExactPids([...browserPids, ...serverPids]).catch(() => { /* Main cleanup reports failures. */ });
-  }, SEGMENT_LIMIT_MS);
+    const exactPids = uniquePids([...browserPids, ...serverPids]);
+    forcedCleanupChain = forcedCleanupChain
+      .then(async () => {
+        const outcome = await stopExactPids(exactPids, timing.completionDeadline);
+        terminationAttempts.push({ reason, ...outcome });
+      })
+      .catch((error) => cleanupErrors.push(`forced cleanup ${reason}: ${error instanceof Error ? error.message : String(error)}`));
+    console.error(`Task 9 segment ${attemptId} forced exact cleanup began before the external cap: ${reason}; PIDs ${exactPids.join(",") || "none"}.`);
+    return forcedCleanupChain;
+  };
+  const cleanupTimer = setTimeout(() => {
+    void requestForcedCleanup("reserved cleanup deadline reached");
+  }, Math.max(0, timing.cleanupStartAt - Date.now()));
+  const completionTimer = setTimeout(() => {
+    completionExpired = true;
+    void requestForcedCleanup("completion deadline reached");
+  }, Math.max(0, timing.completionDeadline - Date.now()));
 
   try {
     if (await isPortOpen(port)) throw new Error(`Segment ${attemptId} refused occupied port ${port}.`);
@@ -208,61 +252,113 @@ async function runSegment({ chromium, port, attemptId, candidateLedger, checkpoi
       cwd: process.cwd(),
       stdio: "ignore"
     });
+    server.once("error", (error) => { serverSpawnError = error; });
     serverPids = [server.pid];
     console.log(`Task 9 segment ${attemptId} tracked server PID ${server.pid} on unique port ${port}.`);
-    await waitForHttp(url, Math.min(5_000, remainingMs(segmentDeadline)), () => server.exitCode);
-    const manifestResponse = await fetch(`http://127.0.0.1:${port}/wargus/manifest.json`);
+    await waitForHttp(url, boundedAwaitMs(timing.cleanupStartAt, Date.now(), 5_000), () => serverSpawnError ?? server.exitCode);
+    const manifestResponse = await fetchBeforeDeadline(`http://127.0.0.1:${port}/wargus/manifest.json`, timing.cleanupStartAt, 2_000, "critical manifest fetch");
     if (!manifestResponse.ok) throw new Error(`Critical asset /wargus/manifest.json returned HTTP ${manifestResponse.status}.`);
 
     const browserExecutablePath = process.env.CHROME_BIN ?? chromium.executablePath();
-    browserServer = await withTimeout(chromium.launchServer({
+    const launchTimeoutMs = boundedAwaitMs(timing.cleanupStartAt, Date.now(), 4_000);
+    const launchPromise = chromium.launchServer({
       executablePath: browserExecutablePath,
       headless: true,
-      timeout: Math.min(4_000, remainingMs(segmentDeadline)),
+      timeout: launchTimeoutMs,
       args: ["--disable-background-networking", "--disable-extensions", "--disable-dev-shm-usage", "--no-proxy-server"]
-    }), Math.min(5_000, remainingMs(segmentDeadline)), "Portable Chromium did not start within the segment budget.");
+    });
+    void launchPromise.then((launchedServer) => {
+      browserServer = launchedServer;
+      refreshOwnedPids();
+      if (cleanupForced) void requestForcedCleanup("browser launch settled after cleanup began");
+    }).catch(() => { /* Playwright owns failed native-timeout teardown. */ });
+    browserServer = await launchPromise;
     browserPids = processTreePids(browserServer.process().pid);
     console.log(`Task 9 segment ${attemptId} tracked browser PID ${browserServer.process().pid}.`);
-    browser = await withTimeout(chromium.connect(browserServer.wsEndpoint()), Math.min(3_000, remainingMs(segmentDeadline)), "Playwright did not connect within the segment budget.");
+    browser = await withTimeout(chromium.connect(browserServer.wsEndpoint()), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Playwright did not connect before forced cleanup.");
     const storageState = checkpoint ? checkpoint.storageStatePath : undefined;
-    context = await browser.newContext({ viewport: VIEWPORT, storageState: storageState ?? undefined });
-    page = await context.newPage();
+    context = await withTimeout(browser.newContext({ viewport: VIEWPORT, storageState: storageState ?? undefined }), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Browser context did not start before forced cleanup.");
+    page = await withTimeout(context.newPage(), boundedAwaitMs(timing.cleanupStartAt, Date.now(), 3_000), "Browser page did not start before forced cleanup.");
     if (context.pages().length !== 1) throw new Error(`Segment ${attemptId} expected one page, found ${context.pages().length}.`);
     const pageStartedAt = Date.now();
-    const pageDeadline = Math.min(pageStartedAt + PAGE_LIMIT_MS, segmentDeadline - SEGMENT_CLEANUP_RESERVE_MS);
+    const pageDeadline = pageWorkDeadline(pageStartedAt, PAGE_LIMIT_MS, timing);
     pageResult = await withTimeout(
       runPageSegment({ page, context, url, port, attemptId, candidateLedger, checkpoint, pageDeadline }),
-      Math.min(PAGE_LIMIT_MS, remainingMs(pageDeadline)),
+      boundedAwaitMs(pageDeadline, Date.now(), PAGE_LIMIT_MS),
       `Segment ${attemptId} exhausted its ${PAGE_LIMIT_MS}ms page cap or reserved outer-cleanup budget.`
     );
     pageWallMs = Date.now() - pageStartedAt;
     if (context.pages().length !== 1) throw new Error(`Segment ${attemptId} opened extra pages; found ${context.pages().length}.`);
-    if (outerExpired || Date.now() > segmentDeadline) throw new Error(`Segment ${attemptId} exceeded outer ${SEGMENT_LIMIT_MS}ms budget.`);
-  } finally {
-    try {
-      if (browserServer?.process()?.pid) browserPids = uniquePids([...browserPids, ...processTreePids(browserServer.process().pid)]);
-      if (server?.pid) serverPids = uniquePids([...serverPids, ...processTreePids(server.pid)]);
-      try { await Promise.race([context?.close(), delay(650)]); } catch { /* Exact PID cleanup follows. */ }
-      try { await Promise.race([browser?.close(), delay(650)]); } catch { /* Exact PID cleanup follows. */ }
-      try { await Promise.race([browserServer?.close(), delay(650)]); } catch { /* Exact PID cleanup follows. */ }
-      await stopExactPids([...browserPids, ...serverPids]);
-      await waitForPortClear(port, Math.min(800, remainingMs(segmentDeadline)));
-      console.log(`Task 9 segment ${attemptId} cleanup port-clear proof: port ${port} is closed; exact PIDs ${uniquePids([...browserPids, ...serverPids]).join(",")}.`);
-    } finally {
-      clearTimeout(outerTimer);
-    }
+  } catch (error) {
+    runError = error;
   }
 
-  const segmentWallMs = Date.now() - segmentStartedAt;
-  if (outerExpired || segmentWallMs > SEGMENT_LIMIT_MS) throw new Error(`Segment ${attemptId} exceeded outer ${SEGMENT_LIMIT_MS}ms budget including exact cleanup.`);
-  if (!pageResult) throw new Error(`Segment ${attemptId} ended without an accepted F11 checkpoint.`);
+  clearTimeout(cleanupTimer);
+  clearTimeout(completionTimer);
+  cleanupStartedAtMs ??= Date.now();
+  cleanupReasons.push(runError ? `segment failure: ${runError instanceof Error ? runError.message : String(runError)}` : "normal completion");
+  refreshOwnedPids();
+  const closePromises = [context?.close(), browser?.close(), browserServer?.close()].filter(Boolean);
+  if (closePromises.length > 0 && Date.now() < timing.completionDeadline) {
+    try {
+      await withTimeout(Promise.allSettled(closePromises), boundedAwaitMs(timing.completionDeadline, Date.now(), 650), "Graceful close yielded to exact PID cleanup.");
+    } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  try {
+    await forcedCleanupChain;
+  } catch (error) {
+    cleanupErrors.push(`forced cleanup join: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  refreshOwnedPids();
+  try {
+    const outcome = await stopExactPids([...browserPids, ...serverPids], timing.completionDeadline);
+    terminationAttempts.push({ reason: "final exact cleanup", ...outcome });
+  } catch (error) {
+    cleanupErrors.push(`final exact cleanup: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const listenerClear = await proveListenerClear(port, timing.completionDeadline);
+  if (!listenerClear.clear && listenerClear.error) cleanupErrors.push(listenerClear.error);
+  cleanupFinishedAtMs = Date.now();
+  clearTimeout(cleanupTimer);
+  clearTimeout(completionTimer);
+  refreshOwnedPids();
+
+  const attemptAudit = finalizeAttemptAudit({
+    selectedPort: port,
+    serverPid: server?.pid ?? null,
+    browserPid: browserServer?.process()?.pid ?? null,
+    ownedServerPids: serverPids,
+    ownedBrowserPids: browserPids,
+    terminationAttempts,
+    listenerClear,
+    cleanupForced,
+    cleanupReasons,
+    cleanupErrors,
+    cleanupStartedAtMs,
+    cleanupFinishedAtMs,
+    segmentStartedAtMs: segmentStartedAt,
+    segmentFinishedAtMs: cleanupFinishedAtMs
+  });
+  const durationRelation = attemptAudit.segmentWallMs < SEGMENT_LIMIT_MS ? "<" : ">=";
+  console.log(`Task 9 segment ${attemptId} hard-duration proof: ${attemptAudit.segmentWallMs}ms ${durationRelation} ${SEGMENT_LIMIT_MS}ms; cleanup=${attemptAudit.cleanupStatus}; listener-clear=${attemptAudit.listenerClear.clear}; owned/stopped/remaining=${attemptAudit.ownedPids.length}/${attemptAudit.stoppedPids.length}/${attemptAudit.remainingPids.length}.`);
+
+  const failureMessages = [];
+  if (runError) failureMessages.push(runError instanceof Error ? runError.message : String(runError));
+  if (!pageResult) failureMessages.push(`Segment ${attemptId} ended without an accepted F11 checkpoint.`);
+  if (attemptAudit.cleanupStatus !== "complete") failureMessages.push(`Segment ${attemptId} cleanup audit is incomplete.`);
+  if (completionExpired || cleanupFinishedAtMs > timing.completionDeadline || attemptAudit.segmentWallMs >= SEGMENT_LIMIT_MS) {
+    failureMessages.push(`Segment ${attemptId} exceeded outer ${SEGMENT_LIMIT_MS}ms budget including exact cleanup; duration=${attemptAudit.segmentWallMs}ms.`);
+  }
+  if (failureMessages.length > 0) {
+    throw new SegmentAttemptError(failureMessages.join(" "), attemptAudit, runError);
+  }
   return {
     ...pageResult,
     pageWallMs,
-    segmentWallMs,
-    serverPid: server?.pid ?? null,
-    browserPid: browserServer?.process()?.pid ?? null,
-    stoppedPids: uniquePids([...browserPids, ...serverPids])
+    segmentWallMs: attemptAudit.segmentWallMs,
+    attemptAudit
   };
 }
 
@@ -753,12 +849,13 @@ function observeAiExploration(ai, evidence, state) {
   if (ai.exploration) return;
   const scout = evidence.exploration?.scoutDestinations?.[0];
   if (scout) {
+    const acceptedScout = validateScoutDestinationProvenance(scout, { expectedPlayer: evidence.player, observationTick: state.tick });
     ai.exploration = {
       tick: state.tick,
       aiPlayer: evidence.player,
       exploredTiles: evidence.exploration.exploredTiles,
       totalTiles: evidence.exploration.totalTiles,
-      scoutDestination: scout
+      scoutDestination: acceptedScout
     };
   }
 }
@@ -795,12 +892,18 @@ function observeAiLaunches(ai, evidence, state) {
 }
 
 function observeAiContact(ai, evidence, state) {
-  if (ai.contact) return;
   const contactOrders = evidence.visibilityPlayerContactOrders ?? [];
-  const damagedUnits = evidence.visibilityPlayerDamagedUnits ?? [];
-  if (contactOrders.length > 0 || damagedUnits.length > 0) {
-    ai.contact = { tick: state.tick, contactOrders, damagedUnits };
-  }
+  const pressureContact = correlateNextPressureContact({
+    launches: ai.launches,
+    acceptedContacts: ai.pressureContacts,
+    candidateOrders: contactOrders,
+    observationTick: state.tick
+  });
+  if (!pressureContact) return;
+  ai.pressureContacts.push({
+    ...pressureContact,
+    damagedVisibilityPlayerUnits: evidence.visibilityPlayerDamagedUnits ?? []
+  });
 }
 
 function observePerformance(ai, state) {
@@ -866,7 +969,9 @@ function unmetMilestone(currentLedger) {
   if (ai.launches.length < 1) return "literal live level-3 launch size 1";
   if (ai.launches.length < 2) return "literal live level-3 launch size 4";
   if (ai.launches.length < 3) return "literal live level-3 launch size 16";
-  if (!ai.contact) return "first player contact/damage";
+  if (ai.pressureContacts.length < 1) return "first 1-unit launch contact";
+  if (ai.pressureContacts.length < 2) return "second 4-unit launch contact";
+  if (ai.pressureContacts.length < 3) return "third 16-unit launch contact";
   const secondBarracksTick = ai.barracksCompletions[1]?.tick ?? Number.MAX_SAFE_INTEGER;
   if (!ai.performanceSamples.some((sample) => sample.tick >= secondBarracksTick && sample.averageUpdateMs <= 20 && sample.averageRenderMs <= 24)) return "update<=20/render<=24 at second Barracks";
   const launch16Tick = ai.launches[2]?.launchedTick ?? Number.MAX_SAFE_INTEGER;
@@ -1080,7 +1185,9 @@ function smokeDiagnostic(state) {
 async function waitForHttp(url, timeoutMs, exitCode) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (exitCode() !== null) throw new Error(`Vite preview exited early with code ${exitCode()}.`);
+    const exit = exitCode();
+    if (exit instanceof Error) throw new Error(`Vite preview failed to spawn: ${exit.message}`);
+    if (exit !== null) throw new Error(`Vite preview exited early with code ${exit}.`);
     try {
       const response = await fetch(url);
       if (response.ok) return;
@@ -1092,22 +1199,70 @@ async function waitForHttp(url, timeoutMs, exitCode) {
   throw new Error(`Timed out waiting for production preview ${url}.`);
 }
 
-async function isPortOpen(port) {
+async function fetchBeforeDeadline(url, deadline, maximumMs, label) {
+  const timeoutMs = boundedAwaitMs(deadline, Date.now(), maximumMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`${label} exceeded its ${timeoutMs}ms bounded startup budget.`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function isPortOpen(port, timeoutMs = 300) {
   return new Promise((resolve) => {
     const socket = connect({ host: "127.0.0.1", port });
     socket.once("connect", () => { socket.destroy(); resolve(true); });
     socket.once("error", () => resolve(false));
-    socket.setTimeout(300, () => { socket.destroy(); resolve(false); });
+    socket.setTimeout(Math.max(1, timeoutMs), () => { socket.destroy(); resolve(false); });
   });
 }
 
 async function waitForPortClear(port, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!(await isPortOpen(port))) return;
-    await delay(80);
+    if (!(await isPortOpen(port, Math.min(100, Math.max(1, deadline - Date.now()))))) return;
+    await delay(Math.min(40, Math.max(1, deadline - Date.now())));
   }
   throw new Error(`Exact PID cleanup failed port-clear proof for ${port}.`);
+}
+
+async function proveListenerClear(port, deadline) {
+  const timeoutMs = Math.max(1, Math.min(800, deadline - Date.now()));
+  try {
+    await waitForPortClear(port, timeoutMs);
+    return { port, clear: true, checkedAtMs: Date.now(), error: null };
+  } catch (error) {
+    return { port, clear: false, checkedAtMs: Date.now(), error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function emergencyAttemptAudit(port, error) {
+  const startedAtMs = Date.now();
+  const listenerClear = await proveListenerClear(port, startedAtMs + 250);
+  const cleanupErrors = [`segment failed before structured audit: ${error instanceof Error ? error.message : String(error)}`];
+  if (!listenerClear.clear && listenerClear.error) cleanupErrors.push(listenerClear.error);
+  const finishedAtMs = Date.now();
+  return finalizeAttemptAudit({
+    selectedPort: port,
+    serverPid: null,
+    browserPid: null,
+    ownedServerPids: [],
+    ownedBrowserPids: [],
+    terminationAttempts: [],
+    listenerClear,
+    cleanupForced: false,
+    cleanupReasons: ["emergency outer failure audit"],
+    cleanupErrors,
+    cleanupStartedAtMs: startedAtMs,
+    cleanupFinishedAtMs: finishedAtMs,
+    segmentStartedAtMs: startedAtMs,
+    segmentFinishedAtMs: finishedAtMs
+  });
 }
 
 function processTreePids(rootPid) {
@@ -1126,16 +1281,30 @@ function processTreePids(rootPid) {
   return pids;
 }
 
-async function stopExactPids(pids) {
+async function stopExactPids(pids, deadline = Number.POSITIVE_INFINITY) {
   const exact = uniquePids(pids).reverse();
+  const termSignaledPids = [];
+  const killSignaledPids = [];
   for (const pid of exact) {
-    try { process.kill(pid, "SIGTERM"); } catch { /* Already exited. */ }
+    try {
+      process.kill(pid, "SIGTERM");
+      termSignaledPids.push(pid);
+    } catch { /* Already exited. */ }
   }
-  await delay(180);
+  const graceMs = Math.max(0, Math.min(180, deadline - Date.now()));
+  if (graceMs > 0) await delay(graceMs);
   for (const pid of exact) {
     if (!processAlive(pid)) continue;
-    try { process.kill(pid, "SIGKILL"); } catch { /* Already exited. */ }
+    try {
+      process.kill(pid, "SIGKILL");
+      killSignaledPids.push(pid);
+    } catch { /* Already exited. */ }
   }
+  const reapMs = Math.max(0, Math.min(50, deadline - Date.now()));
+  if (reapMs > 0) await delay(reapMs);
+  const stoppedPids = exact.filter((pid) => !processAlive(pid));
+  const remainingPids = exact.filter((pid) => processAlive(pid));
+  return { requestedPids: exact, termSignaledPids, killSignaledPids, stoppedPids, remainingPids };
 }
 
 function uniquePids(pids) {
