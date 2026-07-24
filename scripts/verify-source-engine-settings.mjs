@@ -991,7 +991,7 @@ const fragments = [
   [ordersSource, "function sourceFrameSeconds(world: WorldState): number"],
   [ordersSource, "return 1 / sourceDefaultGameSpeed(world)"],
   [mainSource, "sourceRuntimeGameSpeedMultiplier"],
-  [mainSource, "simulateWorld(world, deltaSeconds * sourceRuntimeGameSpeedMultiplier(world, gameSpeed))"],
+  [mainSource, "simulateWorld(world, deltaSeconds * sourceRuntimeGameSpeedMultiplier(world, gameSpeed), SIMULATION_TURN_BUDGET)"],
   [ordersSource, "for (let sourceSpeed = 15; sourceSpeed <= 75; sourceSpeed += 5)"],
   [ordersSource, "sourceSpeed / tickRate"],
   [sourceInputSource, "export function sourceSpeedKeyAction"],

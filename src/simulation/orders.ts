@@ -5433,19 +5433,43 @@ function refundFailedSourceUpgradeTo(world: WorldState, unit: WorldUnit, unitDef
   }
 }
 
-export function simulateWorld(world: WorldState, deltaSeconds: number): void {
+export const SIMULATION_MAX_BACKLOG_SECONDS = 0.5;
+
+export type SimulationTurnBudget = {
+  now: () => number;
+  maxMilliseconds: number;
+  maxSteps: number;
+  maxBacklogSeconds: number;
+};
+
+export function simulateWorld(world: WorldState, deltaSeconds: number, turnBudget?: SimulationTurnBudget): void {
   if (world.matchState.status !== "playing") {
     return;
   }
-  world.elapsed += deltaSeconds;
-  world.accumulator += deltaSeconds;
-
   const tickSeconds = sourceFrameSeconds(world);
+  const maximumBacklogSeconds = turnBudget
+    ? Math.max(tickSeconds, turnBudget.maxBacklogSeconds)
+    : Number.POSITIVE_INFINITY;
+  const acceptedDeltaSeconds = Math.min(deltaSeconds, Math.max(0, maximumBacklogSeconds - world.accumulator));
+  world.elapsed += acceptedDeltaSeconds;
+  world.accumulator += acceptedDeltaSeconds;
+
+  const maximumSteps = turnBudget ? Math.max(1, Math.floor(turnBudget.maxSteps)) : Number.POSITIVE_INFINITY;
+  const maximumMilliseconds = turnBudget ? Math.max(0, turnBudget.maxMilliseconds) : Number.POSITIVE_INFINITY;
+  const turnStartedAt = turnBudget?.now() ?? 0;
+  let processedSteps = 0;
   while (world.accumulator >= tickSeconds) {
+    if (processedSteps >= maximumSteps) {
+      break;
+    }
+    if (turnBudget && processedSteps > 0 && turnBudget.now() - turnStartedAt >= maximumMilliseconds) {
+      break;
+    }
     stepWorld(world, tickSeconds);
     updateVisibility(world);
     world.tick += 1;
     world.accumulator -= tickSeconds;
+    processedSteps += 1;
   }
 }
 

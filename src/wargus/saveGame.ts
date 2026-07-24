@@ -2,7 +2,7 @@ import type { WargusEngineSettings, WargusManifest, WargusMap, WargusSpeedFactor
 import { isExploreOnReadyValue } from "./sourceActions";
 import { normalizeScoutAssignmentProvenance } from "./scoutProvenance.mjs";
 import { boxDimensionsForUnit, createInitialWorld, createPlayerStats, defaultForestTileResources, imageForTileset, initialForestResourcesForWorld, isSourceBuildingDefinition, isUnitVisibleToPlayer, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, resourcesHeldForSourceUnit, sightRangeForUnit, sourceAiDefinitionForName, sourceAiDefinitionIsPassive, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, updateVisibility, worldKindForUnitDefinition, type WorldProjectile, type WorldState } from "../simulation/world";
-import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, canTrainUnitAt, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
+import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, canTrainUnitAt, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, SIMULATION_MAX_BACKLOG_SECONDS, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
 import { isSourceHarvestableWoodTile } from "../simulation/passability";
 
 type MutableEngineSettingsSave = Pick<WargusEngineSettings,
@@ -362,7 +362,7 @@ function loadSavedGameFromRaw(manifest: WargusManifest, raw: string | null): Loa
   world.elapsed = Math.max(0, finiteNumberOr(save.world.elapsed, 0));
   world.tick = savedTick;
   world.tickRate = Math.max(1, Math.min(120, finiteNumberOr(save.world.tickRate, 30)));
-  world.accumulator = Math.max(0, Math.min(sourceFrameSecondsForSave(world), finiteNumberOr(save.world.accumulator, 0)));
+  world.accumulator = Math.max(0, Math.min(sourceSimulationBacklogSecondsForSave(world), finiteNumberOr(save.world.accumulator, 0)));
   pruneInvalidLoadedReferences(world);
   restoreIdleOnReadyOrders(world);
   updateVisibility(world);
@@ -1420,8 +1420,8 @@ function sourceOrderRetryTicksForSave(world: WorldState, sourceCycles: number): 
   return Math.max(1, Math.round(sourceCycles * (sourceDefaultGameSpeed(world) / 30)));
 }
 
-function sourceFrameSecondsForSave(world: WorldState): number {
-  return 1 / sourceDefaultGameSpeed(world);
+function sourceSimulationBacklogSecondsForSave(world: WorldState): number {
+  return Math.max(1 / sourceDefaultGameSpeed(world), SIMULATION_MAX_BACKLOG_SECONDS);
 }
 
 function normalizeNonNegativeIntegerArray(value: unknown, fallback: number[]): number[] {

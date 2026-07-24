@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -28,6 +28,7 @@ try {
   if (compiler.status !== 0) {
     throw new Error(`Fixture compile failed:\n${compiler.stdout}${compiler.stderr}`);
   }
+  copyFileSync(resolve(root, "src/wargus/scoutProvenance.mjs"), join(output, "wargus/scoutProvenance.mjs"));
 
   const require = createRequire(import.meta.url);
   const manifest = JSON.parse(readFileSync(resolve(root, "public/wargus/manifest.json"), "utf8"));

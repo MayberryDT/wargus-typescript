@@ -8,6 +8,7 @@ import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, loadSavedGameJson, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
 import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, createPlan014AiKnowledgeFixtureWorld, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiKnowledgeFixture, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceAiRuntimeEvidence, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
+import { SIMULATION_MAX_BACKLOG_SECONDS, type SimulationTurnBudget } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
 import { availableCommands, destroyMinimapRenderCache, latestMinimapRenderCacheDebug, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type MinimapRenderCacheDebug, type ModernHudLayoutDebug } from "./view/renderHud";
@@ -216,6 +217,12 @@ const mapPickerState: { open: boolean; query: string; maps: WargusMap[] } = { op
 
 const MAX_FRAME_DELTA_SECONDS = 0.1;
 const FIXED_DEMO_MAX_FRAME_DELTA_SECONDS = 0.35;
+const SIMULATION_TURN_BUDGET: SimulationTurnBudget = {
+  now: () => performance.now(),
+  maxMilliseconds: 8,
+  maxSteps: 8,
+  maxBacklogSeconds: SIMULATION_MAX_BACKLOG_SECONDS
+};
 const FIXED_DEMO_HUD_REFRESH_SECONDS = 0.5;
 const FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1.3;
 const BROWSER_SMOKE_REFRESH_MS = 250;
@@ -3840,7 +3847,7 @@ app.ticker.add((ticker) => {
     const updateStartedAt = performance.now();
     if (!paused && !briefingOpen) {
       if (!titleScreenOpen) {
-        simulateWorld(world, deltaSeconds * sourceRuntimeGameSpeedMultiplier(world, gameSpeed));
+        simulateWorld(world, deltaSeconds * sourceRuntimeGameSpeedMultiplier(world, gameSpeed), SIMULATION_TURN_BUDGET);
           autosaveClock += deltaSeconds;
       }
     }
