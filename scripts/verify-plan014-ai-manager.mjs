@@ -186,6 +186,34 @@ try {
     || !(result?.productionReservation?.afterResolutionQueues?.research > 0)) {
     failures.push(`production respects unpaid build reservation: ${JSON.stringify(result?.productionReservation)}`);
   }
+  if (result?.blockedOilRepair?.rawRepairAffordable !== true
+    || result?.blockedOilRepair?.rawPlatformAffordable !== true
+    || result?.blockedOilRepair?.resourcesUnchanged !== true
+    || result?.blockedOilRepair?.pendingBuildingPreserved !== true
+    || result?.blockedOilRepair?.repairOrderBlocked !== true
+    || result?.blockedOilRepair?.oilOrderBlocked !== true
+    || result?.blockedOilRepair?.oilPatchPreserved !== true
+    || result?.blockedOilRepair?.platformNotStarted !== true) {
+    failures.push(`oil/repair initiation respects unpaid build reservation: ${JSON.stringify(result?.blockedOilRepair)}`);
+  }
+  if (result?.repairPause?.acceptedWithNetFunds !== true
+    || result?.repairPause?.paused?.orderPreserved !== true
+    || result?.repairPause?.paused?.hitPointsUnchanged !== true
+    || result?.repairPause?.paused?.resourcesUnchanged !== true
+    || result?.repairPause?.progressedAfterAdditionalFunds?.hitPointsIncreased !== true
+    || result?.repairPause?.progressedAfterAdditionalFunds?.spendMatches !== true
+    || result?.repairPause?.progressedAfterAdditionalFunds?.pendingBuildingPreserved !== true) {
+    failures.push(`AI repair pauses and retries around changing reservations: ${JSON.stringify(result?.repairPause)}`);
+  }
+  if (!(Number(result?.pendingOil?.expectedGold ?? 0) > 0)
+    || result?.pendingOil?.reservedWithPendingOil?.gold !== result?.pendingOil?.expectedGold
+    || result?.pendingOil?.reservedWithPendingOil?.wood !== result?.pendingOil?.expectedWood
+    || result?.pendingOil?.queuesBlockedByPendingOil !== true
+    || result?.pendingOil?.platformProgressedAfterBuildingResolution !== true
+    || result?.pendingOil?.oilPatchReplaced !== true
+    || result?.pendingOil?.spendMatches !== true) {
+    failures.push(`pending oil-platform reservation and funded progress: ${JSON.stringify(result?.pendingOil)}`);
+  }
   const oneHallBuild = result?.oneHall?.evidence?.buildRoles?.find((entry) => entry.role === "town-center");
   const secondBarracksBuild = result?.secondBarracks?.evidence?.buildRoles?.find((entry) => entry.role === "barracks");
   if (oneHallBuild?.desired !== 1
@@ -265,7 +293,7 @@ try {
     failures.push(`bounded live AI evidence: ${JSON.stringify(liveEvidence)}`);
   }
   if (failures.length > 0) throw new Error(failures.join("\n"));
-  console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, production-safe unpaid reservation, exact mixed force, atomic mixed-reachability launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);
+  console.log(`Plan 014 live AI manager/force/save safety verified (one Hall, travelling-worker second Barracks, production/oil/repair-safe unpaid reservations, exact mixed force, atomic mixed-reachability launch, ${saveSafety.launchCount} bounded launches; ${result.competingCosts.arrivalTicks} arrival ticks).`);
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

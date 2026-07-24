@@ -7037,7 +7037,9 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
       continue;
     }
     const repairTarget = findNearestAiRepairTarget(world, worker);
-    if (repairTarget && issueRepairOrder(world, worker.id, repairTarget.id)) {
+    if (repairTarget
+      && sourceAiCanAfford(world, playerId, repairTarget.construction ? sourceConstructionRepairCosts(repairTarget) : repairCostsForTarget(repairTarget))
+      && issueRepairOrder(world, worker.id, repairTarget.id)) {
       continue;
     }
     const preferredResource = preferredAiWorkerResource(world, worker, state.collectWeights ?? null);
@@ -7197,7 +7199,9 @@ function runLandAttackAi(world: WorldState, playerId: number, state: WorldAiStat
       continue;
     }
     const patch = findNearestOilPatch(world, tanker);
-    if (patch) {
+    const player = world.players.find((candidate) => candidate.id === playerId);
+    const platformDefinition = player ? oilPlatformDefinitionForBuilder(world, tanker, player, world.unitDefinitions) : undefined;
+    if (patch && platformDefinition && sourceAiCanAfford(world, playerId, platformDefinition.costs)) {
       issueBuildOilPlatformOrder(world, tanker.id, patch.id, world.unitDefinitions);
     }
   }
@@ -7506,11 +7510,22 @@ function sourceAiReservedBuildResources(world: WorldState, playerId: number): Re
   const reserved: Record<string, number> = {};
   for (const unit of world.units) {
     const order = unit.order;
-    if (unit.player !== playerId || !isUsableBuilder(unit) || order?.kind !== "build" || order.phase !== "to-site") {
+    if (unit.player !== playerId || !order) {
       continue;
     }
-    const pending = world.unitDefinitions.find((candidate) => candidate.id === order.buildingTypeId);
-    if (!pending || !isSourceBuildingDefinition(pending)) {
+    let pending: WargusUnit | undefined;
+    if (order.kind === "build" && order.phase === "to-site" && isUsableBuilder(unit)) {
+      const definition = world.unitDefinitions.find((candidate) => candidate.id === order.buildingTypeId);
+      pending = definition && isSourceBuildingDefinition(definition) ? definition : undefined;
+    } else if (order.kind === "build-oil-platform" && isUsableSourceBuildActor(unit)) {
+      const oilPatch = findUnit(world, order.targetId);
+      const player = world.players.find((candidate) => candidate.id === playerId);
+      const definition = player ? oilPlatformDefinitionForBuilder(world, unit, player, world.unitDefinitions) : undefined;
+      if (oilPatch && definition && canGatherResource(unit, "oil") && isOilPatch(oilPatch) && oilPatch.hitPoints > 0 && oilPatch.resourcesHeld > 0) {
+        pending = definition;
+      }
+    }
+    if (!pending) {
       continue;
     }
     for (let index = 0; index < pending.costs.length - 1; index += 2) {
@@ -9197,6 +9212,18 @@ function stepBuildOilPlatformOrder(world: WorldState, unit: WorldUnit, tickSecon
     return;
   }
   const preserveQueue = unit.order.preserveQueue === true;
+  if (world.aiStates.some((state) => state.enabled && state.player === unit.player)) {
+    const available = sourceAiAvailableResources(world, unit.player);
+    for (let index = 0; index < platformDefinition.costs.length - 1; index += 2) {
+      const resource = platformDefinition.costs[index];
+      if (resource !== "time") {
+        available[resource] = (available[resource] ?? 0) + Number(platformDefinition.costs[index + 1]);
+      }
+    }
+    if (!canAfford(available, platformDefinition.costs)) {
+      return;
+    }
+  }
   if (!canIssueBuildOilPlatformAt(world, unit, oilPatch, world.unitDefinitions)) {
     failPendingConstructionAtArrival(world, unit);
     return;
@@ -9234,7 +9261,12 @@ function stepRepairOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   const repairCycleTicks = sourceRepairCycleTicks(world, unit);
   while (unit.order.repairCycle >= repairCycleTicks && (target.construction || target.hitPoints < target.maxHitPoints)) {
     const repairCosts = target.construction ? sourceConstructionRepairCosts(target) : repairCostsForTarget(target);
-    if (!canAfford(player.resources, repairCosts)) {
+    const sourceAiRepair = world.aiStates.some((state) => state.enabled && state.player === unit.player);
+    if (!canAfford(sourceAiRepair ? sourceAiAvailableResources(world, unit.player) : player.resources, repairCosts)) {
+      if (sourceAiRepair) {
+        unit.order.repairCycle = repairCycleTicks;
+        return;
+      }
       unit.order = null;
       return;
     }
@@ -19327,7 +19359,10 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
   const barracksTypeId = race === "orc" ? "unit-orc-barracks" : "unit-human-barracks";
   const supplyTypeId = race === "orc" ? "unit-pig-farm" : "unit-farm";
   const blacksmithTypeId = race === "orc" ? "unit-orc-blacksmith" : "unit-human-blacksmith";
-  const requiredTypeIds = [workerTypeId, townCenterTypeId, barracksTypeId, supplyTypeId, blacksmithTypeId];
+  const tankerTypeId = race === "orc" ? "unit-orc-oil-tanker" : "unit-human-oil-tanker";
+  const platformTypeId = race === "orc" ? "unit-orc-oil-platform" : "unit-human-oil-platform";
+  const oilPatchTypeId = "unit-oil-patch";
+  const requiredTypeIds = [workerTypeId, townCenterTypeId, barracksTypeId, supplyTypeId, blacksmithTypeId, tankerTypeId, platformTypeId, oilPatchTypeId];
   if (requiredTypeIds.some((typeId) => !sourceWorld.unitDefinitions.some((definition) => definition.id === typeId))) {
     return { ok: false, error: `missing fixture definitions: ${requiredTypeIds.join(", ")}` };
   }
@@ -19507,6 +19542,171 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
     combat: reservationBarracks.productionQueue.length,
     research: productionReservationFixture.world.activeResearch.filter((entry) => entry.buildingId === reservationBlacksmith.id).length
   };
+
+  const platformDefinition = sourceWorld.unitDefinitions.find((definition) => definition.id === platformTypeId)!;
+  const blockedOilRepairFixture = fixture(["barracks", "barracks"]);
+  blockedOilRepairFixture.state.workerTarget = 2;
+  const blockedHall = unit(blockedOilRepairFixture.world, townCenterTypeId, "__plan014-oil-repair-hall", 3, 3);
+  const blockedBarracks = unit(blockedOilRepairFixture.world, barracksTypeId, "__plan014-oil-repair-barracks", 10, 3);
+  const blockedSupplyA = unit(blockedOilRepairFixture.world, supplyTypeId, "__plan014-oil-repair-supply-a", 3, 10);
+  const blockedSupplyB = unit(blockedOilRepairFixture.world, supplyTypeId, "__plan014-oil-repair-supply-b", 9, 10);
+  const blockedBuilder = unit(blockedOilRepairFixture.world, workerTypeId, "__plan014-oil-repair-a-builder", 16, 15);
+  const blockedRepairWorker = unit(blockedOilRepairFixture.world, workerTypeId, "__plan014-oil-repair-b-worker", 3, 10);
+  const blockedTanker = unit(blockedOilRepairFixture.world, tankerTypeId, "__plan014-oil-repair-tanker", 22, 15);
+  const blockedOilPatch = unit(blockedOilRepairFixture.world, oilPatchTypeId, "__plan014-oil-repair-patch", 23, 15);
+  blockedOilPatch.resourcesHeld = 100000;
+  blockedSupplyA.hitPoints = Math.max(1, blockedSupplyA.maxHitPoints - repairHpForTarget(blockedSupplyA) * 2);
+  travelToResource(blockedBuilder);
+  blockedOilRepairFixture.world.allowedUnitTypes = [...new Set([...blockedOilRepairFixture.world.allowedUnitTypes, platformTypeId])];
+  blockedOilRepairFixture.world.visibleTiles.fill(1);
+  blockedOilRepairFixture.world.units = [
+    blockedHall,
+    blockedBarracks,
+    blockedSupplyA,
+    blockedSupplyB,
+    blockedBuilder,
+    blockedRepairWorker,
+    blockedTanker,
+    blockedOilPatch
+  ];
+  for (const resource of ["gold", "wood", "oil"]) {
+    blockedOilRepairFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource);
+  }
+  const blockedOilRepairResourcesBefore = { ...blockedOilRepairFixture.player.resources };
+  const repairCosts = repairCostsForTarget(blockedSupplyA);
+  const rawRepairAffordable = canAfford(blockedOilRepairResourcesBefore, repairCosts);
+  const rawPlatformAffordable = canAfford(blockedOilRepairResourcesBefore, platformDefinition.costs);
+  runLandAttackAi(blockedOilRepairFixture.world, blockedOilRepairFixture.state.player, blockedOilRepairFixture.state);
+  const blockedOilRepair = {
+    rawRepairAffordable,
+    rawPlatformAffordable,
+    resourcesUnchanged: resourcesEqual(blockedOilRepairResourcesBefore, blockedOilRepairFixture.player.resources),
+    pendingBuildingPreserved: blockedBuilder.order?.kind === "build"
+      && blockedBuilder.order.phase === "to-site"
+      && blockedBuilder.order.buildingTypeId === barracksTypeId,
+    repairOrderBlocked: blockedRepairWorker.order === null,
+    oilOrderBlocked: blockedTanker.order === null,
+    oilPatchPreserved: blockedOilRepairFixture.world.units.some((candidate) => candidate.id === blockedOilPatch.id),
+    platformNotStarted: !blockedOilRepairFixture.world.units.some((candidate) => candidate.typeId === platformTypeId && candidate.construction)
+  };
+
+  const repairPauseFixture = fixture([]);
+  repairPauseFixture.state.workerTarget = 2;
+  const repairPauseHall = unit(repairPauseFixture.world, townCenterTypeId, "__plan014-repair-pause-hall", 3, 3);
+  const repairPauseBarracks = unit(repairPauseFixture.world, barracksTypeId, "__plan014-repair-pause-barracks", 10, 3);
+  const repairPauseSupplyA = unit(repairPauseFixture.world, supplyTypeId, "__plan014-repair-pause-supply-a", 3, 10);
+  const repairPauseSupplyB = unit(repairPauseFixture.world, supplyTypeId, "__plan014-repair-pause-supply-b", 9, 10);
+  const repairPauseBuilder = unit(repairPauseFixture.world, workerTypeId, "__plan014-repair-pause-a-builder", 16, 15);
+  const repairPauseWorker = unit(repairPauseFixture.world, workerTypeId, "__plan014-repair-pause-b-worker", 3, 10);
+  repairPauseSupplyA.hitPoints = Math.max(1, repairPauseSupplyA.maxHitPoints - repairHpForTarget(repairPauseSupplyA) * 2);
+  repairPauseBuilder.order = {
+    kind: "build",
+    phase: "to-site",
+    buildingTypeId: barracksTypeId,
+    tileX: 20,
+    tileY: 10,
+    targetId: null,
+    targetX: 20 * repairPauseFixture.world.tileSize,
+    targetY: 10 * repairPauseFixture.world.tileSize,
+    buildCycle: 0,
+    path: [],
+    pathIndex: 0
+  };
+  repairPauseFixture.world.units = [repairPauseHall, repairPauseBarracks, repairPauseSupplyA, repairPauseSupplyB, repairPauseBuilder, repairPauseWorker];
+  const repairPauseCosts = repairCostsForTarget(repairPauseSupplyA);
+  for (const resource of ["gold", "wood", "oil"]) {
+    repairPauseFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource) + costValue(repairPauseCosts, resource);
+  }
+  runLandAttackAi(repairPauseFixture.world, repairPauseFixture.state.player, repairPauseFixture.state);
+  const repairAcceptedWithNetFunds = repairPauseWorker.order?.kind === "repair";
+  for (const resource of ["gold", "wood", "oil"]) {
+    repairPauseFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource);
+  }
+  const repairBlockedResourcesBefore = { ...repairPauseFixture.player.resources };
+  const repairBlockedHitPointsBefore = repairPauseSupplyA.hitPoints;
+  if (repairPauseWorker.order?.kind === "repair") {
+    repairPauseWorker.order.repairCycle = sourceRepairCycleTicks(repairPauseFixture.world, repairPauseWorker);
+  }
+  stepRepairOrder(repairPauseFixture.world, repairPauseWorker, 0);
+  const repairPaused = {
+    orderPreserved: repairPauseWorker.order?.kind === "repair",
+    hitPointsUnchanged: repairPauseSupplyA.hitPoints === repairBlockedHitPointsBefore,
+    resourcesUnchanged: resourcesEqual(repairBlockedResourcesBefore, repairPauseFixture.player.resources)
+  };
+  for (const resource of ["gold", "wood", "oil"]) {
+    repairPauseFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource) + costValue(repairPauseCosts, resource);
+  }
+  const repairProgressResourcesBefore = { ...repairPauseFixture.player.resources };
+  const repairProgressHitPointsBefore = repairPauseSupplyA.hitPoints;
+  stepRepairOrder(repairPauseFixture.world, repairPauseWorker, 0);
+  const repairProgress = {
+    hitPointsIncreased: repairPauseSupplyA.hitPoints > repairProgressHitPointsBefore,
+    spendMatches: ["gold", "wood", "oil"].every((resource) => (
+      (repairPauseFixture.player.resources[resource] ?? 0)
+        === (repairProgressResourcesBefore[resource] ?? 0) - costValue(repairPauseCosts, resource)
+    )),
+    pendingBuildingPreserved: repairPauseBuilder.order?.kind === "build" && repairPauseBuilder.order.phase === "to-site"
+  };
+
+  const pendingOilFixture = fixture([]);
+  pendingOilFixture.state.workerTarget = 1;
+  const pendingOilHall = unit(pendingOilFixture.world, townCenterTypeId, "__plan014-pending-oil-hall", 3, 3);
+  const pendingOilBarracks = unit(pendingOilFixture.world, barracksTypeId, "__plan014-pending-oil-barracks", 10, 3);
+  const pendingOilSupplyA = unit(pendingOilFixture.world, supplyTypeId, "__plan014-pending-oil-supply-a", 3, 10);
+  const pendingOilSupplyB = unit(pendingOilFixture.world, supplyTypeId, "__plan014-pending-oil-supply-b", 9, 10);
+  const pendingOilBuilder = unit(pendingOilFixture.world, workerTypeId, "__plan014-pending-oil-builder", 16, 15);
+  const pendingOilTanker = unit(pendingOilFixture.world, tankerTypeId, "__plan014-pending-oil-tanker", 22, 15);
+  const pendingOilPatch = unit(pendingOilFixture.world, oilPatchTypeId, "__plan014-pending-oil-patch", 23, 15);
+  pendingOilPatch.resourcesHeld = 100000;
+  pendingOilFixture.world.allowedUnitTypes = [...new Set([...pendingOilFixture.world.allowedUnitTypes, platformTypeId])];
+  pendingOilFixture.world.visibleTiles.fill(1);
+  pendingOilBuilder.order = {
+    kind: "build",
+    phase: "to-site",
+    buildingTypeId: barracksTypeId,
+    tileX: 20,
+    tileY: 10,
+    targetId: null,
+    targetX: 20 * pendingOilFixture.world.tileSize,
+    targetY: 10 * pendingOilFixture.world.tileSize,
+    buildCycle: 0,
+    path: [],
+    pathIndex: 0
+  };
+  pendingOilTanker.order = {
+    kind: "build-oil-platform",
+    targetId: pendingOilPatch.id,
+    targetX: pendingOilPatch.x,
+    targetY: pendingOilPatch.y,
+    path: [],
+    pathIndex: 0
+  };
+  pendingOilFixture.world.units = [pendingOilHall, pendingOilBarracks, pendingOilSupplyA, pendingOilSupplyB, pendingOilBuilder, pendingOilTanker, pendingOilPatch];
+  for (const resource of ["gold", "wood", "oil"]) {
+    pendingOilFixture.player.resources[resource] = costValue(barracksDefinition.costs, resource) + costValue(platformDefinition.costs, resource);
+  }
+  const reservedWithPendingOil = sourceAiReservedBuildResources(pendingOilFixture.world, pendingOilFixture.state.player);
+  runLandAttackAi(pendingOilFixture.world, pendingOilFixture.state.player, pendingOilFixture.state);
+  const queuesBlockedByPendingOil = pendingOilHall.productionQueue.length === 0 && pendingOilBarracks.productionQueue.length === 0;
+  pendingOilBuilder.order = null;
+  for (const resource of ["gold", "wood", "oil"]) {
+    pendingOilFixture.player.resources[resource] = costValue(platformDefinition.costs, resource);
+  }
+  const oilProgressResourcesBefore = { ...pendingOilFixture.player.resources };
+  stepBuildOilPlatformOrder(pendingOilFixture.world, pendingOilTanker, 0);
+  const oilPlatformFoundation = pendingOilFixture.world.units.find((candidate) => candidate.typeId === platformTypeId && Boolean(candidate.construction));
+  const pendingOil = {
+    reservedWithPendingOil,
+    expectedGold: costValue(barracksDefinition.costs, "gold") + costValue(platformDefinition.costs, "gold"),
+    expectedWood: costValue(barracksDefinition.costs, "wood") + costValue(platformDefinition.costs, "wood"),
+    queuesBlockedByPendingOil,
+    platformProgressedAfterBuildingResolution: Boolean(oilPlatformFoundation),
+    oilPatchReplaced: !pendingOilFixture.world.units.some((candidate) => candidate.id === pendingOilPatch.id),
+    spendMatches: ["gold", "wood", "oil"].every((resource) => (
+      (pendingOilFixture.player.resources[resource] ?? 0)
+        === (oilProgressResourcesBefore[resource] ?? 0) - costValue(platformDefinition.costs, resource)
+    ))
+  };
   const oneHall = {
     openingWorkerCount: 1,
     beforeOrder: oneHallBeforeOrder,
@@ -19574,11 +19774,39 @@ export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState):
       && productionReservation.foundationReached
       && !productionReservation.foundationCancelled
       && Object.values(productionReservation.reservedAfterArrival).every((amount) => amount === 0)
-      && productionReservation.spendingAllowedAfterResolution,
+      && productionReservation.spendingAllowedAfterResolution
+      && blockedOilRepair.rawRepairAffordable
+      && blockedOilRepair.rawPlatformAffordable
+      && blockedOilRepair.resourcesUnchanged
+      && blockedOilRepair.pendingBuildingPreserved
+      && blockedOilRepair.repairOrderBlocked
+      && blockedOilRepair.oilOrderBlocked
+      && blockedOilRepair.oilPatchPreserved
+      && blockedOilRepair.platformNotStarted
+      && repairAcceptedWithNetFunds
+      && repairPaused.orderPreserved
+      && repairPaused.hitPointsUnchanged
+      && repairPaused.resourcesUnchanged
+      && repairProgress.hitPointsIncreased
+      && repairProgress.spendMatches
+      && repairProgress.pendingBuildingPreserved
+      && (pendingOil.reservedWithPendingOil.gold ?? 0) === pendingOil.expectedGold
+      && (pendingOil.reservedWithPendingOil.wood ?? 0) === pendingOil.expectedWood
+      && pendingOil.queuesBlockedByPendingOil
+      && pendingOil.platformProgressedAfterBuildingResolution
+      && pendingOil.oilPatchReplaced
+      && pendingOil.spendMatches,
     oneHall,
     secondBarracks,
     competingCosts,
-    productionReservation
+    productionReservation,
+    blockedOilRepair,
+    repairPause: {
+      acceptedWithNetFunds: repairAcceptedWithNetFunds,
+      paused: repairPaused,
+      progressedAfterAdditionalFunds: repairProgress
+    },
+    pendingOil
   };
 }
 
