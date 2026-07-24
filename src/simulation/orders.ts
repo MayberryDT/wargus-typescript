@@ -5876,6 +5876,11 @@ function stepExploreOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
   }
   const order = unit.order;
   if (Math.hypot(unit.x - order.targetX, unit.y - order.targetY) <= Math.max(3, unit.speed * tickSeconds * 1.5)) {
+    if (isWorker(unit) && world.aiStates.some((state) => state.enabled && state.player === unit.player)) {
+      unit.order = null;
+      startNextQueuedMove(world, unit);
+      return;
+    }
     order.exploreRange = 0;
     order.exploreWaitingCycle = 1;
     retargetExploreOrder(world, unit);
@@ -8530,23 +8535,42 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
   if (!state || world.tick < state.nextScoutTick) {
     return;
   }
-  let assigned = false;
-  for (const scout of scouts) {
+  if (world.units.some((unit) => unit.player === playerId && unit.hitPoints > 0 && unit.order?.kind === "explore")) {
+    return;
+  }
+  for (const scout of [...scouts].sort((left, right) => left.id.localeCompare(right.id))) {
     if (scout.order && scout.order.kind !== "move") {
       continue;
     }
     const nearDestination = scout.order?.kind === "move"
       && Math.hypot(scout.x - scout.order.targetX, scout.y - scout.order.targetY) <= world.tileSize * 2;
     if (scout.order && !nearDestination) {
-      continue;
+      return;
     }
     const target = findAiPressurePointForUnit(world, playerId, scout) ?? fallbackAiScoutPoint(world, scout);
     if (target) {
       issueMoveOrder(world, scout.id, target.x, target.y);
-      assigned = true;
+      if (scout.order?.kind === "move") {
+        state.nextScoutTick = world.tick + sourceOrderRetryTicks(world, 5 * 30);
+        return;
+      }
     }
   }
-  if (assigned) {
+
+  const forceMemberIds = new Set(state.sourceScriptForces.flatMap((force) => force.assignedUnitIds));
+  const safeLandUnits = world.units
+    .filter((unit) => unit.player === playerId
+      && unit.kind === "land"
+      && canReceiveMoveOrders(unit)
+      && !isTransport(unit)
+      && !isOilTanker(unit)
+      && unit.productionQueue.length === 0
+      && !forceMemberIds.has(unit.id))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const scout = safeLandUnits.find((unit) => unit.canAttack && !isWorker(unit) && !unit.order)
+    ?? safeLandUnits.find((unit) => isWorker(unit) && !unit.order && unit.resourcesHeld === 0 && !findNearestAiRepairTarget(world, unit))
+    ?? safeLandUnits.find((unit) => isWorker(unit) && unit.order?.kind === "harvest" && unit.resourcesHeld === 0);
+  if (scout && sourceExploredTilesForPlayer(world, playerId).includes(0) && issueSourceAiScoutExploreOrder(world, scout)) {
     state.nextScoutTick = world.tick + sourceOrderRetryTicks(world, 5 * 30);
   }
 }
@@ -9599,27 +9623,66 @@ export function issueExploreOrder(world: WorldState, unitId: string, options: { 
   if (!unit || !canIssueExploreOrder(world, unit)) {
     return false;
   }
-  const explorationPath = findExplorationPath(world, unit);
+  return issueExploreOrderForUnit(world, unit, options.clearQueue !== false, false);
+}
+
+function issueSourceAiScoutExploreOrder(world: WorldState, unit: WorldUnit): boolean {
+  return issueExploreOrderForUnit(world, unit, true, true, findSourceAiScoutExplorationPath(world, unit));
+}
+
+function issueExploreOrderForUnit(
+  world: WorldState,
+  unit: WorldUnit,
+  clearQueue: boolean,
+  ownerUnexploredOnly: boolean,
+  explorationPath: { target: { x: number; y: number }; path: Array<{ x: number; y: number }> } | null = findExplorationPath(world, unit)
+): boolean {
   if (!explorationPath) {
     return false;
   }
   const { target, path } = explorationPath;
-  if (options.clearQueue !== false) {
-    unit.moveQueue = [];
-  }
   const targetX = path.at(-1)?.x ?? target.x;
   const targetY = path.at(-1)?.y ?? target.y;
+  const assignmentEvidence = sourceExploreAssignmentEvidence(world, unit.player, targetX, targetY);
+  if (ownerUnexploredOnly && !assignmentEvidence.selectedFromOwnerUnexploredAtAssignment) {
+    return false;
+  }
+  if (clearQueue) {
+    unit.moveQueue = [];
+  }
   unit.order = {
     kind: "explore",
     targetX,
     targetY,
-    ...sourceExploreAssignmentEvidence(world, unit.player, targetX, targetY),
+    ...assignmentEvidence,
     exploreRange: 0,
     exploreWaitingCycle: 0,
     path,
     pathIndex: path.length > 1 ? 1 : 0
   };
   return true;
+}
+
+function findSourceAiScoutExplorationPath(world: WorldState, unit: WorldUnit): { target: { x: number; y: number }; path: Array<{ x: number; y: number }> } | null {
+  const exploredTiles = sourceExploredTilesForPlayer(world, unit.player);
+  const origin = worldToTile(world, unit.x, unit.y);
+  const maxRadius = Math.max(world.map.width, world.map.height);
+  for (let radius = 1; radius <= maxRadius; radius += 1) {
+    for (let y = origin.y - radius; y <= origin.y + radius; y += 1) {
+      for (let x = origin.x - radius; x <= origin.x + radius; x += 1) {
+        if (Math.max(Math.abs(x - origin.x), Math.abs(y - origin.y)) !== radius
+          || x < 1 || y < 1 || x >= world.map.width - 1 || y >= world.map.height - 1
+          || exploredTiles[y * world.map.width + x] !== 0
+          || !isTilePassable(world, x, y, movementKindForUnit(unit), unit.id)) {
+          continue;
+        }
+        const target = { x: x * world.tileSize + world.tileSize / 2, y: y * world.tileSize + world.tileSize / 2 };
+        const path = findPath(world, unit, target.x, target.y);
+        return path.length > 0 ? { target, path } : null;
+      }
+    }
+  }
+  return null;
 }
 
 function sourceExploreAssignmentEvidence(world: WorldState, playerId: number, targetX: number, targetY: number) {
@@ -19440,6 +19503,143 @@ function plan014AiFixtureWorld(sourceWorld: WorldState, width = 16, height = 12)
     tick: 0,
     accumulator: 0
   };
+}
+
+export function runPlan014AiScoutEligibilityFixture(sourceWorld: WorldState): Record<string, unknown> {
+  const sourceState = sourceWorld.aiStates.find((state) => state.enabled);
+  if (!sourceState) return { ok: false, error: "missing enabled AI state" };
+  const race = sourceWorld.players.find((player) => player.id === sourceState.player)?.race === "orc" ? "orc" : "human";
+  const workerTypeId = race === "orc" ? "unit-peon" : "unit-peasant";
+  const soldierTypeId = race === "orc" ? "unit-grunt" : "unit-footman";
+  const world = plan014AiFixtureWorld(sourceWorld, 32, 24);
+  world.engineSettings.aiExploresDefault = true;
+  world.engineSettings.lastDifficultyDefault = 3;
+  world.tick = 6876;
+  world.aiStates.forEach((candidate) => { candidate.enabled = false; });
+  const state = world.aiStates.find((candidate) => candidate.player === sourceState.player)!;
+  state.enabled = true;
+  state.strategy = "land";
+  state.sourceScriptId = "wc2-land-attack";
+  state.sourceScriptIndex = 18;
+  state.sourceScriptSleepUntilTick = 0;
+  state.sourceScriptLaunches = [];
+  state.sourceScriptForceRoles = [];
+  state.buildOrder = [];
+  state.workerTarget = 6;
+  state.nextScoutTick = 0;
+  const player = world.players.find((candidate) => candidate.id === state.player)!;
+  player.resources = { ...player.resources, gold: 0, wood: 1220, oil: 5050 };
+  const createFixtureUnit = (typeId: string, id: string, tileX: number, tileY: number): WorldUnit => {
+    const definition = world.unitDefinitions.find((candidate) => candidate.id === typeId)!;
+    return createWorldUnit({ unit: definition, id, player: state.player, tileX, tileY, tileset: null });
+  };
+  const miners = Array.from({ length: 6 }, (_, index) => {
+    const worker = createFixtureUnit(workerTypeId, `__plan014-p08-miner-${String(index).padStart(2, "0")}`, 3 + index, 4);
+    worker.order = { kind: "harvest", targetId: null, resource: "gold", phase: "to-resource", targetX: 96, targetY: 576, tileX: null, tileY: null, dropoffId: null, dropoffX: worker.x, dropoffY: worker.y, gatherSeconds: 0, returnSeconds: 0, path: [], pathIndex: 0 };
+    return worker;
+  });
+  const forceSoldier = createFixtureUnit(soldierTypeId, "__plan014-p08-force-soldier", 10, 4);
+  state.sourceScriptForces = [{ id: 1, attack: true, targets: [{ role: "soldier", count: 4, unitTypeId: soldierTypeId }], assignedUnitIds: [forceSoldier.id] }];
+  world.units = [...miners, forceSoldier];
+  const ownerBuffer = world.exploredTilesByPlayer[state.player]!;
+  const humanBuffer = world.exploredTilesByPlayer[world.visibilityPlayer]!;
+  ownerBuffer.fill(1);
+  humanBuffer.fill(1);
+  ownerBuffer[18 * world.map.width + 24] = 0;
+  world.exploredTiles = humanBuffer;
+  const pristineWorld = structuredClone(world) as WorldState;
+  runLandAttackAi(world, state.player, state);
+  const scoutEvidence = sourceAiRuntimeEvidence(world, state.player, state).exploration.scoutDestinations;
+  const provenance = scoutEvidence[0];
+  const provenanceExact = provenance?.assignmentTick === 6876
+    && provenance.assignmentPlayer === state.player
+    && provenance.assignmentTargetTileX === 24
+    && provenance.assignmentTargetTileY === 18
+    && provenance.assignmentTargetTileIndex === 600
+    && provenance.assignmentMapWidth === 32
+    && provenance.assignmentMapHeight === 24
+    && provenance.assignmentTileSize === 32
+    && provenance.ownerBufferValueAtAssignment === 0
+    && provenance.visibilityPlayerAtAssignment === world.visibilityPlayer
+    && provenance.visibilityBufferValueAtAssignment === 1
+    && provenance.selectedFromOwnerUnexploredAtAssignment === true;
+  const selectedWorkerIds = miners.filter((worker) => worker.order?.kind === "explore").map((worker) => worker.id);
+  const miningWorkerIds = miners.filter((worker) => worker.order?.kind === "harvest").map((worker) => worker.id);
+
+  const noDuplicateWorld = structuredClone(world) as WorldState;
+  noDuplicateWorld.tick += noDuplicateWorld.tickRate;
+  const noDuplicateState = noDuplicateWorld.aiStates.find((candidate) => candidate.player === state.player)!;
+  runLandAttackAi(noDuplicateWorld, noDuplicateState.player, noDuplicateState);
+  const noDuplicateEvidence = sourceAiRuntimeEvidence(noDuplicateWorld, noDuplicateState.player, noDuplicateState).exploration.scoutDestinations;
+
+  const militaryWorld = structuredClone(pristineWorld) as WorldState;
+  const militaryState = militaryWorld.aiStates.find((candidate) => candidate.player === state.player)!;
+  const militaryDefinition = militaryWorld.unitDefinitions.find((candidate) => candidate.id === soldierTypeId)!;
+  const idleMilitary = createWorldUnit({ unit: militaryDefinition, id: "__plan014-idle-military", player: state.player, tileX: 12, tileY: 4, tileset: null });
+  militaryWorld.units.push(idleMilitary);
+  runLandAttackAi(militaryWorld, militaryState.player, militaryState);
+  const militaryScoutId = sourceAiRuntimeEvidence(militaryWorld, militaryState.player, militaryState).exploration.scoutDestinations[0]?.unitId ?? null;
+
+  const idleWorkerWorld = structuredClone(pristineWorld) as WorldState;
+  const idleWorkerState = idleWorkerWorld.aiStates.find((candidate) => candidate.player === state.player)!;
+  const idleWorker = idleWorkerWorld.units.find((unit) => unit.id === "__plan014-p08-miner-00")!;
+  idleWorker.order = null;
+  runLandAttackAi(idleWorkerWorld, idleWorkerState.player, idleWorkerState);
+  const idleWorkerScoutId = sourceAiRuntimeEvidence(idleWorkerWorld, idleWorkerState.player, idleWorkerState).exploration.scoutDestinations[0]?.unitId ?? null;
+
+  const flyerWorld = structuredClone(pristineWorld) as WorldState;
+  const flyerState = flyerWorld.aiStates.find((candidate) => candidate.player === state.player)!;
+  const flyerTypeId = race === "orc" ? "unit-zeppelin" : "unit-balloon";
+  const flyerDefinition = flyerWorld.unitDefinitions.find((candidate) => candidate.id === flyerTypeId);
+  const flyer = flyerDefinition ? createWorldUnit({ unit: flyerDefinition, id: "__plan014-priority-flyer", player: state.player, tileX: 12, tileY: 5, tileset: null }) : null;
+  if (flyer) flyerWorld.units.push(flyer);
+  runLandAttackAi(flyerWorld, flyerState.player, flyerState);
+  const flyerLandScoutIds = flyerWorld.units.filter((unit) => unit.kind === "land" && unit.order?.kind === "explore").map((unit) => unit.id);
+  const flyerPriority = flyer?.order?.kind === "move" && flyerLandScoutIds.length === 0;
+
+  const selectedWorker = world.units.find((unit) => unit.id === selectedWorkerIds[0]);
+  const completionTarget = selectedWorker?.order?.kind === "explore" ? { x: selectedWorker.order.targetX, y: selectedWorker.order.targetY } : null;
+  if (selectedWorker && completionTarget) {
+    selectedWorker.x = completionTarget.x;
+    selectedWorker.y = completionTarget.y;
+    stepExploreOrder(world, selectedWorker, 1 / world.tickRate);
+  }
+  const completionClearedOrder = selectedWorker?.order === null;
+  const mineDefinition = world.unitDefinitions.find((candidate) => candidate.id === "unit-gold-mine");
+  const hallTypeId = race === "orc" ? "unit-great-hall" : "unit-town-hall";
+  const hallDefinition = world.unitDefinitions.find((candidate) => candidate.id === hallTypeId);
+  if (mineDefinition && hallDefinition) {
+    const mine = createWorldUnit({ unit: mineDefinition, id: "__plan014-completion-mine", player: 15, tileX: 25, tileY: 18, tileset: null });
+    mine.resourcesHeld = Math.max(10000, mine.resourcesHeld);
+    const hall = createWorldUnit({ unit: hallDefinition, id: "__plan014-completion-hall", player: state.player, tileX: 20, tileY: 18, tileset: null });
+    world.units.push(mine, hall);
+    state.collectWeights = { gold: 1, wood: 0, oil: 0 };
+    updateVisibility(world);
+    runLandAttackAi(world, state.player, state);
+  }
+  const completionEconomyOrder = selectedWorker?.order?.kind ?? null;
+
+  const humanPlayer = world.players.find((candidate) => candidate.id === world.visibilityPlayer)!;
+  const humanWorkerTypeId = humanPlayer.race === "orc" ? "unit-peon" : "unit-peasant";
+  const humanWorkerDefinition = world.unitDefinitions.find((candidate) => candidate.id === humanWorkerTypeId)!;
+  const humanWorker = createWorldUnit({ unit: humanWorkerDefinition, id: "__plan014-human-worker", player: humanPlayer.id, tileX: 2, tileY: 2, tileset: null });
+  world.units.push(humanWorker);
+  const humanExploreAccepted = issueExploreOrder(world, humanWorker.id);
+
+  const result: Record<string, unknown> = {
+    ok: selectedWorkerIds.length === 1 && selectedWorkerIds[0] === miners[0]?.id && miningWorkerIds.length === 5 && forceSoldier.order === null && scoutEvidence.length === 1 && provenanceExact && state.nextScoutTick > world.tick
+      && noDuplicateEvidence.length === 1 && militaryScoutId === idleMilitary.id && idleWorkerScoutId === idleWorker.id && flyerPriority === true
+      && completionClearedOrder && completionEconomyOrder === "harvest" && humanExploreAccepted === false,
+    tick: world.tick, selectedWorkerIds, miningWorkerIds,
+    forceSoldier: { id: forceSoldier.id, orderKind: forceSoldier.order?.kind ?? null, assignedUnitIds: state.sourceScriptForces[0]?.assignedUnitIds ?? [] },
+    scoutEvidence, provenanceExact, nextScoutTick: state.nextScoutTick,
+    noDuplicate: { scoutCount: noDuplicateEvidence.length, nextScoutTick: noDuplicateState.nextScoutTick },
+    priority: { militaryScoutId, idleWorkerScoutId, flyerOrderKind: flyer?.order?.kind ?? null, flyerLandScoutIds, flyerPriority },
+    completion: { clearedOrder: completionClearedOrder, economyOrderKind: completionEconomyOrder },
+    human: { exploreAccepted: humanExploreAccepted, orderKind: humanWorker.order?.kind ?? null }
+  };
+  Object.defineProperty(result, "saveWorld", { value: noDuplicateWorld, enumerable: false });
+  return result;
 }
 
 export function runPlan014AiConstructionManagerFixture(sourceWorld: WorldState): Record<string, unknown> {
