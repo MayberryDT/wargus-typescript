@@ -257,6 +257,7 @@ interface MinimapRasterSnapshot {
   scale: number;
   terrainEnabled: boolean;
   fogEnabled: boolean;
+  revealMapMode: WorldState["engineSettings"]["revealMapMode"];
   visibilityPlayer: number;
   fogLevels: number[];
 }
@@ -272,6 +273,7 @@ interface MinimapRasterInput {
   scale: number;
   terrainEnabled: boolean;
   fogEnabled: boolean;
+  revealMapMode: WorldState["engineSettings"]["revealMapMode"];
   visibilityPlayer: number;
   fogLevels: readonly number[];
   terrainKey: string;
@@ -3898,6 +3900,7 @@ function drawMinimap(
     scale,
     terrainEnabled: world.engineSettings.minimapWithTerrainDefault,
     fogEnabled: world.engineSettings.fogOfWarEnabled,
+    revealMapMode: world.engineSettings.revealMapMode,
     visibilityPlayer: world.visibilityPlayer,
     fogLevels: world.engineSettings.minimapFogOfWarOpacityLevels,
     terrainKey,
@@ -4113,6 +4116,7 @@ function minimapRasterSnapshotMatches(snapshot: MinimapRasterSnapshot | null, in
     && snapshot.scale === input.scale
     && snapshot.terrainEnabled === input.terrainEnabled
     && snapshot.fogEnabled === input.fogEnabled
+    && snapshot.revealMapMode === input.revealMapMode
     && snapshot.visibilityPlayer === input.visibilityPlayer
     && minimapRasterBufferMatches(snapshot.fogLevels, input.fogLevels);
 }
@@ -4142,6 +4146,7 @@ function captureMinimapRasterSnapshot(input: MinimapRasterInput): MinimapRasterS
     scale: input.scale,
     terrainEnabled: input.terrainEnabled,
     fogEnabled: input.fogEnabled,
+    revealMapMode: input.revealMapMode,
     visibilityPlayer: input.visibilityPlayer,
     fogLevels: Array.from(input.fogLevels)
   };

@@ -360,7 +360,7 @@ function literalHexColor(value) {
   return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)];
 }
 
-const { renderMinimapRasterIfNeeded, minimapRasterSnapshotMatches, captureMinimapRasterSnapshot } = loadFunctions([
+const { renderMinimapRasterIfNeeded } = loadFunctions([
   "drawMinimapRaster",
   "minimapRasterBufferMatches",
   "minimapRasterSnapshotMatches",
@@ -390,6 +390,7 @@ const literalInput = {
   scale: 1,
   terrainEnabled: true,
   fogEnabled: true,
+  revealMapMode: "hidden",
   visibilityPlayer: 0,
   fogLevels: [0, 128, 255],
   terrainKey: "literal-map-v1",
@@ -498,5 +499,63 @@ assert.deepEqual(literalContext.colors(), ["#000000", "#000000", "#000000"]);
 assert.equal(literalUploadCount, 13);
 assert.equal(renderMinimapRasterIfNeeded(literalCache, terrainDisabledInput), false, "A stable dirty-state result must be reused on the following HUD render");
 assert.equal(literalUploadCount, 13);
+
+const revealContext = new LiteralRasterContext(2, 1);
+let revealUploadCount = 0;
+const revealCache = {
+  rasterContext: revealContext,
+  rasterTexture: { source: { update: () => { revealUploadCount += 1; } } },
+  rasterSnapshot: null,
+  rasterUpdateCount: 0,
+  terrainTileCount: 0,
+  fogTileCount: 0
+};
+const revealVisible = new Uint8Array([0, 1]);
+const revealExplored = new Uint8Array([0, 1]);
+const hiddenRevealInput = {
+  rasterWidth: 2,
+  rasterHeight: 1,
+  terrainColors: ["#804020", "#804020"],
+  visibleTiles: revealVisible,
+  exploredTiles: revealExplored,
+  mapWidth: 2,
+  mapHeight: 1,
+  scale: 1,
+  terrainEnabled: true,
+  fogEnabled: true,
+  revealMapMode: "hidden",
+  visibilityPlayer: 0,
+  fogLevels: [64, 96, 255],
+  terrainKey: "reveal-map",
+  terrainRevision: 0,
+  fogAlphaForTile: (col) => revealVisible[col] === 1 ? 0 : revealExplored[col] === 1 ? 0.25 : 1
+};
+assert.equal(renderMinimapRasterIfNeeded(revealCache, hiddenRevealInput), true);
+assert.deepEqual(revealContext.colors(), ["#000000", "#804020"]);
+assert.equal(revealUploadCount, 1);
+
+const showpathRevealInput = {
+  ...hiddenRevealInput,
+  revealMapMode: "known",
+  fogAlphaForTile: (col) => revealVisible[col] === 1 ? 0 : 0.25
+};
+assert.equal(renderMinimapRasterIfNeeded(revealCache, showpathRevealInput), true, "Showpath's hidden-to-known reveal mode change must redraw once without buffer mutation");
+assert.deepEqual(revealContext.colors(), ["#603018", "#804020"], "Known reveal mode must use the legacy known-tile fog pixels");
+assert.equal(revealUploadCount, 2);
+assert.equal(renderMinimapRasterIfNeeded(revealCache, showpathRevealInput), false, "Stable showpath reveal mode must reuse its texture");
+assert.equal(revealUploadCount, 2);
+
+const exploredRevealInput = { ...showpathRevealInput, revealMapMode: "explored" };
+assert.equal(renderMinimapRasterIfNeeded(revealCache, exploredRevealInput), true, "Known-to-explored reveal mode changes must redraw exactly once");
+assert.deepEqual(revealContext.colors(), ["#603018", "#804020"]);
+assert.equal(revealUploadCount, 3);
+assert.equal(renderMinimapRasterIfNeeded(revealCache, exploredRevealInput), false);
+assert.equal(revealUploadCount, 3);
+
+assert.equal(renderMinimapRasterIfNeeded(revealCache, hiddenRevealInput), true, "Returning to hidden reveal mode must restore unseen pixels in one redraw");
+assert.deepEqual(revealContext.colors(), ["#000000", "#804020"]);
+assert.equal(revealUploadCount, 4);
+assert.equal(renderMinimapRasterIfNeeded(revealCache, hiddenRevealInput), false);
+assert.equal(revealUploadCount, 4);
 
 console.log("Minimap render cache invalidation, raster composition, interaction, and deterministic disposal verified.");
