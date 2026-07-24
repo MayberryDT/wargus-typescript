@@ -231,6 +231,7 @@ interface MinimapRenderCache {
   rasterSpriteCreateCount: number;
   rasterResizeCount: number;
   rasterUpdateCount: number;
+  rasterSnapshot: MinimapRasterSnapshot | null;
   visualRootMinChildCount: number;
   visualRootMaxChildCount: number;
   pointerDownListenerCount: number;
@@ -242,6 +243,40 @@ interface MinimapRenderCache {
     scale: number;
     onMinimapPoint: (tileX: number, tileY: number, input: { button: number; shiftKey: boolean }) => void;
   } | null;
+}
+
+interface MinimapRasterSnapshot {
+  rasterWidth: number;
+  rasterHeight: number;
+  terrainKey: string;
+  terrainRevision: number;
+  visibleTiles: Uint8Array;
+  exploredTiles: Uint8Array;
+  mapWidth: number;
+  mapHeight: number;
+  scale: number;
+  terrainEnabled: boolean;
+  fogEnabled: boolean;
+  visibilityPlayer: number;
+  fogLevels: number[];
+}
+
+interface MinimapRasterInput {
+  rasterWidth: number;
+  rasterHeight: number;
+  terrainColors: readonly string[];
+  visibleTiles: ArrayLike<number>;
+  exploredTiles: ArrayLike<number>;
+  mapWidth: number;
+  mapHeight: number;
+  scale: number;
+  terrainEnabled: boolean;
+  fogEnabled: boolean;
+  visibilityPlayer: number;
+  fogLevels: readonly number[];
+  terrainKey: string;
+  terrainRevision: number;
+  fogAlphaForTile: (col: number, row: number) => number;
 }
 
 const minimapRenderCaches = new WeakMap<Container, MinimapRenderCache>();
@@ -3852,23 +3887,23 @@ function drawMinimap(
     cache.terrainKey = terrainKey;
   }
 
-  const composite = drawMinimapRaster(
-    cache.rasterContext,
+  renderMinimapRasterIfNeeded(cache, {
     rasterWidth,
     rasterHeight,
-    cache.terrainColors,
-    world.visibleTiles,
-    world.map.width,
-    world.map.height,
+    terrainColors: cache.terrainColors,
+    visibleTiles: world.visibleTiles,
+    exploredTiles: world.exploredTiles,
+    mapWidth: world.map.width,
+    mapHeight: world.map.height,
     scale,
-    world.engineSettings.minimapWithTerrainDefault,
-    world.engineSettings.fogOfWarEnabled,
-    (col, row) => sourceMinimapFogAlpha(world, col, row)
-  );
-  cache.terrainTileCount = composite.terrainTileCount;
-  cache.fogTileCount = composite.fogTileCount;
-  cache.rasterTexture.source.update();
-  cache.rasterUpdateCount += 1;
+    terrainEnabled: world.engineSettings.minimapWithTerrainDefault,
+    fogEnabled: world.engineSettings.fogOfWarEnabled,
+    visibilityPlayer: world.visibilityPlayer,
+    fogLevels: world.engineSettings.minimapFogOfWarOpacityLevels,
+    terrainKey,
+    terrainRevision: cache.terrainRebuildCount,
+    fogAlphaForTile: (col, row) => sourceMinimapFogAlpha(world, col, row)
+  });
 
   const hitKey = `${world.map.width}:${world.map.height}:${ox}:${oy}:${mapPixelWidth}:${mapPixelHeight}`;
   if (cache.hitKey !== hitKey) {
@@ -4000,6 +4035,7 @@ function createMinimapRenderCache(rasterWidth: number, rasterHeight: number): Mi
     rasterSpriteCreateCount: 1,
     rasterResizeCount: 0,
     rasterUpdateCount: 0,
+    rasterSnapshot: null,
     visualRootMinChildCount: Number.POSITIVE_INFINITY,
     visualRootMaxChildCount: 0,
     pointerDownListenerCount: 0,
@@ -4062,6 +4098,78 @@ function minimapTerrainNeedsRebuild(cache: MinimapRenderCache, world: WorldState
     || cache.terrainTiles !== world.tiles
     || cache.terrainTileset !== world.tilesetTerrain
     || cache.terrainKey !== terrainKey;
+}
+
+function minimapRasterSnapshotMatches(snapshot: MinimapRasterSnapshot | null, input: MinimapRasterInput): boolean {
+  return snapshot !== null
+    && snapshot.rasterWidth === input.rasterWidth
+    && snapshot.rasterHeight === input.rasterHeight
+    && snapshot.terrainKey === input.terrainKey
+    && snapshot.terrainRevision === input.terrainRevision
+    && minimapRasterBufferMatches(snapshot.visibleTiles, input.visibleTiles)
+    && minimapRasterBufferMatches(snapshot.exploredTiles, input.exploredTiles)
+    && snapshot.mapWidth === input.mapWidth
+    && snapshot.mapHeight === input.mapHeight
+    && snapshot.scale === input.scale
+    && snapshot.terrainEnabled === input.terrainEnabled
+    && snapshot.fogEnabled === input.fogEnabled
+    && snapshot.visibilityPlayer === input.visibilityPlayer
+    && minimapRasterBufferMatches(snapshot.fogLevels, input.fogLevels);
+}
+
+function minimapRasterBufferMatches(snapshot: ArrayLike<number>, current: ArrayLike<number>): boolean {
+  if (snapshot.length !== current.length) {
+    return false;
+  }
+  for (let index = 0; index < snapshot.length; index += 1) {
+    if (snapshot[index] !== current[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function captureMinimapRasterSnapshot(input: MinimapRasterInput): MinimapRasterSnapshot {
+  return {
+    rasterWidth: input.rasterWidth,
+    rasterHeight: input.rasterHeight,
+    terrainKey: input.terrainKey,
+    terrainRevision: input.terrainRevision,
+    visibleTiles: Uint8Array.from(input.visibleTiles),
+    exploredTiles: Uint8Array.from(input.exploredTiles),
+    mapWidth: input.mapWidth,
+    mapHeight: input.mapHeight,
+    scale: input.scale,
+    terrainEnabled: input.terrainEnabled,
+    fogEnabled: input.fogEnabled,
+    visibilityPlayer: input.visibilityPlayer,
+    fogLevels: Array.from(input.fogLevels)
+  };
+}
+
+function renderMinimapRasterIfNeeded(cache: MinimapRenderCache, input: MinimapRasterInput): boolean {
+  if (minimapRasterSnapshotMatches(cache.rasterSnapshot, input)) {
+    return false;
+  }
+  const composite = drawMinimapRaster(
+    cache.rasterContext,
+    input.rasterWidth,
+    input.rasterHeight,
+    input.terrainColors,
+    input.visibleTiles,
+    input.mapWidth,
+    input.mapHeight,
+    input.scale,
+    input.terrainEnabled,
+    input.fogEnabled,
+    input.fogAlphaForTile
+  );
+  cache.terrainTileCount = composite.terrainTileCount;
+  cache.fogTileCount = composite.fogTileCount;
+  cache.rasterTexture.source.update();
+  cache.rasterUpdateCount += 1;
+  cache.rasterSnapshot = captureMinimapRasterSnapshot(input);
+  return true;
 }
 
 function drawMinimapRaster(

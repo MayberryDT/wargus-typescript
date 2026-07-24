@@ -10,6 +10,7 @@ assert.equal(source.match(/document\.createElement\("canvas"\)/g)?.length, 1, "M
 assert.equal(source.match(/Texture\.from\(rasterCanvas, true\)/g)?.length, 1, "Minimap cache should allocate one uncached canvas texture only in its creation path");
 assert.equal(source.match(/new Sprite\(rasterTexture\)/g)?.length, 1, "Minimap cache should allocate one raster sprite only in its creation path");
 assert.match(source, /cache\.rasterTexture\.source\.update\(\)/, "Minimap redraw should update the existing texture source after compositing");
+assert.match(source, /terrainRevision: cache\.terrainRebuildCount/, "Terrain rebuilds must invalidate the raster even when the derived terrain key is unchanged");
 
 function loadFunction(name) {
   const declaration = sourceFile.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name);
@@ -18,6 +19,18 @@ function loadFunction(name) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
   }).outputText;
   return Function(`${javascript}\nreturn ${name};`)();
+}
+
+function loadFunctions(names) {
+  const declarations = names.map((name) => {
+    const declaration = sourceFile.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration, `Expected renderHud.ts to define ${name}`);
+    return declaration.getText(sourceFile);
+  });
+  const javascript = ts.transpileModule(declarations.join("\n"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+  }).outputText;
+  return Function(`${javascript}\nreturn { ${names.join(", ")} };`)();
 }
 
 function loadMinimapCacheLifecycle() {
@@ -303,5 +316,187 @@ assert.deepEqual(fogOnlyOperations, [
   ["clear", 0, 0, 1, 1],
   ["fill", "#000000", 0.5, 0, 0, 1, 1]
 ]);
+
+class LiteralRasterContext {
+  fillStyle = "#000000";
+  globalAlpha = 1;
+  clearCount = 0;
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+    this.pixels = Array.from({ length: width * height }, () => [0, 0, 0, 0]);
+  }
+  clearRect(x, y, width, height) {
+    this.clearCount += 1;
+    for (let py = y; py < y + height; py += 1) {
+      for (let px = x; px < x + width; px += 1) {
+        this.pixels[py * this.width + px] = [0, 0, 0, 0];
+      }
+    }
+  }
+  fillRect(x, y, width, height) {
+    const source = literalHexColor(this.fillStyle);
+    for (let py = y; py < y + height; py += 1) {
+      for (let px = x; px < x + width; px += 1) {
+        const index = py * this.width + px;
+        const target = this.pixels[index];
+        const alpha = this.globalAlpha;
+        this.pixels[index] = [
+          Math.round(source[0] * alpha + target[0] * (1 - alpha)),
+          Math.round(source[1] * alpha + target[1] * (1 - alpha)),
+          Math.round(source[2] * alpha + target[2] * (1 - alpha)),
+          255
+        ];
+      }
+    }
+  }
+  colors() {
+    return this.pixels.map(([red, green, blue]) => `#${[red, green, blue].map((value) => value.toString(16).padStart(2, "0")).join("")}`);
+  }
+}
+
+function literalHexColor(value) {
+  const hex = value.slice(1);
+  return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)];
+}
+
+const { renderMinimapRasterIfNeeded, minimapRasterSnapshotMatches, captureMinimapRasterSnapshot } = loadFunctions([
+  "drawMinimapRaster",
+  "minimapRasterBufferMatches",
+  "minimapRasterSnapshotMatches",
+  "captureMinimapRasterSnapshot",
+  "renderMinimapRasterIfNeeded"
+]);
+const literalContext = new LiteralRasterContext(3, 1);
+let literalUploadCount = 0;
+const literalCache = {
+  rasterContext: literalContext,
+  rasterTexture: { source: { update: () => { literalUploadCount += 1; } } },
+  rasterSnapshot: null,
+  rasterUpdateCount: 0,
+  terrainTileCount: 0,
+  fogTileCount: 0
+};
+const literalVisible = new Uint8Array([0, 0, 1]);
+const literalExplored = new Uint8Array([0, 1, 1]);
+const literalInput = {
+  rasterWidth: 3,
+  rasterHeight: 1,
+  terrainColors: ["#804020", "#804020", "#804020"],
+  visibleTiles: literalVisible,
+  exploredTiles: literalExplored,
+  mapWidth: 3,
+  mapHeight: 1,
+  scale: 1,
+  terrainEnabled: true,
+  fogEnabled: true,
+  visibilityPlayer: 0,
+  fogLevels: [0, 128, 255],
+  terrainKey: "literal-map-v1",
+  terrainRevision: 0,
+  fogAlphaForTile: (col) => literalVisible[col] === 1 ? 0 : literalExplored[col] === 1 ? 0.5 : 1
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, literalInput), true, "First HUD render must compose and upload the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#000000", "#402010", "#804020"], "HUD seam must preserve unseen black, explored dim, and visible terrain pixels");
+assert.equal(literalUploadCount, 1);
+assert.equal(literalCache.rasterUpdateCount, 1);
+assert.equal(literalContext.clearCount, 1);
+assert.equal(renderMinimapRasterIfNeeded(literalCache, literalInput), false, "Identical HUD inputs must reuse the existing minimap texture");
+assert.deepEqual(literalContext.colors(), ["#000000", "#402010", "#804020"]);
+assert.equal(literalUploadCount, 1, "Identical HUD inputs must not upload the texture again");
+assert.equal(literalCache.rasterUpdateCount, 1);
+assert.equal(literalContext.clearCount, 1, "Identical HUD inputs must not rerun raster composition");
+
+literalVisible[0] = 1;
+assert.equal(renderMinimapRasterIfNeeded(literalCache, literalInput), true, "Revealing a tile through the existing visibility buffer must redraw on the next HUD render");
+assert.deepEqual(literalContext.colors(), ["#804020", "#402010", "#804020"]);
+assert.equal(literalUploadCount, 2);
+assert.equal(literalCache.rasterUpdateCount, 2);
+literalVisible[0] = 0;
+literalExplored[0] = 1;
+assert.equal(renderMinimapRasterIfNeeded(literalCache, literalInput), true, "Refogging a revealed tile through mutated buffers must redraw on the next HUD render");
+assert.deepEqual(literalContext.colors(), ["#402010", "#402010", "#804020"]);
+assert.equal(literalUploadCount, 3);
+assert.equal(literalCache.rasterUpdateCount, 3);
+
+const playerSwitchedInput = {
+  ...literalInput,
+  visibilityPlayer: 1,
+  fogAlphaForTile: () => 1
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, playerSwitchedInput), true, "Changing the HUD visibility player must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#000000", "#000000", "#804020"]);
+assert.equal(literalUploadCount, 4);
+
+const mapDimensionInput = {
+  ...playerSwitchedInput,
+  mapWidth: 2,
+  terrainColors: ["#804020", "#804020"],
+  fogAlphaForTile: () => 0
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, mapDimensionInput), true, "Changing map dimensions must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#804020", "#804020", "#000000"]);
+assert.equal(literalUploadCount, 5);
+
+const rasterSizeInput = { ...mapDimensionInput, rasterWidth: 2 };
+assert.equal(renderMinimapRasterIfNeeded(literalCache, rasterSizeInput), true, "Changing the minimap raster size must invalidate its texture contents");
+assert.deepEqual(literalContext.colors(), ["#804020", "#804020", "#000000"]);
+assert.equal(literalUploadCount, 6);
+
+const shortenedVisible = new Uint8Array([0, 1]);
+const shortenedExplored = new Uint8Array([1, 1]);
+const bufferLengthInput = {
+  ...rasterSizeInput,
+  visibleTiles: shortenedVisible,
+  exploredTiles: shortenedExplored,
+  fogAlphaForTile: (col) => shortenedVisible[col] === 1 ? 0 : 0.5
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, bufferLengthInput), true, "Changing visibility buffer lengths must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#402010", "#804020", "#000000"]);
+assert.equal(literalUploadCount, 7);
+
+const fogDisabledInput = { ...bufferLengthInput, fogEnabled: false };
+assert.equal(renderMinimapRasterIfNeeded(literalCache, fogDisabledInput), true, "Changing fog mode must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#804020", "#804020", "#000000"]);
+assert.equal(literalUploadCount, 8);
+
+const fogEnabledInput = { ...bufferLengthInput, fogEnabled: true };
+assert.equal(renderMinimapRasterIfNeeded(literalCache, fogEnabledInput), true, "Re-enabling fog must restore exact legacy pixels");
+assert.deepEqual(literalContext.colors(), ["#402010", "#804020", "#000000"]);
+assert.equal(literalUploadCount, 9);
+
+const fogLevelsInput = {
+  ...fogEnabledInput,
+  fogLevels: [64, 96, 255],
+  fogAlphaForTile: (col) => shortenedVisible[col] === 1 ? 0 : 0.25
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, fogLevelsInput), true, "Changing fog opacity levels must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#603018", "#804020", "#000000"]);
+assert.equal(literalUploadCount, 10);
+
+const terrainKeyInput = {
+  ...fogLevelsInput,
+  terrainColors: ["#204080", "#204080"],
+  terrainKey: "literal-map-v2"
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, terrainKeyInput), true, "Changing the terrain cache key must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#183060", "#204080", "#000000"]);
+assert.equal(literalUploadCount, 11);
+
+const terrainRevisionInput = {
+  ...terrainKeyInput,
+  terrainColors: ["#408020", "#408020"],
+  terrainRevision: 1
+};
+assert.equal(renderMinimapRasterIfNeeded(literalCache, terrainRevisionInput), true, "Rebuilding terrain with the same key must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#306018", "#408020", "#000000"]);
+assert.equal(literalUploadCount, 12);
+
+const terrainDisabledInput = { ...terrainRevisionInput, terrainEnabled: false };
+assert.equal(renderMinimapRasterIfNeeded(literalCache, terrainDisabledInput), true, "Changing terrain mode must invalidate the minimap raster");
+assert.deepEqual(literalContext.colors(), ["#000000", "#000000", "#000000"]);
+assert.equal(literalUploadCount, 13);
+assert.equal(renderMinimapRasterIfNeeded(literalCache, terrainDisabledInput), false, "A stable dirty-state result must be reused on the following HUD render");
+assert.equal(literalUploadCount, 13);
 
 console.log("Minimap render cache invalidation, raster composition, interaction, and deterministic disposal verified.");
