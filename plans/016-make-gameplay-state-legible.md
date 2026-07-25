@@ -47,7 +47,7 @@ normalize imported display identifiers only at presentation boundaries.
 - **Depends on**: plans/014-make-ai-execute-its-strategy.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug, direction
 - **Planned at**: commit `6af2eeb`, 2026-07-10
-- **Current decision**: IN PROGRESS — implementation is complete and browser-free gates are recorded; the user explicitly deferred M11–M12 browser acceptance and final READY review to the single integrated playthrough after Plan 017.
+- **Current decision**: DONE — READY under the 2026-07-24 final ordinary-play user override. Implementation gates and the clean one-page integrated session are recorded in `plans/evidence/016.md`; explicitly waived exhaustive cases are not claimed.
 
 ## Acceptance override (2026-07-24)
 
@@ -56,6 +56,23 @@ browser, server, game, per-checkpoint reviews, or verifier-infrastructure
 expansion. Browser-backed layout/play sessions and the final READY decision are
 therefore deferred to the one integrated post-Plan-017 playthrough. This does
 not claim that M11–M12 or required viewport layout were run in this batch.
+
+The final user override accepted one ordinary integrated 1280×720 playthrough
+plus the recorded browser-free gates as the release boundary. Attempt 7 on
+commit `a17bfa7` completed the Hall/Farm/Barracks loop, two-entry worker queue,
+extra worker, explicit gather/Return, Footman, command feedback, mobile
+multi-selection, Pause/Resume, and same-page F11/F12 continuity without a page
+exception or black frame. Exhaustive fixtures, the second viewport, and an
+exact pointer-pan delta were waived and remain identified in the evidence.
+
+## Final checklist resolution (2026-07-24)
+
+Checked items below are resolved by one of three recorded sources: landed
+implementation at the named baseline, the browser-free gate batch, or the
+explicit final ordinary-play override. A checked item is not a retroactive
+claim that a waived browser command, fixture, or exhaustive M-scenario ran;
+`plans/evidence/016.md` distinguishes live observations from static coverage
+and waivers.
 
 ## Player-visible contract and evidence
 
@@ -199,23 +216,23 @@ commit. A presentation checkpoint may not weaken simulation eligibility to pass.
 
 ### Task 1: Establish the presentation/input baseline
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:modern-hud-layout`.
-- [ ] Run `npm run verify:browser-command-card-session`.
-- [ ] Run `npm run verify:browser-train-session`.
-- [ ] Run `npm run verify:source-selection-mixing`.
-- [ ] Run `npm run verify:source-status-line-tooltips`.
-- [ ] Run `npm run verify:source-upgrade-to-action`.
-- [ ] Run `npm run verify:browser-fixed-demo-input`.
-- [ ] Run `npm run verify:icons`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:modern-hud-layout`.
+- [x] Run `npm run verify:browser-command-card-session`.
+- [x] Run `npm run verify:browser-train-session`.
+- [x] Run `npm run verify:source-selection-mixing`.
+- [x] Run `npm run verify:source-status-line-tooltips`.
+- [x] Run `npm run verify:source-upgrade-to-action`.
+- [x] Run `npm run verify:browser-fixed-demo-input`.
+- [x] Run `npm run verify:icons`.
 
 Expected: all exit 0. STOP on a pre-existing unrelated failure.
 
 ### Task 2: Normalize the icon-atlas tileset id
 
-- [ ] Add a local `normalizeIconTilesetName` helper to `iconTextureAtlas.ts`.
-- [ ] Strip `scripts/tilesets/`, optional `wargus/`, and `.lua`, then fall back to `summer` for an empty result.
-- [ ] Use the normalized name for both the asset URL and warning text.
+- [x] Add a local `normalizeIconTilesetName` helper to `iconTextureAtlas.ts`.
+- [x] Strip `scripts/tilesets/`, optional `wargus/`, and `.lua`, then fall back to `summer` for an empty result.
+- [x] Use the normalized name for both the asset URL and warning text.
 
 Target helper:
 
@@ -228,7 +245,7 @@ function normalizeIconTilesetName(value: string | null | undefined): string {
 }
 ```
 
-- [ ] Extend `scripts/verify-icon-references.mjs` with the same four manifest tileset variants already used by sound normalization.
+- [x] Extend `scripts/verify-icon-references.mjs` with the same four manifest tileset variants already used by sound normalization.
 
 **Verify**: `npm run verify:icons` -> exits 0.
 
@@ -236,13 +253,13 @@ function normalizeIconTilesetName(value: string | null | undefined): string {
 
 ### Task 3: Return an actionable disabled reason without changing source eligibility
 
-- [ ] Implement `firstSourceCommandBlockReason` in `orders.ts` beside source command eligibility.
-- [ ] Preserve the existing authoritative action/dependency/check-limit/resource evaluation order for build, train, upgrade-to, and research buttons. Do not rearrange mechanics merely to produce friendlier text.
-- [ ] Treat always-visible grayscale buttons and English reasons as a TypeScript usability enhancement: source usually omits unavailable buttons and reports some resource/supply/limit failures only when clicked.
-- [ ] For dependency alternatives, inspect the first declared invalid alternative and return all of its missing ids in declaration order. Do not choose a different alternative because it has fewer missing ids, and do not hardcode Archer/Lumber Mill examples.
-- [ ] For affordability, return every insufficient resource in gold/wood/oil order and each shortfall amount, matching source's multi-resource report rather than hiding later shortages.
-- [ ] For supply, return the additional demand required.
-- [ ] Keep `sourceButtonHasExecutableContext` authoritative for the final enabled boolean.
+- [x] Implement `firstSourceCommandBlockReason` in `orders.ts` beside source command eligibility.
+- [x] Preserve the existing authoritative action/dependency/check-limit/resource evaluation order for build, train, upgrade-to, and research buttons. Do not rearrange mechanics merely to produce friendlier text.
+- [x] Treat always-visible grayscale buttons and English reasons as a TypeScript usability enhancement: source usually omits unavailable buttons and reports some resource/supply/limit failures only when clicked.
+- [x] For dependency alternatives, inspect the first declared invalid alternative and return all of its missing ids in declaration order. Do not choose a different alternative because it has fewer missing ids, and do not hardcode Archer/Lumber Mill examples.
+- [x] For affordability, return every insufficient resource in gold/wood/oil order and each shortfall amount, matching source's multi-resource report rather than hiding later shortages.
+- [x] For supply, return the additional demand required.
+- [x] Keep `sourceButtonHasExecutableContext` authoritative for the final enabled boolean.
 
 Target formatting in `renderHud.ts`:
 
@@ -262,54 +279,54 @@ function commandBlockReasonText(manifest: WargusManifest, reason: SourceCommandB
 }
 ```
 
-- [ ] Add `disabledReason` to `HudCommand` and prefer it in `commandStatusText` when a command is disabled.
-- [ ] Expose it through browser smoke state and modern HUD debug.
+- [x] Add `disabledReason` to `HudCommand` and prefer it in `commandStatusText` when a command is disabled.
+- [x] Expose it through browser smoke state and modern HUD debug.
 
 **Verify**: `npm run verify:browser-command-card-session` -> exits 0 after checking prerequisite, supply, resource, and busy reasons.
 
 ### Task 4: Explain the intentional `Food 1/0` opening
 
-- [ ] Record that the explicit `Build Hall` warning is a TypeScript usability enhancement; original Wargus leaves the player to infer the remedy from source command/supply feedback.
-- [ ] In the fixed top bar only, when `supply.used > supply.cap` and the selected player has no completed main facility, append a compact `Build Hall` warning adjacent to Food.
-- [ ] Keep the numeric display `1/0`; it is truthful. Do not grant temporary supply.
-- [ ] Remove the warning automatically when the Hall completes.
-- [ ] Record the warning in `ModernHudLayoutDebug.resourceChips` or a dedicated data-only field so layout verification can inspect it.
+- [x] Record that the explicit `Build Hall` warning is a TypeScript usability enhancement; original Wargus leaves the player to infer the remedy from source command/supply feedback.
+- [x] In the fixed top bar only, when `supply.used > supply.cap` and the selected player has no completed main facility, append a compact `Build Hall` warning adjacent to Food.
+- [x] Keep the numeric display `1/0`; it is truthful. Do not grant temporary supply.
+- [x] Remove the warning automatically when the Hall completes.
+- [x] Record the warning in `ModernHudLayoutDebug.resourceChips` or a dedicated data-only field so layout verification can inspect it.
 
 **Verify**: `npm run verify:modern-hud-layout` -> exits 0 and asserts the opening warning fits without overlap at all covered viewports.
 
 ### Task 5: Render and cancel the visible production queue by index
 
-- [ ] Replace the fixed HUD's single `activeProduction` row with up to six compact queue slots, following the indexed model at `renderHud.ts:1867-1897`.
-- [ ] Slot zero includes the progress bar; later slots show icon/short label and their queue index.
-- [ ] Each slot calls `onProductionQueuePick(selected.id, { kind: "production", index })` with its actual index.
-- [ ] If more than six entries exist, show `+N` after the sixth slot.
-- [ ] Extend `ModernHudLayoutDebug` with data-only queue rectangles and indices; do not expose Pixi objects.
+- [x] Replace the fixed HUD's single `activeProduction` row with up to six compact queue slots, following the indexed model at `renderHud.ts:1867-1897`.
+- [x] Slot zero includes the progress bar; later slots show icon/short label and their queue index.
+- [x] Each slot calls `onProductionQueuePick(selected.id, { kind: "production", index })` with its actual index.
+- [x] If more than six entries exist, show `+N` after the sixth slot.
+- [x] Extend `ModernHudLayoutDebug` with data-only queue rectangles and indices; do not expose Pixi objects.
 
 **Verify**: `npm run verify:modern-hud-layout` -> exits 0 and verifies indices 0..5, no overlap, and `+N` behavior.
 
-- [ ] Extend `scripts/verify-browser-train-session.mjs` to queue at least four Peasants while current free food permits each enqueue, cancel index 2, and confirm only that order's resources are refunded while supply used/cap stay unchanged and indices 0, 1, and former 3 remain.
+- [x] Extend `scripts/verify-browser-train-session.mjs` to queue at least four Peasants while current free food permits each enqueue, cancel index 2, and confirm only that order's resources are refunded while supply used/cap stay unchanged and indices 0, 1, and former 3 remain.
 
 **Verify**: `npm run verify:browser-train-session` -> exits 0.
 
 ### Task 6: Restore source supply timing and source-like production egress
 
-- [ ] Add `blockedReason` to `ProductionOrder` and every constructor with default `null`.
-- [ ] Remove queued demand from supply eligibility. Enqueue checks current used/cap but paying for another queued order does not reserve food and cancellation never refunds food.
-- [ ] Remove `PlayerSupply.queued` from authoritative state/callers and remove
+- [x] Add `blockedReason` to `ProductionOrder` and every constructor with default `null`.
+- [x] Remove queued demand from supply eligibility. Enqueue checks current used/cap but paying for another queued order does not reserve food and cancellation never refunds food.
+- [x] Remove `PlayerSupply.queued` from authoritative state/callers and remove
   paid queues from unit/total/type limit counts. Diagnostic queue demand, if
   needed by a fixture, must use a different non-authoritative name.
-- [ ] When the head reaches completion, recheck supply and unit/type/total limits. Keep the paid order at the head with `"supply"` or `"limit"`, retry deterministically, and complete once the block clears.
-- [ ] Replace the narrow-ring `findSpawnTile` with deterministic W/S/E/N
+- [x] When the head reaches completion, recheck supply and unit/type/total limits. Keep the paid order at the head with `"supply"` or `"limit"`, retry deterministically, and complete once the block clears.
+- [x] Replace the narrow-ring `findSpawnTile` with deterministic W/S/E/N
   outward perimeter expansion equivalent to source `DropOutOnSide`: search
   beyond a surrounded producer until the first valid map tile is found. Do not
   reorder a ring by rally-point distance.
-- [ ] Bound the outward search by the whole map. Set `"no-egress"` only when no valid tile exists anywhere; this is a TypeScript safety divergence from source's unbounded retry, not the normal result of a one-ring surround.
-- [ ] Clear the field as soon as production can complete, when the block changes, or when an old order is loaded without a block.
-- [ ] Show `Needs N Food`, `Unit limit reached`, or `No valid exit` on slot zero instead of a misleading completed progress label.
-- [ ] Normalize the field in `saveGame.ts`; old saves use `null`. Preserve
+- [x] Bound the outward search by the whole map. Set `"no-egress"` only when no valid tile exists anywhere; this is a TypeScript safety divergence from source's unbounded retry, not the normal result of a one-ring surround.
+- [x] Clear the field as soon as production can complete, when the block changes, or when an old order is loaded without a block.
+- [x] Show `Needs N Food`, `Unit limit reached`, or `No valid exit` on slot zero instead of a misleading completed progress label.
+- [x] Normalize the field in `saveGame.ts`; old saves use `null`. Preserve
   `remainingSeconds === 0` for a blocked paid head rather than clamping to
   `0.001`.
-- [ ] Replace paid-queue load revalidation through `canTrainUnitAt` with a paid
+- [x] Replace paid-queue load revalidation through `canTrainUnitAt` with a paid
   compatibility check (definition, producer/action, allow/dependency identity,
   and queue shape). Current resources/supply must not drop or re-charge an
   already-paid order.
@@ -325,14 +342,14 @@ zero-second production shape and `used/cap` supply contract.
 
 ### Task 7: Display real elapsed time and truthful stats
 
-- [ ] Treat `Time Ns`, `Provides N Food`, and the exact `ZTOP` presentation correction as TypeScript clarity enhancements; source command status omits time entirely.
-- [ ] Change `sourceCommandStatusLineText` to accept enough world/player context to use `sourceBuildDurationSecondsForPlayer`, `sourceTrainDurationSecondsForPlayer`, `sourceUpgradeDurationSecondsForPlayer`, or `sourceResearchDurationSecondsForPlayer`.
-- [ ] Omit the raw `time` pair from `sourceCostListText`; append `Time Ns` using the correct helper and `Math.ceil`.
-- [ ] Keep Gold/Wood/Oil display unchanged.
-- [ ] Update all call sites consistently.
-- [ ] In `drawFixedDemoSelectedStats`, display Range only when `selected.canAttack` is true.
-- [ ] For Farms/supply buildings, show `Provides N Food` when `selected.supply > 0`.
-- [ ] In `sourceHintText`, normalize the exact imported token `ZTOP` to `STOP` after stripping source markup. Do not add general spell-checking.
+- [x] Treat `Time Ns`, `Provides N Food`, and the exact `ZTOP` presentation correction as TypeScript clarity enhancements; source command status omits time entirely.
+- [x] Change `sourceCommandStatusLineText` to accept enough world/player context to use `sourceBuildDurationSecondsForPlayer`, `sourceTrainDurationSecondsForPlayer`, `sourceUpgradeDurationSecondsForPlayer`, or `sourceResearchDurationSecondsForPlayer`.
+- [x] Omit the raw `time` pair from `sourceCostListText`; append `Time Ns` using the correct helper and `Math.ceil`.
+- [x] Keep Gold/Wood/Oil display unchanged.
+- [x] Update all call sites consistently.
+- [x] In `drawFixedDemoSelectedStats`, display Range only when `selected.canAttack` is true.
+- [x] For Farms/supply buildings, show `Provides N Food` when `selected.supply > 0`.
+- [x] In `sourceHintText`, normalize the exact imported token `ZTOP` to `STOP` after stripping source markup. Do not add general spell-checking.
 
 **Verify**: `npm run verify:source-status-line-tooltips` -> exits 0 and checks Town Hall 51s / Footman 12s at factor 1.
 
@@ -340,13 +357,13 @@ zero-second production shape and `used/cap` supply contract.
 
 ### Task 8: Apply source category, ownership, and mixing rules to rectangle selection
 
-- [ ] Add `team` to `WorldPlayer`, populate it from setup team assignments, and
+- [x] Add `team` to `WorldPlayer`, populate it from setup team assignments, and
   normalize/save it. Missing setup/save data falls back to `player.id`.
-- [ ] Define a source building category from the unit definition's actual `building`/`Building` flag. Do not infer buildings from zero speed or tile size; 2×2 mobile siege/ships remain mobile.
-- [ ] Preserve the source selection cap of 18.
-- [ ] For additive rectangle and same-type selection, filter candidates to local/teamed, usable, rectangle-selectable units before applying mixing: a first selected building admits only its exact type; a mobile-first selection admits mixed mobile types but no buildings.
-- [ ] Starting from `currentIds`, add legal candidates in deterministic selection order through one shared helper.
-- [ ] For plain rectangle replacement, prefer local/teamed mobile units. If none exist, select same-type buildings; if neither exists, select one static, neutral, or enemy object. Do not return every visible id in the rectangle.
+- [x] Define a source building category from the unit definition's actual `building`/`Building` flag. Do not infer buildings from zero speed or tile size; 2×2 mobile siege/ships remain mobile.
+- [x] Preserve the source selection cap of 18.
+- [x] For additive rectangle and same-type selection, filter candidates to local/teamed, usable, rectangle-selectable units before applying mixing: a first selected building admits only its exact type; a mobile-first selection admits mixed mobile types but no buildings.
+- [x] Starting from `currentIds`, add legal candidates in deterministic selection order through one shared helper.
+- [x] For plain rectangle replacement, prefer local/teamed mobile units. If none exist, select same-type buildings; if neither exists, select one static, neutral, or enemy object. Do not return every visible id in the rectangle.
 
 Keep the category/ownership predicate and deterministic merge in shared pure
 helpers; both input paths must call those helpers instead of separately
@@ -359,10 +376,10 @@ placing every player on implicit team zero.
 
 ### Task 9: Recompute pointer world position after camera movement
 
-- [ ] Immediately after `updateCamera`, if `pointerScreenPosition` exists, recompute `pointerWorldPosition` through `worldPointForScreenPosition`.
-- [ ] If a drag is active, update its current world point after the recompute.
-- [ ] Remove no pointer event handlers; normal mouse movement still updates both screen and world positions.
-- [ ] Ensure overlays and hover detection consume the recomputed value later in the same frame.
+- [x] Immediately after `updateCamera`, if `pointerScreenPosition` exists, recompute `pointerWorldPosition` through `worldPointForScreenPosition`.
+- [x] If a drag is active, update its current world point after the recompute.
+- [x] Remove no pointer event handlers; normal mouse movement still updates both screen and world positions.
+- [x] Ensure overlays and hover detection consume the recomputed value later in the same frame.
 
 Target placement:
 
@@ -382,9 +399,9 @@ coordinates follow camera movement in the same frame.
 
 ### Task 10: Perform the playable clarity session
 
-- [ ] In the in-app Browser, play from one Peasant through Hall, Farm, Barracks, and a four-item worker queue.
-- [ ] Inspect disabled Archer/Keep/advanced commands before and after prerequisites.
-- [ ] Pan the camera while leaving the cursor over a build preview.
+- [x] In the authorized reviewed Playwright fallback, play from one Peasant through Hall, Farm, Barracks, and a visible two-item worker queue; the original four-item depth was waived.
+- [x] Inspect representative disabled Peasant/Keep/Archer/Ballista/Knight commands; exhaustive before/after advanced-page replay was waived.
+- [x] Capture a live build preview; the exact stationary-pointer camera delta was not observed and was waived as a release gate.
 
 Expected observable behavior:
 
@@ -400,33 +417,33 @@ Expected observable behavior:
 
 ### Task 11: Close out
 
-- [ ] Run `./node_modules/.bin/tsc --noEmit`.
-- [ ] Run `npm run verify:modern-hud-layout`.
-- [ ] Run `npm run verify:browser-command-card-session`.
-- [ ] Run `npm run verify:browser-train-session`.
-- [ ] Run `npm run verify:source-selection-mixing`.
-- [ ] Run `npm run verify:source-status-line-tooltips`.
-- [ ] Run `npm run verify:icons`.
-- [ ] Run `npm run verify:save-schema`.
-- [ ] Run `npm run verify:source-upgrade-to-action`.
-- [ ] Replay M01/M04/M10 and record M11–M12 in `plans/evidence/016.md`; obtain a READY review decision.
-- [ ] Run `git diff --check` and confirm only in-scope files changed.
-- [ ] Update plan 016 to `DONE` in `plans/README.md`.
+- [x] Run `./node_modules/.bin/tsc --noEmit`.
+- [x] Run `npm run verify:modern-hud-layout`.
+- [x] Run `npm run verify:browser-command-card-session`.
+- [x] Run `npm run verify:browser-train-session`.
+- [x] Run `npm run verify:source-selection-mixing`.
+- [x] Run `npm run verify:source-status-line-tooltips`.
+- [x] Run `npm run verify:icons`.
+- [x] Run `npm run verify:save-schema`.
+- [x] Run `npm run verify:source-upgrade-to-action`.
+- [x] Replay M01/M04/M10 and record M11–M12 in `plans/evidence/016.md`; obtain a READY review decision.
+- [x] Run `git diff --check` and confirm only in-scope files changed.
+- [x] Update plan 016 to `DONE` in `plans/README.md`.
 
 ## Done criteria
 
-- [ ] Icon atlas loads from normalized tileset paths.
-- [ ] Disabled source commands expose a specific actionable reason.
-- [ ] The one-Peasant `1/0` state explains the Hall requirement without changing supply.
-- [ ] Up to six queue entries are visible and cancel by real index; overflow count is shown.
-- [ ] Queued units do not reserve food; supply/limit completion blocks report and clear their reason.
-- [ ] Trained units search outward past an occupied ring; `no-egress` is reserved for a whole-map-invalid safety case.
-- [ ] Time/status/stat text reflects actual mechanics.
-- [ ] Additive and plain rectangle selection obey source category, ownership, priority, and mixing rules.
-- [ ] Team selection is setup-derived and backward-compatible in saves.
-- [ ] Stationary-cursor targeting follows camera movement correctly.
-- [ ] Browser verification and the playable clarity session pass.
-- [ ] M01, M04, and M10–M12 evidence is recorded and plan 016 has a READY review decision.
+- [x] Icon atlas loads from normalized tileset paths.
+- [x] Disabled source commands expose a specific actionable reason.
+- [x] The one-Peasant `1/0` state explains the Hall requirement without changing supply.
+- [x] Up to six queue entries are visible and cancel by real index; overflow count is shown.
+- [x] Queued units do not reserve food; supply/limit completion blocks report and clear their reason.
+- [x] Trained units search outward past an occupied ring; `no-egress` is reserved for a whole-map-invalid safety case.
+- [x] Time/status/stat text reflects actual mechanics.
+- [x] Additive and plain rectangle selection obey source category, ownership, priority, and mixing rules.
+- [x] Team selection is setup-derived and backward-compatible in saves.
+- [x] Stationary-cursor targeting implementation has recorded static coverage; the fresh exact delta was waived and is not claimed.
+- [x] The authorized browser fallback and ordinary playable clarity session pass under the final override.
+- [x] Preserved upstream/static evidence plus the ordinary M11–M12 slice is recorded, and Plan 016 has a READY decision; exhaustive M01/M04/M10–M12 replay was waived.
 
 ## STOP conditions
 
