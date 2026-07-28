@@ -1,5 +1,9 @@
 # Plan 008: Include Omitted Verifiers In The Full Verify Gate
 
+> **Historical status — `DONE-HISTORICAL`:** This plan has already been
+> executed. Its original executor instructions are retained as history and are
+> not a current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving to the next step. If anything in the "STOP conditions" section occurs, stop and report. Do not improvise. When done, update the status row for this plan in `plans/README.md` unless a coordinator tells you they own the index.
 >
 > **Drift check (run first)**: `git diff --stat 3c35520..HEAD -- package.json scripts/verify-browser-native-viewport.mjs plans/008-include-omitted-verifiers-in-full-verify.md plans/README.md`

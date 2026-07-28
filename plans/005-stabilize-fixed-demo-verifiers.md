@@ -1,5 +1,9 @@
 # Plan 005: Stabilize Stale Fixed-Demo Verifier Contracts
 
+> **Historical status — `DONE-HISTORICAL`:** This plan has already been
+> executed. Its original executor instructions are retained as history and are
+> not a current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving to the next step. If anything in the "STOP Conditions" section occurs, stop and report; do not improvise. When done, update the status row for this plan in `plans/README.md`.
 >
 > **Drift check (run first)**: `git diff --stat 3c35520..HEAD -- scripts/verify-fixed-demo-random-ai.mjs scripts/verify-browser-runtime-smoke.mjs README.md package.json plans/005-stabilize-fixed-demo-verifiers.md plans/README.md`

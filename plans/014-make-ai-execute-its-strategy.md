@@ -1,5 +1,13 @@
 # Plan 014: Make The AI Execute Its Script At Human-Scale Timing — Implementation Plan
 
+> **Historical status — `ACCEPTED-WAIVER`:** This plan has already been
+> executed, and the user accepted the ordinary core loop without a new M07
+> replay, exhaustive M08 same-session 1/4/16-wave proof, the full M09
+> difficulty sweep, Gate A/Task 9 segmentation, or a separate independent READY
+> review. Those gates remain waived, not passed. The original executor
+> instructions are retained as history and are not a current work order. See
+> `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: Follow all steps and verification gates. This plan repairs the existing source-style AI; it does not invent a new strategy system. Stop on any STOP condition and update `plans/README.md` when complete unless a coordinator owns it.
@@ -48,7 +56,7 @@ percentages at the timing boundary, and persist explored tiles per player.
 - **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md, plans/013-fix-combat-commitment-and-response.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug
 - **Planned at**: commit `6af2eeb`, 2026-07-10
-- **Current decision**: DONE — READY under the 2026-07-24 user acceptance override. The ordinary core-loop session plus preserved live progression evidence supersedes exhaustive Gate A/Task 9 segmentation, same-session 4/16-wave proof, verifier expansion, and a separate independent READY review.
+- **Current decision**: `ACCEPTED-WAIVER` under the 2026-07-24 user acceptance override. The ordinary core-loop session plus preserved live progression evidence supersedes exhaustive Gate A/Task 9 segmentation, same-session 4/16-wave proof, verifier expansion, and a separate independent READY review.
 
 ## Acceptance override (2026-07-24)
 
@@ -379,7 +387,7 @@ reused by the next scripted force.
 ### Task 8: Add live AI progression evidence
 
 - [x] Extend the browser smoke state in `src/main.ts` only if required to expose these data-only fields per AI state: selected attack force id(s), build-order role counts, completed building counts, and normalized speed factors.
-- [x] Dispositioned by the explicit user acceptance override: do not extend the
+- **WAIVED:** By explicit user acceptance override, do not extend the
   browser verifier. Existing focused checks retain interpreter/force/factor
   coverage, while ordinary play and preserved live observations supply the
   player-visible core-loop decision. Exact same-session 4/16 progression is not
@@ -400,10 +408,10 @@ package at `/home/halla/workspaces/Wargus-TypeScript-artifacts/plan014-core-play
 
 - [x] Start the fixed demo with deterministic seed `ai-staged-pressure` and use
   normal rendered controls from the selected one-Peasant/no-Hall opening.
-- [x] Exercise the accepted ordinary core-loop subset at visible difficulty
+- **ACCEPTED / WAIVED:** Exercise the accepted ordinary core-loop subset at visible difficulty
   level 3 and combine it with preserved live Barracks/Footman and launch-1
   contact evidence. The user waived same-session 4/16-wave proof.
-- [x] Exercise visible Speed/Preferences controls and responsive Pause/Resume.
+- **ACCEPTED / WAIVED:** Exercise visible Speed/Preferences controls and responsive Pause/Resume.
   The user waived the exhaustive down/up difficulty sequence.
 
 Expected observable behavior:
@@ -422,7 +430,7 @@ Expected observable behavior:
 - [x] Run `npm run verify:source-ai-difficulty`.
 - [x] Run `npm run verify:source-ai-forces`.
 - [x] Run `npm run verify:source-ai-explores`.
-- [x] Browser-verifier expansion/run waived by explicit user instruction; the
+- **WAIVED:** Browser-verifier expansion/run waived by explicit user instruction; the
   production UI was exercised through ordinary play instead.
 - [x] Run `npm run verify:save-schema`.
 - [x] Record the accepted M08/M09 core-loop evidence and the M01/M04/M07
@@ -444,7 +452,7 @@ Expected observable behavior:
 - [x] AI speed factors are 0.75/1/1/1.2/1.5 and reset after every difficulty change.
 - [x] AI exploration reads persistent knowledge for its own player.
 - [x] Existing saves load; new saves preserve per-player exploration.
-- [x] The user-approved ordinary core-loop session plus preserved live
+- **ACCEPTED / WAIVED:** The user-approved ordinary core-loop session plus preserved live
   progression evidence satisfies the player-visible acceptance subset; no
   exhaustive same-session 4/16 claim is made.
 - [x] M01, M04, and the override disposition for M07–M09 are recorded, and Plan

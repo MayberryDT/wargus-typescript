@@ -4,6 +4,9 @@ This rubric was frozen before revising plans 011–017. The user supplied the
 starting score: **60/100**. Scores may rise only when the roadmap gains
 substantive execution value; added prose or formatting alone earns no points.
 
+The score grades pre-implementation plan quality and executability. It is not
+an implementation-completion or acceptance-evidence score.
+
 ## Weighted rubric
 
 | Criterion | Weight | Low quality | Medium quality | High quality |
@@ -143,3 +146,13 @@ The missing eight points are deliberately not awarded in advance:
 The optimization therefore stops at **92/100**, not 100. This document grades
 the executability of the roadmap; it does not claim that any gameplay fix is
 already implemented or proven.
+
+## 2026-07-28 full-roadmap rewrite score history
+
+The historical Plans 011–017 optimization remains **92/100**. The 2026-07-28
+full-roadmap rewrite preserves that score as a pre-implementation plan-quality
+record; it does not reinterpret the score as proof that original exhaustive
+acceptance ran.
+
+No separate score for the full-roadmap rewrite is recorded yet. A later score
+must use its own stated rubric and repository-backed review record.

@@ -1,5 +1,9 @@
 # Plan 011: Restore The Original Two-Phase Construction Lifecycle — Implementation Plan
 
+> **Historical status — `DONE-VERIFIED`:** This plan has already been executed.
+> Its original executor instructions are retained as history and are not a
+> current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving on. If a STOP condition occurs, stop and report; do not improvise. When done, update this plan's status in `plans/README.md` unless a coordinator owns the index.

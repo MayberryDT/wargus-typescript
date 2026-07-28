@@ -1,5 +1,9 @@
 # Plan 010: Convert Fixed-Demo Speed Verifier To A Layout Contract
 
+> **Historical status — `DONE-HISTORICAL`:** This plan has already been
+> executed. Its original executor instructions are retained as history and are
+> not a current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving to the next step. If anything in the "STOP conditions" section occurs, stop and report. Do not improvise. When done, update the status row for this plan in `plans/README.md` unless a coordinator tells you they own the index.
 >
 > **Drift check (run first)**: `git diff --stat 3c35520..HEAD -- src/view/renderHud.ts src/main.ts scripts/verify-fixed-demo-polish.mjs scripts/verify-modern-hud-layout.mjs plans/010-convert-fixed-demo-speed-verifier-to-layout-contract.md plans/README.md`

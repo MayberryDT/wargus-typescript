@@ -1,5 +1,14 @@
 # Plan 016: Make Commands, Queues, Supply, And Input State Legible — Implementation Plan
 
+> **Historical status — `ACCEPTED-WAIVER`:** This plan has already been
+> executed, and the user accepted one ordinary integrated session plus recorded
+> browser-free gates. Exhaustive M01/M04/M10–M12 replay, forced
+> completion-supply/no-egress fixtures, index-2 cancellation, the second
+> viewport, the exact pointer-pan delta, and the named unavailable or unrun
+> browser/source gates remain waived, not passed. The original executor
+> instructions are retained as history and are not a current work order. See
+> `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: Follow this plan in slices and run the browser/layout gates after each slice. Do not redesign the HUD. Stop on any STOP condition and update `plans/README.md` when complete unless a coordinator owns it.
@@ -47,7 +56,7 @@ normalize imported display identifiers only at presentation boundaries.
 - **Depends on**: plans/014-make-ai-execute-its-strategy.md, plans/015-complete-demo-tech-paths.md
 - **Category**: bug, direction
 - **Planned at**: commit `6af2eeb`, 2026-07-10
-- **Current decision**: DONE — READY under the 2026-07-24 final ordinary-play user override. Implementation gates and the clean one-page integrated session are recorded in `plans/evidence/016.md`; explicitly waived exhaustive cases are not claimed.
+- **Current decision**: `ACCEPTED-WAIVER` under the 2026-07-24 final ordinary-play user override. Passing browser-free gates and the clean one-page integrated session are recorded in `plans/evidence/016.md`; explicitly waived, unavailable, and unrun gates are not claimed.
 
 ## Acceptance override (2026-07-24)
 
@@ -217,13 +226,13 @@ commit. A presentation checkpoint may not weaken simulation eligibility to pass.
 ### Task 1: Establish the presentation/input baseline
 
 - [x] Run `./node_modules/.bin/tsc --noEmit`.
-- [x] Run `npm run verify:modern-hud-layout`.
-- [x] Run `npm run verify:browser-command-card-session`.
-- [x] Run `npm run verify:browser-train-session`.
-- [x] Run `npm run verify:source-selection-mixing`.
-- [x] Run `npm run verify:source-status-line-tooltips`.
-- [x] Run `npm run verify:source-upgrade-to-action`.
-- [x] Run `npm run verify:browser-fixed-demo-input`.
+- **NOT RUN:** `npm run verify:modern-hud-layout` (browser/server gate).
+- **NOT RUN:** `npm run verify:browser-command-card-session`.
+- **NOT RUN:** `npm run verify:browser-train-session`.
+- **NOT RUN TO COMPLETION:** `npm run verify:source-selection-mixing` was unavailable on Halla because of its recorded workstation-only source path.
+- **NOT RUN TO COMPLETION:** `npm run verify:source-status-line-tooltips` was unavailable on Halla because of its recorded workstation-only source path.
+- **NOT RUN TO COMPLETION:** `npm run verify:source-upgrade-to-action` was unavailable on Halla because of its recorded workstation-only source path.
+- **NOT RUN:** `npm run verify:browser-fixed-demo-input`.
 - [x] Run `npm run verify:icons`.
 
 Expected: all exit 0. STOP on a pre-existing unrelated failure.
@@ -399,9 +408,9 @@ coordinates follow camera movement in the same frame.
 
 ### Task 10: Perform the playable clarity session
 
-- [x] In the authorized reviewed Playwright fallback, play from one Peasant through Hall, Farm, Barracks, and a visible two-item worker queue; the original four-item depth was waived.
-- [x] Inspect representative disabled Peasant/Keep/Archer/Ballista/Knight commands; exhaustive before/after advanced-page replay was waived.
-- [x] Capture a live build preview; the exact stationary-pointer camera delta was not observed and was waived as a release gate.
+- **ACCEPTED / WAIVED:** The authorized reviewed Playwright fallback reached a visible two-item worker queue; the original four-item depth was waived.
+- **ACCEPTED / WAIVED:** Representative disabled Peasant/Keep/Archer/Ballista/Knight commands were inspected; exhaustive before/after advanced-page replay was waived.
+- **ACCEPTED / WAIVED:** A live build preview was captured; the exact stationary-pointer camera delta was not observed and was waived as a release gate.
 
 Expected observable behavior:
 
@@ -418,15 +427,15 @@ Expected observable behavior:
 ### Task 11: Close out
 
 - [x] Run `./node_modules/.bin/tsc --noEmit`.
-- [x] Run `npm run verify:modern-hud-layout`.
-- [x] Run `npm run verify:browser-command-card-session`.
-- [x] Run `npm run verify:browser-train-session`.
-- [x] Run `npm run verify:source-selection-mixing`.
-- [x] Run `npm run verify:source-status-line-tooltips`.
+- **NOT RUN:** `npm run verify:modern-hud-layout` (browser/server gate).
+- **NOT RUN:** `npm run verify:browser-command-card-session`.
+- **NOT RUN:** `npm run verify:browser-train-session`.
+- **NOT RUN TO COMPLETION:** `npm run verify:source-selection-mixing` was unavailable on Halla.
+- **NOT RUN TO COMPLETION:** `npm run verify:source-status-line-tooltips` was unavailable on Halla.
 - [x] Run `npm run verify:icons`.
 - [x] Run `npm run verify:save-schema`.
-- [x] Run `npm run verify:source-upgrade-to-action`.
-- [x] Replay M01/M04/M10 and record M11–M12 in `plans/evidence/016.md`; obtain a READY review decision.
+- **NOT RUN TO COMPLETION:** `npm run verify:source-upgrade-to-action` was unavailable on Halla.
+- **WAIVED:** Exhaustive M01/M04/M10–M12 replay and a separate READY review were replaced by the final ordinary-play user acceptance.
 - [x] Run `git diff --check` and confirm only in-scope files changed.
 - [x] Update plan 016 to `DONE` in `plans/README.md`.
 
@@ -441,9 +450,9 @@ Expected observable behavior:
 - [x] Time/status/stat text reflects actual mechanics.
 - [x] Additive and plain rectangle selection obey source category, ownership, priority, and mixing rules.
 - [x] Team selection is setup-derived and backward-compatible in saves.
-- [x] Stationary-cursor targeting implementation has recorded static coverage; the fresh exact delta was waived and is not claimed.
+- **WAIVED:** Stationary-cursor targeting retains static coverage; the fresh exact delta was waived and is not claimed.
 - [x] The authorized browser fallback and ordinary playable clarity session pass under the final override.
-- [x] Preserved upstream/static evidence plus the ordinary M11–M12 slice is recorded, and Plan 016 has a READY decision; exhaustive M01/M04/M10–M12 replay was waived.
+- **ACCEPTED / WAIVED:** Preserved upstream/static evidence plus the ordinary M11–M12 slice was accepted; exhaustive M01/M04/M10–M12 replay was waived.
 
 ## STOP conditions
 

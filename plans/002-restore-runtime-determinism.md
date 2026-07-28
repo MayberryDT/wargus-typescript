@@ -1,5 +1,9 @@
 # Plan 002: Restore Runtime Determinism Verification
 
+> **Historical status — `DONE-HISTORICAL`:** This plan has already been
+> executed. Its original executor instructions are retained as history and are
+> not a current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving to the next step. If anything in the "STOP Conditions" section occurs, stop and report; do not improvise. When done, update the status row for this plan in `plans/README.md`.
 >
 > **Drift check (run first)**: `git diff --stat 3c35520..HEAD -- src/wargus/demoScenario.ts README.md plans/002-restore-runtime-determinism.md plans/README.md`

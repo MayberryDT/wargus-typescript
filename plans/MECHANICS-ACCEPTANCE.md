@@ -1,15 +1,25 @@
 # Gameplay Mechanics Acceptance Matrix
 
-This is the shared player-visible contract for plans 011–017. It prevents a
-plan from declaring success because TypeScript compiles or a source-fragment
-verifier passes. Each executor runs the scenarios assigned to its plan, records
-an evidence packet, and replays the critical scenarios from completed upstream
-plans before marking its own plan DONE.
+This is the retained player-visible contract for Plans 011–017. It records the
+scenario definitions and original exhaustive acceptance boundary; it is not a
+current work order.
+
+Historical classification distinguishes what actually closed:
+
+- `DONE-VERIFIED` means the recorded required acceptance evidence passed.
+- `ACCEPTED-WAIVER` means the user accepted the product state while named
+  original acceptance work remained waived.
+
+A READY phrase in append-only evidence does not convert a named waiver or
+unrun gate into a pass. `plans/HISTORICAL-PLAN-AUDIT.md` is authoritative for
+the final classification.
 
 ## Reproducibility rules
 
 - Use the Codex in-app Browser for manual browser work.
-- Use `http://127.0.0.1:5173/?smoke=1&demoSeed=<seed>` unless a scenario names a different URL.
+- For any future replay, inspect Halla listeners, allocate a unique unoccupied
+  port, and use `http://127.0.0.1:<port>/?smoke=1&demoSeed=<seed>` unless a
+  scenario names a different URL. Follow `plans/HALLA-EXECUTION-POLICY.md`.
 - Record commit SHA, seed, source speed, difficulty, viewport, simulation tick
   at start/end, and wall-clock duration.
 - Use a 1280×720 viewport for the primary run. Repeat UI/input scenarios at
@@ -105,9 +115,9 @@ Each executor creates or updates `plans/evidence/NNN.md`:
 The evidence file contains summaries and local artifact paths, not binary
 screenshots, generated attachments, raw browser logs, or credentials.
 
-## Roadmap exit gate
+## Historical exhaustive roadmap exit gate
 
-The mechanics roadmap is complete only when:
+The original matrix defined complete exhaustive acceptance as:
 
 - every plan row 011–017 is DONE;
 - every evidence packet records READY;
@@ -116,3 +126,8 @@ The mechanics roadmap is complete only when:
 - no plan's residual-risk section contains an unresolved release blocker;
 - a final human play session can build, expand, fight staged AI pressure, and
   reach the advertised advanced units without a silent order/state failure.
+
+That exhaustive boundary was not later claimed as passed. Plans 011–013 and
+015 are `DONE-VERIFIED`; Plans 014, 016, and 017 are `ACCEPTED-WAIVER` with the
+unrun scenarios and replay gates named in `plans/HISTORICAL-PLAN-AUDIT.md` and
+their evidence packets.

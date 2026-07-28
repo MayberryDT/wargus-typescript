@@ -1,5 +1,9 @@
 # Plan 012: Make Group Movement And Path Recovery Reliable — Implementation Plan
 
+> **Historical status — `DONE-VERIFIED`:** This plan has already been executed.
+> Its original executor instructions are retained as history and are not a
+> current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: Follow every step and verification gate. Stop on any STOP condition; do not broaden the pathfinding rewrite. Update `plans/README.md` when complete unless a coordinator owns it.

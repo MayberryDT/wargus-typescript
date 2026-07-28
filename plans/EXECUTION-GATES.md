@@ -1,8 +1,12 @@
 # Gameplay Roadmap Execution And Integration Gates
 
-These gates apply to plans 011–017. They keep risky simulation changes
-reviewable, prevent overlapping edits to central files, and stop later tuning
-from hiding an upstream mechanics regression.
+These gates record the historical execution and integration policy used while
+Plans 011–017 were implemented. They keep that critical path, shared-file
+serialization, checkpoint, acceptance, and rollback history reviewable; they
+are not a current work order and do not govern unfinished plans.
+
+Unfinished plans and any future replay use
+`plans/HALLA-EXECUTION-POLICY.md`.
 
 ## Original-game authority
 
@@ -12,10 +16,12 @@ original behavior governs unless the user explicitly approves a deliberate
 departure. Record the exact runtime observation or installed source path in the
 evidence packet.
 
-## Resource-bounded execution
+## Historical 011–017 capture policy
 
 These limits override any plan wording that implies one continuous browser or
-playable session:
+playable session in the retained Plans 011–017 record. They describe how that
+historical evidence was captured. They do not override the Halla policy for
+unfinished future work.
 
 - Run no live game tab or browser verifier continuously for more than 30
   seconds. Start the wall-clock budget when the game page begins loading, not
@@ -88,13 +94,17 @@ Only one active implementation plan may own a hotspot at a time:
 | Hotspot | Serialized owners, in order |
 |---|---|
 | `src/simulation/orders.ts` | 011 -> 012 -> 013 -> 014 -> 016 |
-| `src/simulation/world.ts` | 013 -> 014 -> 016 |
-| `src/wargus/saveGame.ts` | 013 -> 014 -> 016 |
+| `src/simulation/world.ts` | 011 -> 013 -> 014 -> 016 |
+| `src/wargus/saveGame.ts` | 011 -> 013 -> 014 -> 016 |
 | `src/view/sourceUiHelpers.ts` | 011 -> 016 |
+| `src/view/renderHud.ts` | 014 -> 016 |
 | `src/main.ts` | 011 -> 012 -> 015 -> 013 -> 014 -> 016 -> 017 |
 | `src/wargus/demoScenario.ts` | 015 -> 017 |
 | `scripts/verify-fixed-demo-random-ai.mjs` | 011 -> 015 -> 014 -> 017 |
 | `scripts/verify-browser-command-card-session.mjs` | 011 -> 015 -> 016 |
+| `scripts/verify-browser-fixed-demo-input.mjs` | 012 -> 016 -> 017 |
+| `scripts/verify-browser-runtime-smoke.mjs` | 014 -> 017 |
+| `scripts/verify-save-schema.mjs` | 011 -> 013 -> 014 |
 
 If a plan would edit a hotspot owned by an unfinished predecessor, STOP. Do not
 resolve the conflict by copying one plan's future implementation into another.
@@ -172,5 +182,8 @@ Plan 017's evidence packet contains the final table:
 | Plan | Integrated SHA | Assigned scenarios | Upstream replay | Budgets | Residual risk | Decision |
 |---|---|---|---|---|---|---|
 
-The roadmap cannot close with a BLOCKED, NOT READY, missing evidence, or
-unresolved release-blocker row.
+The original exhaustive gate said the roadmap could not close with a BLOCKED,
+NOT READY, missing-evidence, or unresolved release-blocker row. The final
+historical decision did not claim that exhaustive gate passed: Plans 014, 016,
+and 017 closed as `ACCEPTED-WAIVER`. Their named unrun gates remain waived in
+`plans/HISTORICAL-PLAN-AUDIT.md` and the append-only evidence packets.

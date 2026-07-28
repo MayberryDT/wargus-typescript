@@ -1,5 +1,9 @@
 # Plan 015: Complete And Extend The Fixed-Demo Advanced Tech Paths — Implementation Plan
 
+> **Historical status — `DONE-VERIFIED`:** This plan has already been executed.
+> Its original executor instructions are retained as history and are not a
+> current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: Follow the plan and verification gates exactly. This plan completes the existing advertised roster; it does not expand the demo with unrelated naval or campaign content. Update `plans/README.md` when complete unless a coordinator owns it.

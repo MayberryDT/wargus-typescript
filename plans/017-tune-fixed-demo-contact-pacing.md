@@ -1,5 +1,13 @@
 # Plan 017: Tune The One-Peasant Demo For Faster, Consistent Contact — Implementation Plan
 
+> **Historical status — `ACCEPTED-WAIVER`:** This plan has already been
+> executed, and the user accepted Candidate B as the landed checkpoint—not as a
+> measured 18-run winner. The 18-run bakeoff/score, nine-seed repeat matrix,
+> pressure-first/second session, exact first-unit/contact windows, full
+> M01–M13 replay, and independent reviewer remain waived, not passed. The
+> original executor instructions are retained as history and are not a current
+> work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Executor instructions**: This is a gameplay tuning plan after correctness work. Do not start until all dependencies are DONE. Follow the explicit values and acceptance windows; if they fail, stop and report measurements rather than improvising new numbers. Update `plans/README.md` when complete unless a coordinator owns it.
@@ -40,7 +48,7 @@ private unit-speed mutation, and verify it across deterministic seeds.
 - **Depends on**: plans/011-protect-construction-lifecycle.md, plans/012-make-movement-orders-reliable.md, plans/013-fix-combat-commitment-and-response.md, plans/014-make-ai-execute-its-strategy.md, plans/015-complete-demo-tech-paths.md, plans/016-make-gameplay-state-legible.md
 - **Category**: direction
 - **Planned at**: commit `6af2eeb`, 2026-07-10
-- **Current decision**: DONE — READY under the 2026-07-24 final ordinary-play user override. Candidate B remains the landed 45-tick/1.5x, 70–110-tile checkpoint; the clean one-page acceptance and explicit exhaustive waivers are recorded in `plans/evidence/017.md`.
+- **Current decision**: `ACCEPTED-WAIVER` under the 2026-07-24 final ordinary-play user override. Candidate B remains the user-accepted 45-tick/1.5x, 70–110-tile checkpoint, not a measured 18-run winner; the clean one-page acceptance and explicit exhaustive waivers are recorded in `plans/evidence/017.md`.
 
 ## Acceptance override (2026-07-24)
 
@@ -187,8 +195,8 @@ force sizes.
 
 - [x] Confirm plans 011–016 are `DONE` in `plans/README.md`.
 - [x] Run `./node_modules/.bin/tsc --noEmit`.
-- [x] Run `npm run verify:browser-fixed-demo-input`.
-- [x] Run `npm run verify:browser-runtime-smoke`.
+- **NOT RUN:** `npm run verify:browser-fixed-demo-input`.
+- **NOT RUN:** `npm run verify:browser-runtime-smoke`.
 - [x] Run `npm run verify:fixed-demo-random-ai`.
 - [x] Run `npm run verify:playtest-telemetry`.
 
@@ -205,13 +213,13 @@ Expected: all exit 0 before tuning. STOP if a correctness dependency is incomple
   enemy AI type, and exact distance.
 - [x] Reproduce the projected table above from live setup data before using it;
   do not preserve a seed label whose projected pair changed.
-- [x] Run both the economy-first and pressure-first action sequence for each candidate's three pairs. Use visible speed controls to set the candidate pace; use a temporary isolated checkpoint for candidate pair filtering, never stack candidates in one diff.
-- [x] Record Hall completion, first human combat unit, first AI attack activation, first visible hostile contact, update/render timing, and M01–M12 replay result in `plans/evidence/017.md`.
-- [x] Repeat every candidate/seed/opening action sequence from fresh state.
+- **WAIVED:** The economy-first and pressure-first sequence for each candidate's three pairs was not run; Candidate B was user accepted from the landed checkpoint and ordinary integrated session.
+- **WAIVED:** The complete 18-run milestone and M01–M12 replay table was not recorded; only the accepted ordinary-session observations remain authoritative.
+- **WAIVED:** Repeating every candidate/seed/opening action sequence from fresh state was not run.
   Pair, enemy AI, milestone ordering/simulation ticks, launch ids, and final
   unit/resource counts must match exactly; record wall-time differences in a
   compact repeat-delta table rather than scoring them as extra runs.
-- [x] Score candidates with the frozen formula above. Select the winner only if it passes every hard gate and scores at least 80; apply the lower-speed tie-break exactly.
+- **WAIVED:** The frozen 18-run score was not measured. Candidate B is user accepted, not an 18-run winner.
 
 **Verify**: the evidence packet contains 18 measured land-AI runs (3 candidates
 × 3 seeds × 2 openings), every enemy AI field is `wc2-land-attack`, the
@@ -316,8 +324,8 @@ If the implemented winner's milestones differ from its bakeoff by more than 10% 
 ### Task 8: Perform two real play sessions
 
 - [x] Session A: the accepted ordinary session covered Hall, additional workers, Farm, Barracks, harvesting, Footman, and natural AI launch.
-- [x] Session B: the separate pressure-first session was waived by the final user override and is not claimed.
-- [x] The second seed was waived; the accepted seed measured `93.134` tiles inside candidate B's band.
+- **WAIVED:** Session B, the separate pressure-first session, was not run and is not claimed.
+- **WAIVED:** The second seed was not run; the accepted seed measured `93.134` tiles inside Candidate B's band.
 
 Expected observable behavior:
 
@@ -331,29 +339,29 @@ Expected observable behavior:
 ### Task 9: Close out
 
 - [x] Run `./node_modules/.bin/tsc --noEmit`.
-- [x] Run `npm run verify:browser-fixed-demo-input`.
-- [x] Run `npm run verify:browser-runtime-smoke`.
+- **NOT RUN:** `npm run verify:browser-fixed-demo-input`.
+- **NOT RUN:** `npm run verify:browser-runtime-smoke`.
 - [x] Run `npm run verify:fixed-demo-random-ai`.
 - [x] Run `npm run verify:playtest-telemetry`.
-- [x] Run `npm run verify:browser-demo-session`.
+- **NOT RUN:** `npm run verify:browser-demo-session`.
 - [x] Run `npm run verify:runtime-determinism`.
 - [x] Run `npm run verify:wargus-assets`.
-- [x] Replay M01–M13 and write `plans/evidence/017.md`; obtain a READY review decision for the integrated roadmap.
+- **WAIVED:** Exhaustive M01–M13 replay and a separate READY reviewer were replaced by the final ordinary-play user acceptance.
 - [x] Run `git diff --check` and confirm only in-scope files changed.
 - [x] Update plan 017 to `DONE` in `plans/README.md`.
 
 ## Done criteria
 
 - [x] Fixed demo still starts with one selected Peasant, one enemy Peon, no Hall, and unchanged high resources.
-- [x] Candidate B's pace is displayed truthfully; the 18-run score and exhaustive hard-gate matrix were waived and are not claimed.
+- **ACCEPTED / WAIVED:** Candidate B's pace is displayed truthfully; the 18-run score and exhaustive hard-gate matrix were waived and are not claimed.
 - [x] No fixed-demo code mutates individual unit movement speed.
 - [x] Seeded start pairs use the selected candidate's exact band or deterministic closest-to-target fallback.
 - [x] Every fixed-demo enemy source slot is `wc2-land-attack`; air-script starts
   remain available to non-demo map play but are excluded from contact scoring.
-- [x] Hall met its 40-second interval; first-unit pressure timing and first hostile contact windows were waived and are not claimed.
-- [x] One ordinary session plus the frozen cross-seed projection was accepted; the second live session was waived.
+- **ACCEPTED / WAIVED:** Hall met its 40-second interval; first-unit pressure timing and first hostile contact windows were waived and are not claimed.
+- **ACCEPTED / WAIVED:** One ordinary session plus the frozen cross-seed projection was accepted; the second live session was waived.
 - [x] Recorded browser-free gates and the ordinary session's average update/render budgets pass under the override.
-- [x] Preserved upstream/static evidence plus the ordinary integrated slice is recorded, and Plan 017 has a READY decision; exhaustive M01–M13 replay was waived.
+- **ACCEPTED / WAIVED:** Preserved upstream/static evidence plus the ordinary integrated slice was user accepted; exhaustive M01–M13 replay was waived.
 
 ## STOP conditions
 

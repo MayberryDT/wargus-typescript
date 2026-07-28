@@ -3,9 +3,9 @@
 This is the authoritative status and wave index for Plans 001–027. Plan IDs are
 stable references; waves govern execution order. Plans 001–017 are completed
 historical entries, not current execution work. Their detailed classification,
-recorded commits, evidence, revalidation dates, and successors will be
-authoritatively reconciled in [the historical plan audit](HISTORICAL-PLAN-AUDIT.md).
-Until then, unknown historical completion/revalidation dates are `not recorded`.
+recorded commits, evidence, revalidation dates, drift, successors, and waiver
+boundaries are authoritative in
+[the historical plan audit](HISTORICAL-PLAN-AUDIT.md).
 
 ## Status vocabulary
 
@@ -43,23 +43,23 @@ predecessor's exit gate is accepted.
 
 | Plan | Title | Wave | Priority | Dependencies | Status | Implementation / acceptance commit | Evidence | Last revalidated | Successor |
 |---|---|---|---|---|---|---|---|---|---|
-| 001 | Add repository agent guidance | Historical | P1 | — | DONE-HISTORICAL | not recorded | not recorded | not recorded | Historical audit |
-| 002 | Restore runtime determinism verification | Historical | P1 | — | DONE-HISTORICAL | not recorded | not recorded | not recorded | Historical audit |
-| 003 | Upgrade Vite out of the vulnerable range | Historical | P1 | — | DONE-HISTORICAL | not recorded | not recorded | not recorded | Plan 027 revalidation; historical audit |
-| 004 | Harden map setup JSON loading against SPA fallback HTML | Historical | P1 | — | DONE-HISTORICAL | not recorded | not recorded | not recorded | Historical audit |
-| 005 | Stabilize stale fixed-demo verifier contracts | Historical | P2 | 002 | DONE-HISTORICAL | not recorded | not recorded | not recorded | Plan 027; historical audit |
-| 006 | Extract a low-risk orders.ts pilot slice | Historical | P3 | 002, 005 | DONE-HISTORICAL | not recorded | not recorded | not recorded | Plan 027 revalidation; historical audit |
-| 007 | Fix browser runtime smoke process cleanup | Historical | P1 | — | DONE-HISTORICAL | not recorded | not recorded | not recorded | Plan 026 and Plan 027; historical audit |
-| 008 | Include omitted verifiers in the full verify gate | Historical | P1 | — | DONE-HISTORICAL | not recorded | not recorded | not recorded | Historical audit |
-| 009 | Extract a browser verifier harness pilot | Historical | P2 | 007 | DONE-HISTORICAL | not recorded | not recorded | not recorded | Plan 026 and Plan 027; historical audit |
-| 010 | Convert fixed-demo speed verifier to a layout contract | Historical | P2 | 008 | DONE-HISTORICAL | not recorded | not recorded | not recorded | Plan 027 revalidation; historical audit |
-| 011 | Restore the original two-phase construction lifecycle | Historical | P1 | — | DONE-VERIFIED | not recorded | [011](evidence/011.md) | not recorded | Historical audit |
-| 012 | Make group movement and path recovery reliable | Historical | P1 | 011 | DONE-VERIFIED | not recorded | [012](evidence/012.md) | not recorded | Historical audit |
-| 013 | Make combat commitments and automatic response consistent | Historical | P1 | 012, 015 | DONE-VERIFIED | not recorded | [013](evidence/013.md) | not recorded | Historical audit |
-| 014 | Make the AI execute its script at human-scale timing | Historical | P1 | 011, 012, 013, 015 | ACCEPTED-WAIVER | not recorded | [014](evidence/014.md) | not recorded | Historical audit |
-| 015 | Complete and extend the fixed-demo advanced tech paths | Historical | P2 | 011, 012 | DONE-VERIFIED | not recorded | [015](evidence/015.md) | not recorded | Historical audit |
-| 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | not recorded | [016](evidence/016.md) | not recorded | Historical audit |
-| 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | not recorded | [017](evidence/017.md) | not recorded | Historical audit |
+| 001 | Add repository agent guidance | Historical | P1 | — | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | — |
+| 002 | Restore runtime determinism verification | Historical | P1 | — | DONE-HISTORICAL | `6af2eeb` | [018 determinism revalidation](evidence/018.md); [audit](HISTORICAL-PLAN-AUDIT.md) | 2026-07-27 | — |
+| 003 | Upgrade Vite out of the vulnerable range | Historical | P1 | — | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plan 027 revalidation |
+| 004 | Harden map setup JSON loading against SPA fallback HTML | Historical | P1 | — | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | — |
+| 005 | Stabilize stale fixed-demo verifier contracts | Historical | P2 | 002 | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plan 027 |
+| 006 | Extract a low-risk orders.ts pilot slice | Historical | P3 | 002, 005 | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plan 027 revalidation |
+| 007 | Fix browser runtime smoke process cleanup | Historical | P1 | — | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plans 026 and 027 |
+| 008 | Include omitted verifiers in the full verify gate | Historical | P1 | — | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plan 027 |
+| 009 | Extract a browser verifier harness pilot | Historical | P2 | 007 | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plans 026 and 027 |
+| 010 | Convert fixed-demo speed verifier to a layout contract | Historical | P2 | 008 | DONE-HISTORICAL | `6af2eeb` | pre-evidence; [audit](HISTORICAL-PLAN-AUDIT.md) | not recorded | Plan 027 revalidation |
+| 011 | Restore the original two-phase construction lifecycle | Historical | P1 | — | DONE-VERIFIED | `a93ef25` / `71de976` | [011](evidence/011.md) | 2026-07-10 | — |
+| 012 | Make group movement and path recovery reliable | Historical | P1 | 011 | DONE-VERIFIED | `d1c1214` / `b3fd496` | [012](evidence/012.md) | 2026-07-10 | — |
+| 013 | Make combat commitments and automatic response consistent | Historical | P1 | 012, 015 | DONE-VERIFIED | `4bcd6c9` / `e4f5bda` | [013](evidence/013.md) | 2026-07-23 | — |
+| 014 | Make the AI execute its script at human-scale timing | Historical | P1 | 011, 012, 013, 015 | ACCEPTED-WAIVER | user acceptance `f8a1c77` | [014](evidence/014.md) | 2026-07-24 | — |
+| 015 | Complete and extend the fixed-demo advanced tech paths | Historical | P2 | 011, 012 | DONE-VERIFIED | `e6be507`, `c43a28c`, `7eb9230`, `66f0ed8` / `5f9a444` | [015](evidence/015.md) | 2026-07-23 | — |
+| 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | `65bfd1a` / user acceptance `8655330` | [016](evidence/016.md) | 2026-07-24 | — |
+| 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | `a17bfa7` / user acceptance `8655330` | [017](evidence/017.md) | 2026-07-24 | — |
 | 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | IN PROGRESS | not recorded | [018](evidence/018.md) | not recorded | — |
 | 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
@@ -79,6 +79,7 @@ predecessor's exit gate is accepted.
 - [Performance acceptance](PERFORMANCE-ACCEPTANCE.md) governs the measurement
   matrix, validity, statistics, budgets, and durable evidence for Plan 018 and
   later performance work.
-- The future [historical plan audit](HISTORICAL-PLAN-AUDIT.md) will replace the
-  provisional `not recorded` historical metadata with recorded evidence only;
-  it must not fabricate dates or retroactively turn waivers into verified work.
+- [Historical plan audit](HISTORICAL-PLAN-AUDIT.md) authoritatively records
+  Plans 001–017 implementation/acceptance commits, evidence, revalidation,
+  drift, successors, and passed-versus-waived boundaries without fabricating
+  dates or retroactively turning waivers into verified work.

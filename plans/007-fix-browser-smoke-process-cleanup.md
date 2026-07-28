@@ -1,5 +1,9 @@
 # Plan 007: Fix Browser Runtime Smoke Process Cleanup
 
+> **Historical status — `DONE-HISTORICAL`:** This plan has already been
+> executed. Its original executor instructions are retained as history and are
+> not a current work order. See `plans/HISTORICAL-PLAN-AUDIT.md`.
+
 > **Executor instructions**: Follow this plan step by step. Run every verification command and confirm the expected result before moving to the next step. If anything in the "STOP conditions" section occurs, stop and report. Do not improvise. When done, update the status row for this plan in `plans/README.md` unless a coordinator tells you they own the index.
 >
 > **Drift check (run first)**: `git diff --stat 3c35520..HEAD -- scripts/verify-browser-runtime-smoke.mjs scripts/verify-browser-native-viewport.mjs plans/007-fix-browser-smoke-process-cleanup.md plans/README.md`
