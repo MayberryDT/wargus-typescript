@@ -5,6 +5,15 @@
 Applies to all unfinished Wargus plans and successor verification work on Halla.
 Historical evidence retains the policy active when it was captured.
 
+## Execution preflight
+
+- Confirm the hostname is `halla`, the expected branch is checked out, and the
+  work runs from its assigned isolated worktree under `/home/halla/workspaces/`.
+- Inspect listeners, confirm the required port is unoccupied, and use a unique
+  unoccupied port.
+- Confirm no conflicting project benchmark is active.
+- Confirm the host meets the start thresholds below before starting work.
+
 ## Host stability
 
 - Start only with at least 4 GiB MemAvailable and 20 GiB workspace disk free.
@@ -17,7 +26,6 @@ after cleanup. These are host-stability guards, not benchmark budgets.
 
 ## Process ownership
 
-- Inspect listeners first and use unique unoccupied ports.
 - Record exact root PIDs and descendants.
 - Stop only exact owned PIDs.
 - Never use broad pkill, killall, unrelated port-owner termination, or

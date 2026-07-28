@@ -42,9 +42,9 @@ it. Synthetic samples are not included in the real-input percentile.
 
 Each measured `command-18` trial uses ten real alternating move/attack-move
 pairs, issued during the first 10 measured seconds at fixed wall-clock offsets.
-It requires at least 20 successful command outcomes, 40 samples for the
-input-handler-to-command latency distribution, and 40 samples for the
-input-handler-to-next-render-callback latency distribution. Record command
+It requires at least 20 successful command outcomes, at least 40 samples for
+the input-handler-to-command latency distribution, and at least 40 samples for
+the input-handler-to-next-render-callback latency distribution. Record command
 kind, issue offset, success, queue modifier, command latency, and
 next-render-callback latency for every outcome.
 
@@ -91,9 +91,9 @@ entity/effect fingerprint.
 Discard a trial only for renderer or viewport mismatch; hidden or unfocused
 document; non-advancing RAF; runtime load/profile failure; browser crash;
 resource safety abort; or a missing required input outcome or sample pairing.
-Never discard a valid trial for a failed performance budget. Allow one
-replacement for an invalid trial and preserve both invalid and replacement
-metadata in evidence.
+Never discard a valid trial for a failed performance budget. Allow at most one
+replacement per matrix-row trial slot; an invalid replacement cannot be
+replaced again. Preserve both invalid and replacement metadata in evidence.
 
 Store durable raw artifacts outside Git at:
 
@@ -102,7 +102,15 @@ Store durable raw artifacts outside Git at:
 ```
 
 Every capture directory contains one JSON file per trial, a normalized matrix
-summary, SHA-256 checksums, browser/environment metadata, a resource-monitor
-summary, controller version or commit, and invalid/discarded trial records.
+summary, SHA-256 checksums, a resource-monitor summary, controller version or
+commit, and invalid/discarded trial records. Its auditable environment metadata
+records the browser executable and version, viewport, renderer string, GPU
+device and driver, document focus and visibility, RAF advancement, commit and
+build mode, and host load, memory, swap, and storage pre/post state.
+
+Before/after comparisons use the same host, browser, hardware renderer,
+viewport, build mode, profile definition, warmup, duration, and aggregation
+rule.
+
 Commit concise normalized results to `plans/evidence/NNN.md`; raw files remain
 uncommitted and evidence must not depend only on `/tmp` paths.
