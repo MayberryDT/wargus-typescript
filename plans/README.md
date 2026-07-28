@@ -32,12 +32,9 @@ boundaries are authoritative in
 | 5 — Release | combined verification, review, preview, production |
 
 Plans 026/027 in Wave 0, Plans 019/020/021 in Wave 2, and Plans 022/023 in
-Wave 3 execute in parallel in isolated worktrees. Plans 024/025 in Wave 4 may
-execute in parallel only under their rewritten ownership boundary: Plan 024
-owns path requests and save-schema changes; Plan 025 owns visibility/fog caches
-and may not add save fields. If that boundary cannot be preserved, serialize
-Wave 4. Performance captures are serial. A later wave starts only after its
-predecessor's exit gate is accepted.
+Wave 3 execute in parallel in isolated worktrees under the frozen ownership
+tables below. Performance captures are serial. A later wave starts only after
+every predecessor exit gate is accepted and integrated.
 
 Wave 2 begins only after Plan 018 is accepted and integrated, not after its
 documentation rewrite alone. Plans 019, 020, and 021 then execute independently;
@@ -69,6 +66,29 @@ Plan 022 and Plan 023 then execute independently in isolated worktrees:
 The Wave coordinator owns shared `src/main.ts`, performance-schema,
 `package.json`, and `plans/README.md` integration. Plan-local diagnostics and
 counter extensions must use the plan namespaces frozen in the detailed plans.
+
+Wave 4 has a strict coordinator start barrier: Plans 022 and 023 must both pass
+every Wave 3 exit gate and integrate before either Wave 4 executor starts. Plan
+024 then consumes accepted Plans 018, 019, 020, and 023; Plan 022 is a wave
+barrier rather than its API dependency. Plan 025 consumes accepted Plans 018,
+019, 022, and 023. After Wave 3 integration, the coordinator compares the
+integrated seams with concrete drift base
+`0993cdd55818aa015c42e3e71e18d4b57ab016ea` and refreshes either detailed plan
+with a new concrete accepted SHA, excerpts, and inventories if a cited seam
+changed.
+
+Plans 024 and 025 may execute concurrently in isolated worktrees only while
+this ownership remains disjoint; otherwise the coordinator serializes Wave 4:
+
+| Plan | Exclusive implementation slice | Exclusive focused verifier/evidence |
+|---|---|---|
+| 024 | `pathRequests.ts`, resumable `pathfinding.ts`, path request/order seams in `orders.ts`, additive pending-request fields/normalization in `saveGame.ts`, and its save-schema assertions | `verify-pathfinding-budget`, `verify-x12-first-tick`, evidence 024 |
+| 025 | transient `visibilityCache.ts`, visibility maintenance in `world.ts`, renderer-only `fogChunkCache.ts`, and fog-only `renderWorld.ts` consumption; no save fields | `verify-visibility-fog-incremental`, evidence 025 |
+
+The Wave coordinator owns shared `src/main.ts`, performance-schema,
+`package.json`, and `plans/README.md` integration. Plan-local diagnostics use
+the namespaces frozen in the detailed plans. Performance captures stay serial
+even when implementation and focused checks run in parallel.
 
 ## Plan status and dependencies
 
