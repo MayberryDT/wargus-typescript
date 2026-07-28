@@ -72,6 +72,11 @@ world.activeResearch.some((research) => research.buildingId === unit.id);
 world.units.find((candidate) => candidate.id === unit.teleportDestinationId);
 ```
 
+Each legacy `.find(...)` returns the earliest matching source-array entry.
+`pendingAttacks` is appended in multiple launch paths and has no documented
+unique-`sourceId` invariant, so prepared indexes must define collision behavior
+rather than relying on uniqueness or default last-write-wins map construction.
+
 Plan 018 routes scene-object allocation/destruction in this file through
 `createTrackedContainer`, `createTrackedGraphics`, `createTrackedSprite`,
 `createTrackedText`, and `destroyTrackedDisplayObject`. Its counters report
@@ -195,6 +200,14 @@ mutate source arrays or world state. For each invocation:
 5. partition each already sorted corpse/projectile/effect list at draw level
    40 into `below40` and `atLeast40`, without a second source copy or sort.
 
+Every index that replaces a legacy `.find(...)` scan must preserve its
+first-match result. Build `animationById`, `unitById`,
+`researchByBuildingId`, and `pendingAttackBySourceId` in source-array order
+with first-write-wins insertion (`if (!index.has(key)) index.set(key, value)`).
+Do not use a map constructor or unconditional `set` that lets a later duplicate
+overwrite the first. A boolean membership structure replacing `.some(...)` may
+deduplicate keys only when no selected record or ordering is observable.
+
 Each source viewport gets an independent snapshot, including the active
 viewport. Do not retain dynamic snapshot data across frames or viewports. Do
 not import `worldSelectors` or consume Plan 020's index.
@@ -212,8 +225,10 @@ summary schema. Focused verification/evidence may read them; shared capture
 wiring is coordinator-owned.
 
 **Verify:** a reference implementation of the current algorithm matches exact
-IDs, order, strata, and lookup results across every focused fixture, while
-mostly-offscreen fixtures prove culling occurs before sorting.
+IDs, order, strata, first-match lookup selections, chosen animation/action/frame,
+and rendered results across every focused fixture. Mostly-offscreen fixtures
+prove culling occurs before sorting, while repeated-key fixtures prove later map
+entries never replace the record legacy `.find(...)` would select.
 
 ### Step 2: Consume one prepared snapshot per viewport
 
@@ -267,6 +282,14 @@ evidence is durable and checksum-verified.
 - Static manifest cache identity and fresh per-frame/per-viewport dynamic maps.
 - Independent active and split-view snapshots with no cross-viewport reuse.
 - Render-only `unitById`; no import or behavior dependency on Plan 020.
+- Repeated pending attacks with the same `sourceId` but different targets and
+  `remainingSeconds`: `pendingAttackBySourceId` selects the first record and
+  produces the same attack animation cursor/frame as legacy `.find`.
+- Repeated unit IDs with distinct position, visibility, and animation-relevant
+  data: `unitById` selects the first unit and produces the same teleport line,
+  chosen animation, frame, and rendered result as the legacy unit scan.
+- Repeated animation IDs and research building IDs select the first source
+  record, including the same animation/action/frame and research render result.
 - Screenshot or pixel parity under the same renderer/viewport.
 - Plan 018 tracked creation/destruction/live-delta values and instrumentation
   scope remain comparable and all constructors/destructors remain tracked.
@@ -308,6 +331,8 @@ not durable evidence.
 - [ ] Each entity list is sorted once per viewport and partitions preserve
   exact draw order and level-39/40 behavior.
 - [ ] Every viewport uses an independent render-only prepared snapshot.
+- [ ] Every prepared index that replaces `.find(...)` is first-write-wins and
+  repeated-key fixtures prove selected-record and downstream render parity.
 - [ ] No simulation index, save state, gameplay behavior, visibility rule,
   comparator, Pixi lifecycle, or cross-viewport cache coupling exists.
 - [ ] Visual/pixel parity and Plan 018 display-object counter semantics pass.
@@ -325,6 +350,9 @@ not durable evidence.
   cannot be verified.
 - Drift, excerpts, comparator, visibility, or instrumentation seams differ
   without a concrete coordinator refresh.
+- A prepared map selects a later duplicate than the corresponding legacy
+  `.find(...)`, or repeated keys change the selected animation/action/frame,
+  teleport line, research result, or any other rendered output.
 - Correct preparation requires Plan 020, simulation/save changes, visibility or
   comparator changes, cross-viewport reuse, retained Pixi objects, or a second
   render.
@@ -351,7 +379,9 @@ the rolled-back attempt.
 
 ## Maintenance notes
 
-New render-only exact-key lookups belong in the per-viewport snapshot. Static
-manifest indexes may be identity-cached; dynamic world indexes may not cross
-frames or viewports. Keep simulation selectors, Pixi lifecycle, and persistent
-state outside this module.
+New render-only exact-key lookups belong in the per-viewport snapshot. Every
+selected-record index must remain source-ordered and first-write-wins unless a
+focused invariant proves keys unique and the plan is amended. Static manifest
+indexes may be identity-cached; dynamic world indexes may not cross frames or
+viewports. Keep simulation selectors, Pixi lifecycle, and persistent state
+outside this module.

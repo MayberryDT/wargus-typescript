@@ -65,6 +65,10 @@ const flags = world.tilesetTerrain?.slots.find((entry) => entry.slot === tileSlo
 return world.engineSettings.opaqueTerrainTypes.some((type) => {
 ```
 
+These paths are intentionally different: only `sourceTileFlags` applies the
+tile-126 land-only override. Forest initialization and opacity/FOV query raw
+slot metadata for tile `126`, just as they do for every other tile.
+
 Run before editing:
 
 ```bash
@@ -172,11 +176,15 @@ diagnostic or `/tmp`-only evidence.
 Create numeric bits for exactly the flags consumed by the named passability,
 forest, and opacity callers. Build one `Map<number, number>` per immutable
 tileset object and retain it in a `WeakMap` keyed by that tileset identity.
-Expose allocation-free tile-to-slot, slot/tile mask, and mask-membership
-helpers. Do not expose mutable arrays, `Set` objects, or the internal map.
+Expose two distinct allocation-free lookup paths over that immutable map:
 
-Normalize removed-tree tile `126` to the exact legacy `land` result before slot
-lookup. Preserve missing-tileset and unknown-slot fallback behavior.
+- a raw slot/tile mask lookup that returns the source slot flags exactly; and
+- a passability-normalized tile lookup that returns the legacy land-only mask
+  for removed-tree tile `126` before consulting its source slot.
+
+Do not expose mutable arrays, `Set` objects, or the internal map. The raw lookup
+must not call, alias, or inherit the removed-tree normalization. Preserve
+missing-tileset and unknown-slot fallback behavior independently for both paths.
 
 Add resettable plan-local diagnostics with these exact namespaces:
 
@@ -194,25 +202,28 @@ immutability, checks namespaced counters, and covers missing and unknown data.
 
 ### Step 2: Migrate passability semantics
 
-Replace `sourceTileFlags` allocation/search work with mask membership. Preserve
-land, naval, fly, coast, unpassable, forest, rock, wall, no-building, harvest,
-and buildability decisions exactly. Preserve removed-tree tile `126` as land.
-Do not alter occupancy checks, ignored-unit handling, footprint checks, A*
-ordering, or path selection.
+Replace `sourceTileFlags` allocation/search work with the
+passability-normalized mask lookup. Preserve land, naval, fly, coast,
+unpassable, forest, rock, wall, no-building, harvest, and buildability
+decisions exactly. Preserve removed-tree tile `126` as the legacy land-only
+override in this path only. Do not alter occupancy checks, ignored-unit
+handling, footprint checks, A* ordering, or path selection.
 
 **Verify:** terrain parity and pathfinding gates pass, including exhaustive
-legacy-versus-cache results.
+legacy-versus-cache results and an explicit tile-126 passability fixture that
+expects the land-only override.
 
 ### Step 3: Migrate forest initialization and opacity
 
-Use the same immutable helper only in `isSourceForestTile` and
-`isSourceOpaqueTerrainTile`. Preserve legacy fallbacks, the
-`insideDefault && type === "rock"` exception, `opaqueTerrainTypes` ordering,
-FOV traversal, and update cadence.
+Use only the raw slot/tile mask lookup in `isSourceForestTile` and
+`isSourceOpaqueTerrainTile`; neither consumer may pass through removed-tree
+normalization. Preserve legacy fallbacks, the `insideDefault && type === "rock"`
+exception, `opaqueTerrainTypes` ordering, FOV traversal, and update cadence.
 
 **Verify:** terrain parity and fog/FOV gates pass with summer, swamp,
-wasteland, winter, unknown-slot, removed-tree, forest, rock, and opacity
-fixtures.
+wasteland, winter, unknown-slot, forest, rock, and opacity fixtures. Dedicated
+tile-126 forest and opacity/FOV fixtures must read its raw source slot flags and
+match their respective legacy consumers, not the passability land-only mask.
 
 ### Step 4: Revalidate behavior and measure
 
@@ -231,7 +242,11 @@ long-task, scheduler, input, and terrain-diagnostic results where applicable.
 
 - Every manifest tileset slot and every caller-consumed source flag.
 - Missing tileset, unknown slot, and legacy fallback classifications.
-- Removed-tree tile `126` exactly equivalent to the legacy land-only set.
+- Three explicit removed-tree tile `126` fixtures: passability receives the
+  legacy land-only override; forest initialization receives raw slot metadata;
+  and opacity/FOV receives raw slot metadata.
+- A focused guard proves the raw and passability-normalized helpers cannot
+  silently alias or conflate tile-126 behavior.
 - Land/naval/fly, coast, unpassable, forest, rock, wall, no-building, harvest,
   buildability, and opacity parity.
 - Representative summer, swamp, wasteland, and winter terrain.
@@ -270,8 +285,11 @@ normalized result to `plans/evidence/019.md`; it must not rely on `/tmp`.
 - [ ] Accepted Plan 018 integration and durable baseline handoff are verified.
 - [ ] Hot terrain lookups no longer use `.slots.find` or allocate `Set`
   instances.
-- [ ] Removed-tree tile `126`, every terrain flag, fallback, pathfinding,
-  passability, harvest/build, forest, and FOV result matches legacy behavior.
+- [ ] Removed-tree tile `126` uses the legacy land-only override for
+  passability and raw source slot flags for forest initialization and
+  opacity/FOV; focused fixtures prove all three results independently.
+- [ ] Every other terrain flag, fallback, pathfinding, passability,
+  harvest/build, forest, and FOV result matches legacy behavior.
 - [ ] No occupancy, path-selection, save-schema, deterministic-state, or
   renderer change exists.
 - [ ] Namespaced diagnostics and focused tests pass.
@@ -287,6 +305,9 @@ normalized result to `plans/evidence/019.md`; it must not rely on `/tmp`.
   resolved, or its checksums/fingerprints are missing.
 - The concrete drift check or excerpt differs without a coordinator refresh.
 - Source tileset flags can mutate after cache construction.
+- A proposed shared helper would normalize tile `126` for forest or opacity,
+  or otherwise make raw metadata consumers inherit passability-only
+  normalization.
 - Preserving behavior requires changing tile/fallback classification,
   occupancy, path ordering/selection, FOV geometry/cadence, `WorldState`, or
   save data.
@@ -311,4 +332,6 @@ artifact directory proven to belong exclusively to the rolled-back attempt.
 New terrain flags must be added to the bit definitions and exhaustive parity
 fixture together. Keep the cache immutable and plan-local. Do not make terrain
 metadata a unit-occupancy index or allow collection-returning helpers back into
-the hot passability/FOV path.
+the hot passability/FOV path. Keep raw slot metadata and passability-normalized
+metadata as distinct named APIs; a new normalization may enter a raw consumer
+only through an explicit behavior change and updated parity contract.
