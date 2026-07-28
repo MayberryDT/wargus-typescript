@@ -13,6 +13,7 @@ export { findNextIdleWorker, isGoldOrWoodWorkerUnit, isIdleWorkerForPlayer } fro
 const MISSILE_SPEED_TO_PIXELS_PER_SECOND = 16;
 const FALLBACK_RAISED_SKELETON_LIFETIME_SECONDS = 40;
 const SOURCE_AI_RESOURCE_SEARCH_RANGE_TILES = 15;
+const compareSourceIds = new Intl.Collator().compare;
 
 export type PendingWorldCommandName = "move" | "attack-move" | "attack-ground" | "patrol" | "follow" | "repair" | "harvest" | "unload-transport" | "build-oil-platform";
 export type PendingWorldCommand = PendingWorldCommandName | { kind: "build"; buildingTypeId: string } | { kind: "spell"; command: TargetedSpellCommand };
@@ -8663,7 +8664,7 @@ function sendAiScoutFlyers(world: WorldState, playerId: number, scouts: WorldUni
       && !isOilTanker(unit)
       && unit.productionQueue.length === 0
       && !forceMemberIds.has(unit.id))
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .sort((left, right) => compareSourceIds(left.id, right.id));
   const scout = safeLandUnits.find((unit) => unit.canAttack && !isWorker(unit) && !unit.order)
     ?? safeLandUnits.find((unit) => isWorker(unit) && !unit.order && unit.resourcesHeld === 0 && !findNearestAiRepairTarget(world, unit))
     ?? safeLandUnits.find((unit) => isWorker(unit) && unit.order?.kind === "harvest" && unit.resourcesHeld === 0);

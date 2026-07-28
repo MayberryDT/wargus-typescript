@@ -43,7 +43,15 @@ try {
   const demo = require(join(output, "wargus/demoScenario.js"));
   const worldModule = require(join(output, "simulation/world.js"));
   const orders = require(join(output, "simulation/orders.js"));
+  const pathfinding = require(join(output, "simulation/pathfinding.js"));
   const saveGame = require(join(output, "wargus/saveGame.js"));
+  const originalFindPath = pathfinding.findPath;
+  const findPathObservations = [];
+  pathfinding.findPath = (searchWorld, unit, targetX, targetY) => {
+    const path = originalFindPath(searchWorld, unit, targetX, targetY);
+    findPathObservations.push({ unitId: unit.id, targetX, targetY, path });
+    return path;
+  };
   const demoSetup = demo.applyFixedBrowserDemoSetup(map, setup);
   const world = worldModule.createInitialWorld(
     map,
@@ -151,11 +159,15 @@ try {
       pathIndex: 1
     }
   }, "Fast16 AI construction must preserve the exact builder, placement, target, and ordered path.");
-  const ordersSource = readFileSync(resolve(root, "src/simulation/orders.ts"), "utf8");
-  assert.match(ordersSource, /planBuilding\(world, builder, buildingDefinition, placement\.x, placement\.y, \{ approach: placement\.approach \}\)/,
-    "Automatic placement must reuse its accepted approach when committing the build order.");
-  assert.match(ordersSource, /const path = findPath\(world, unit, candidate\.x, candidate\.y\);\s+if \(path\.length > 0\) \{\s+return path;/,
-    "Interaction target selection must return the already-computed candidate path.");
+  const acceptedApproachSearches = findPathObservations.filter((observation) => (
+    observation.unitId === "unit-peon-17"
+    && observation.targetX === 496
+    && observation.targetY === 400
+  ));
+  assert.equal(acceptedApproachSearches.length, 1,
+    "Fast16 AI construction must compute its accepted interaction path once and reuse it through build-order commit and stepping.");
+  assert.deepEqual(acceptedApproachSearches[0]?.path, scheduledBuilder.order.path,
+    "The single accepted interaction search must supply the exact committed build path.");
 
   assert.ok(processedTicks > 0 && processedTicks <= maximumSteps,
     `Fast16 must process at most ${maximumSteps} ticks in one animation turn; processed ${processedTicks}/${expectedRequestedTicks}.`);
@@ -175,77 +187,77 @@ try {
   if (fast16Only) {
     console.log(`Fast16 scheduler verified (requested=${expectedRequestedTicks} ticks, processed=${processedTicks}, backlog=${backlogTicks}, turn=${turnElapsedMs.toFixed(3)}ms, UI=${uiLatencyMs.toFixed(3)}ms).`);
   } else {
-  const backlogSave = saveGame.exportSavedGame(world, { x: 0, y: 0, zoom: 1 });
-  const loadedBacklog = saveGame.loadSavedGameJson(manifest, backlogSave)?.world;
-  assert.ok(loadedBacklog, "Budgeted simulation backlog save must load.");
-  assert.ok(Math.abs(loadedBacklog.accumulator - world.accumulator) <= Number.EPSILON,
-    `Save/load must preserve the exact owed-tick backlog; ${world.accumulator} became ${loadedBacklog.accumulator}.`);
+    const backlogSave = saveGame.exportSavedGame(world, { x: 0, y: 0, zoom: 1 });
+    const loadedBacklog = saveGame.loadSavedGameJson(manifest, backlogSave)?.world;
+    assert.ok(loadedBacklog, "Budgeted simulation backlog save must load.");
+    assert.ok(Math.abs(loadedBacklog.accumulator - world.accumulator) <= Number.EPSILON,
+      `Save/load must preserve the exact owed-tick backlog; ${world.accumulator} became ${loadedBacklog.accumulator}.`);
 
-  const pausedTick = loadedBacklog.tick;
-  const pausedAccumulator = loadedBacklog.accumulator;
-  await new Promise((resolvePause) => setImmediate(resolvePause));
-  assert.equal(loadedBacklog.tick, pausedTick, "Queued Pause work must interrupt before another simulation turn.");
-  assert.equal(loadedBacklog.accumulator, pausedAccumulator, "Pause must preserve owed ticks for a later Run turn.");
-  orders.simulateWorld(loadedBacklog, 0, turnBudget);
-  assert.ok(loadedBacklog.tick > pausedTick && loadedBacklog.accumulator < pausedAccumulator,
-    "Run after Pause must resume the preserved backlog in order.");
+    const pausedTick = loadedBacklog.tick;
+    const pausedAccumulator = loadedBacklog.accumulator;
+    await new Promise((resolvePause) => setImmediate(resolvePause));
+    assert.equal(loadedBacklog.tick, pausedTick, "Queued Pause work must interrupt before another simulation turn.");
+    assert.equal(loadedBacklog.accumulator, pausedAccumulator, "Pause must preserve owed ticks for a later Run turn.");
+    orders.simulateWorld(loadedBacklog, 0, turnBudget);
+    assert.ok(loadedBacklog.tick > pausedTick && loadedBacklog.accumulator < pausedAccumulator,
+      "Run after Pause must resume the preserved backlog in order.");
 
-  const acceptedTicks = processedTicks + backlogTicks;
-  let catchupTurns = 0;
-  while (world.accumulator + Number.EPSILON >= tickSeconds && catchupTurns < 10) {
-    orders.simulateWorld(world, 0, turnBudget);
-    catchupTurns += 1;
-  }
-  assert.equal(world.tick - tickBefore, acceptedTicks,
-    "Catch-up turns must process every accepted tick exactly once.");
-  assert.ok(world.accumulator < tickSeconds,
-    `Catch-up must drain the bounded backlog; accumulator=${world.accumulator}.`);
+    const acceptedTicks = processedTicks + backlogTicks;
+    let catchupTurns = 0;
+    while (world.accumulator + Number.EPSILON >= tickSeconds && catchupTurns < 10) {
+      orders.simulateWorld(world, 0, turnBudget);
+      catchupTurns += 1;
+    }
+    assert.equal(world.tick - tickBefore, acceptedTicks,
+      "Catch-up turns must process every accepted tick exactly once.");
+    assert.ok(world.accumulator < tickSeconds,
+      `Catch-up must drain the bounded backlog; accumulator=${world.accumulator}.`);
 
-  const loadPristineWorld = () => {
-    const loaded = saveGame.loadSavedGameJson(manifest, pristineSave)?.world;
-    assert.ok(loaded, "Pristine scheduler fixture save must load.");
-    return loaded;
-  };
-  const steadyBudget = {
-    now: () => 0,
-    maxMilliseconds: 8,
-    maxSteps: maximumSteps,
-    maxBacklogSeconds: maximumBacklogSeconds
-  };
-  const normalWorld = loadPristineWorld();
-  const normalTickBefore = normalWorld.tick;
-  for (let frameIndex = 0; frameIndex < 60; frameIndex += 1) {
-    orders.simulateWorld(normalWorld, 1 / 60, steadyBudget);
-  }
-  assert.equal(normalWorld.tick - normalTickBefore, 30,
-    "Default 1x cadence must remain exactly 30 simulation ticks across 60 animation turns.");
+    const loadPristineWorld = () => {
+      const loaded = saveGame.loadSavedGameJson(manifest, pristineSave)?.world;
+      assert.ok(loaded, "Pristine scheduler fixture save must load.");
+      return loaded;
+    };
+    const steadyBudget = {
+      now: () => 0,
+      maxMilliseconds: 8,
+      maxSteps: maximumSteps,
+      maxBacklogSeconds: maximumBacklogSeconds
+    };
+    const normalWorld = loadPristineWorld();
+    const normalTickBefore = normalWorld.tick;
+    for (let frameIndex = 0; frameIndex < 60; frameIndex += 1) {
+      orders.simulateWorld(normalWorld, 1 / 60, steadyBudget);
+    }
+    assert.equal(normalWorld.tick - normalTickBefore, 30,
+      "Default 1x cadence must remain exactly 30 simulation ticks across 60 animation turns.");
 
-  const referenceWorld = loadPristineWorld();
-  const slicedWorld = loadPristineWorld();
-  const deterministicTicks = 12;
-  const deterministicDelta = deterministicTicks * tickSeconds;
-  orders.simulateWorld(referenceWorld, deterministicDelta);
-  const deterministicBudget = { ...steadyBudget, maxSteps: 4 };
-  orders.simulateWorld(slicedWorld, deterministicDelta, deterministicBudget);
-  while (slicedWorld.accumulator + Number.EPSILON >= tickSeconds) {
-    orders.simulateWorld(slicedWorld, 0, deterministicBudget);
-  }
-  assert.equal(slicedWorld.tick, referenceWorld.tick,
-    "Budgeted and unbudgeted schedules must reach the same exact tick count.");
-  assert.deepEqual(
-    JSON.parse(saveGame.exportSavedGame(slicedWorld, { x: 0, y: 0, zoom: 1 })).world,
-    JSON.parse(saveGame.exportSavedGame(referenceWorld, { x: 0, y: 0, zoom: 1 })).world,
-    "Equal ordered tick sequences must produce identical simulation state."
-  );
+    const referenceWorld = loadPristineWorld();
+    const slicedWorld = loadPristineWorld();
+    const deterministicTicks = 12;
+    const deterministicDelta = deterministicTicks * tickSeconds;
+    orders.simulateWorld(referenceWorld, deterministicDelta);
+    const deterministicBudget = { ...steadyBudget, maxSteps: 4 };
+    orders.simulateWorld(slicedWorld, deterministicDelta, deterministicBudget);
+    while (slicedWorld.accumulator + Number.EPSILON >= tickSeconds) {
+      orders.simulateWorld(slicedWorld, 0, deterministicBudget);
+    }
+    assert.equal(slicedWorld.tick, referenceWorld.tick,
+      "Budgeted and unbudgeted schedules must reach the same exact tick count.");
+    assert.deepEqual(
+      JSON.parse(saveGame.exportSavedGame(slicedWorld, { x: 0, y: 0, zoom: 1 })).world,
+      JSON.parse(saveGame.exportSavedGame(referenceWorld, { x: 0, y: 0, zoom: 1 })).world,
+      "Equal ordered tick sequences must produce identical simulation state."
+    );
 
-  const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
-  assert.match(mainSource,
-    /if \(!paused && !briefingOpen\) \{\s+if \(!titleScreenOpen\) \{\s+simulateWorld\(world, deltaSeconds \* sourceRuntimeGameSpeedMultiplier\(world, gameSpeed\), SIMULATION_TURN_BUDGET\);/,
-    "The production RAF seam must retain Pause/briefing guards and use the bounded scheduler.");
-  assert.match(mainSource, /now: \(\) => performance\.now\(\)/,
-    "The production scheduler must use the existing monotonic performance clock.");
+    const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
+    assert.match(mainSource,
+      /if \(!paused && !briefingOpen\) \{\s+if \(!titleScreenOpen\) \{\s+simulateWorld\(world, deltaSeconds \* sourceRuntimeGameSpeedMultiplier\(world, gameSpeed\), SIMULATION_TURN_BUDGET\);/,
+      "The production RAF seam must retain Pause/briefing guards and use the bounded scheduler.");
+    assert.match(mainSource, /now: \(\) => performance\.now\(\)/,
+      "The production scheduler must use the existing monotonic performance clock.");
 
-  console.log(`Simulation scheduler verified (Fast16 requested=${expectedRequestedTicks} ticks, processed=${processedTicks}, backlog=${backlogTicks}, catch-up=${catchupTurns} turns, default=${normalWorld.tick - normalTickBefore} ticks, deterministic=${deterministicTicks} ticks, turn=${turnElapsedMs.toFixed(3)}ms, UI=${uiLatencyMs.toFixed(3)}ms).`);
+    console.log(`Simulation scheduler verified (Fast16 requested=${expectedRequestedTicks} ticks, processed=${processedTicks}, backlog=${backlogTicks}, catch-up=${catchupTurns} turns, default=${normalWorld.tick - normalTickBefore} ticks, deterministic=${deterministicTicks} ticks, turn=${turnElapsedMs.toFixed(3)}ms, UI=${uiLatencyMs.toFixed(3)}ms).`);
   }
 } finally {
   rmSync(output, { recursive: true, force: true });

@@ -21,7 +21,7 @@ for (const [fragment, message] of [
   ["function unitFootprintBounds", "Orders should derive rectangular unit footprint bounds for building/resource interactions."],
   ["function distanceToUnitFootprint", "Orders should measure distance to the target footprint edge instead of only the target center."],
   ["function isInUnitFootprintRange", "Orders should have a shared footprint range predicate."],
-  ["function sourceUnitInteractionTargetPoint", "Orders should pick a passable perimeter point around occupied target footprints."],
+  ["function sourceUnitInteractionCandidatePath", "Orders should find a path to a passable perimeter point around occupied target footprints."],
   ["function sourceUnitInteractionPath", "Orders should path to footprint perimeter points."],
   ["function sourceAttackTargetPath", "Attack orders should use footprint-aware paths for structures."],
   ["function sourceOrderTargetPath", "Blocked movement recovery should rebuild footprint-aware order paths."],
@@ -35,7 +35,7 @@ for (const [fragment, message] of [
   ["sourceAttackTargetPath(world, unit, target)", "Direct attack orders should use footprint-aware target paths."],
   ["sourceAttackTargetPath(world, unit, attackTarget)", "Queued attack target orders should use footprint-aware target paths."],
   ["distanceToUnitFootprint(world, target, unit.x, unit.y)", "Attack range should measure structure distance from the target footprint edge."],
-  ["function sourceUnitInteractionTargetPoint(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): { x: number; y: number } | null", "Footprint target selection should return null instead of falling back to occupied centers."],
+  ["function sourceUnitInteractionCandidatePath(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): WorldPathPoint[]", "Footprint path selection should return an empty path instead of falling back to occupied centers."],
   ["isInTouchRange(builder, building, world)", "Build reachability should use world-aware footprint touch range."],
   ["isInRepairRange(unit, target, world)", "Repair range should use world-aware footprint range."]
 ]) {
