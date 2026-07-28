@@ -60,7 +60,7 @@ predecessor's exit gate is accepted.
 | 015 | Complete and extend the fixed-demo advanced tech paths | Historical | P2 | 011, 012 | DONE-VERIFIED | `e6be507`, `c43a28c`, `7eb9230`, `66f0ed8` / `5f9a444` | [015](evidence/015.md) | 2026-07-23 | — |
 | 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | `65bfd1a` / user acceptance `8655330` | [016](evidence/016.md) | 2026-07-24 | — |
 | 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | `a17bfa7` / user acceptance `8655330` | [017](evidence/017.md) | 2026-07-24 | — |
-| 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | IN PROGRESS | not recorded | [018](evidence/018.md) | not recorded | — |
+| 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | IN PROGRESS | implementation `fc41c95`–`e80215e`; acceptance pending | [018](evidence/018.md) | 2026-07-28 | — |
 | 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 021 | Cull before sorting and build one indexed render snapshot | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |

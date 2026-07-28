@@ -1,280 +1,347 @@
 # Plan 018: Establish A Reproducible Runtime Performance Feedback Loop
 
-> **Executor instructions**: Follow this plan step by step. Run every
-> verification command and confirm the expected result before continuing. Stop
-> on any STOP condition; do not tune gameplay or optimize runtime code in this
-> plan. Update `plans/README.md` when complete unless a coordinator owns it.
->
-> **Drift check (run first)**:
-> `git diff --stat 8ac0006..HEAD -- src/main.ts src/simulation/orders.ts src/performance scripts/verify-playtest-telemetry.mjs scripts/verify-performance-metrics.mjs package.json plans/018-establish-runtime-performance-feedback-loop.md plans/evidence/018.md plans/README.md`
-> If the ticker, scheduler, telemetry, or smoke-hook excerpts below changed,
-> STOP and reconcile this plan before editing.
+> **Executor instructions:** This is the Wave 1 closeout plan for implementation
+> already present through `e80215e`. Follow it in order from an isolated Halla
+> worktree. Run every verification and confirm its expected result. Do not tune
+> gameplay, optimize runtime code, deploy, or execute a capture until Wave 0 is
+> accepted. The [Halla execution policy](HALLA-EXECUTION-POLICY.md) and
+> [performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) are authoritative;
+> this plan references rather than replaces them.
 
-## Status
+## Status and entry gate
 
-- **Priority**: P1
-- **Effort**: M
-- **Risk**: LOW
-- **Depends on**: none
-- **Category**: perf, tests, dx
-- **Planned at**: commit `8ac0006`, 2026-07-27
+- **Status:** IN PROGRESS
+- **Wave:** 1 — Measurement foundation
+- **Priority:** P1
+- **Effort:** M remaining acceptance work
+- **Risk:** MEDIUM; instrumentation exists, but representative evidence does not
+- **Depends on:** accepted Wave 0 exit for Plans 026 and 027
+- **Category:** performance, tests, developer experience
+- **Original planning base:** `8ac0006`, 2026-07-27
+- **Implementation checkpoint:** `e80215e`
+- **Roadmap rewrite base:** `6049a986b0e5b51459f29a24e3543c5e36b792a3`
+
+Plan 018 is unfinished. It may not proceed to capture or become
+`DONE-VERIFIED` until Wave 0 is complete and the fixed-tick determinism proof
+plus the full hardware-qualified seven-row matrix, with three valid trials per
+row, are accepted. Partial, software-rendered, single-trial, or `/tmp`-only
+evidence cannot satisfy this gate.
 
 ## Why this matters
 
-The game is reported to become unplayable as units, buildings, and commands
-accumulate, but the current feedback loop keeps only last values and
-exponential averages. Those values can hide isolated 50–500 ms stalls, time
-dropped by the simulation backlog cap, and slow input acknowledgement. This
-plan creates the measurement contract every later optimization must beat.
+The runtime previously exposed last values and exponential averages that could
+hide tail stalls, dropped scheduler time, and slow input acknowledgement.
+Plan 018 establishes the stable measurement baseline that Plans 019–025 must
+use. A valid baseline may fail a performance budget; truthfully recording that
+failure is acceptable for Plan 018. Later optimization plans must pass their
+assigned budgets under the same accepted contract.
 
-## Current state
+## Drift bases and checks
 
-- `src/main.ts` owns the Pixi ticker, update/render timing, smoke hooks, and
-  local-storage playtest log.
-- `src/simulation/orders.ts` owns the fixed-step scheduler.
-- `scripts/verify-playtest-telemetry.mjs` only checks that source strings exist.
-- `plans/MECHANICS-ACCEPTANCE.md` has average update/render limits but no tail
-  latency or input budget.
+The Plan 018-owned implementation starts after `783d1a5` and ends at
+`e80215e`. The later roadmap contracts were reconciled at rewrite base
+`6049a986`. Run these checks before acceptance work:
 
-```ts
-// src/main.ts:258
-const renderPerformance = {
-  averageFrameMs: null as number | null,
-  averageUpdateMs: null as number | null,
-  averageRenderMs: null as number | null,
-  ...
-};
-
-// src/main.ts:4053
-renderPerformance.averageFrameMs =
-  smoothedTiming(renderPerformance.averageFrameMs, elapsedMs);
-
-// src/simulation/orders.ts:5463
-const acceptedDeltaSeconds = Math.min(
-  deltaSeconds,
-  Math.max(0, maximumBacklogSeconds - world.accumulator)
-);
+```bash
+test "$(hostname)" = halla
+test "$(git branch --show-current)" = perf/plan-018-v2
+git merge-base --is-ancestor e80215e HEAD
+git diff --name-status 783d1a5..e80215e -- \
+  package.json plans/README.md plans/evidence/018.md \
+  scripts/verify-performance-metrics.mjs \
+  scripts/verify-playtest-telemetry.mjs \
+  scripts/verify-simulation-scheduler.mjs \
+  src/main.ts src/performance src/simulation/orders.ts \
+  src/view/renderHud.ts src/view/renderOverlays.ts src/view/renderWorld.ts
+git diff --name-status e80215e..6049a986 -- \
+  package.json scripts src
+git diff --stat e80215e..HEAD -- \
+  package.json scripts/verify-performance-metrics.mjs \
+  scripts/verify-playtest-telemetry.mjs \
+  scripts/verify-simulation-scheduler.mjs src/main.ts src/performance \
+  src/simulation/orders.ts src/view/renderHud.ts src/view/renderOverlays.ts \
+  src/view/renderWorld.ts
 ```
 
-The deterministic rule remains absolute: diagnostics may use
-`performance.now()`, but timing values must never enter `WorldState`, saves, AI
-decisions, order selection, or deterministic hashes.
+Expected:
 
-## Commands you will need
+- host and branch checks pass;
+- `e80215e` is an ancestor;
+- the implementation diff contains exactly the Plan 018-owned paths listed in
+  the scope section below;
+- `e80215e..6049a986` contains no runtime, package, or verifier change; and
+- any later diff is understood and reconciled before evidence is captured.
 
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Install, only if `node_modules` is absent | `npm ci` | exit 0 |
-| Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Metrics verifier | `npm run verify:performance-metrics` | exits 0 and reports percentile/threshold cases |
-| Telemetry verifier | `npm run verify:playtest-telemetry` | exits 0 |
-| Scheduler | `npm run verify:simulation-scheduler` | exits 0 |
-| Determinism | `npm run verify:runtime-determinism` | exits 0 |
-| Asset gate | `npm run verify:wargus-assets` | exits 0 |
+The original-base drift also includes pre-existing browser verifier work
+between `8ac0006` and `783d1a5`. Inspect it with:
 
-If installation requires network access, request approval; do not substitute a
-different package manager or version.
+```bash
+git diff --name-status 8ac0006..e80215e -- \
+  scripts/lib/browser-devtools-client.mjs \
+  scripts/lib/browser-runtime-smoke-assertions.mjs \
+  scripts/verify-browser-playable-session-contract.mjs \
+  scripts/verify-browser-playable-session.mjs \
+  scripts/verify-browser-runtime-smoke.mjs \
+  scripts/verify-minimap-render-cache.mjs \
+  scripts/verify-source-footprint-interactions.mjs
+```
 
-## Scope
+Those browser verifier surfaces are capture dependencies and drift surfaces,
+not Plan 018-owned implementation. STOP if a result differs from these bases,
+if a relevant change is unexplained, or if the expected branch has already
+integrated other runtime work. Reconcile the plan before continuing.
 
-**In scope**:
+## Existing implementation checkpoints
 
-- `src/performance/runtimePerformance.ts` (create)
-- `src/performance/performanceProfiles.ts` (create)
+Do not reimplement these checkpoints:
+
+| Commit | Accepted implementation fact |
+|---|---|
+| `fc41c95` | Added bounded runtime metric buffers, summaries, deterministic profile definitions, the focused metrics verifier, and its package script. |
+| `a105efa` | Exposed scheduler accepted/dropped delta, step, backlog, and timing diagnostics with focused scheduler coverage. |
+| `7ae81bc` | Connected smoke-only profiles, runtime hooks, input and render-preparation timing, long tasks, heap reporting, and display-object instrumentation across `main`, `renderWorld`, `renderHud`, and `renderOverlays`. |
+| `3c0eeea` | Corrected tracked display-object churn accounting and verifier/evidence wording. |
+| `9bcfe2f` | Preserved smoke profile execution through scheduler lifecycle handling. |
+| `bbddb36` | Reconciled deterministic smoke profile building IDs with the manifest. |
+| `6923c09` | Preserved the `command-18` selection and verified production HUD/pointer command seams. |
+| `d9e1c63`, `34592b7`, `e80215e` | Recorded and then corrected the historical capture protocol, blocker, and partial diagnostic evidence. They did not produce accepted matrix evidence. |
+
+Implementation checkpoints are complete only to the extent covered by the
+green non-browser gates recorded in [Plan 018 evidence](evidence/018.md).
+Representative capture, canonical determinism acceptance, and final integration
+remain incomplete.
+
+## Actual implementation and drift scope
+
+Plan 018-owned commits `fc41c95..e80215e` changed exactly:
+
+- `src/performance/runtimePerformance.ts`
+- `src/performance/performanceProfiles.ts`
+- `src/performance/displayObjectPerformance.ts`
 - `src/main.ts`
-- `src/simulation/orders.ts`, only to return scheduler diagnostics
-- `scripts/verify-performance-metrics.mjs` (create)
+- `src/simulation/orders.ts`
+- `src/view/renderHud.ts`
+- `src/view/renderOverlays.ts`
+- `src/view/renderWorld.ts`
+- `scripts/verify-performance-metrics.mjs`
 - `scripts/verify-playtest-telemetry.mjs`
+- `scripts/verify-simulation-scheduler.mjs`
 - `package.json`
-- `plans/evidence/018.md` (create during execution)
+- `plans/evidence/018.md`
 - `plans/README.md`
 
-**Out of scope**:
+The renderer files are in scope because Plan 018 already routed Pixi scene
+object creation/destruction through display-object instrumentation there. The
+instrumentation labels its scope as instrumented Pixi scene objects and
+excludes texture destruction. It is not permission to optimize or refactor
+rendering.
 
-- Optimizing rendering, pathfinding, visibility, AI, or HUD behavior
-- Changing simulation budgets, tick rate, game speed, unit counts, or balance
-- Serializing performance data in save games
-- Standalone Playwright, shell-launched Chrome, Computer Use, or an external
-  browser-control server
+Capture also depends on the browser verifier surfaces named in the drift
+section. They must be reviewed for drift, but ownership remains with their
+source plans and Wave 0.
 
-## Git workflow
+Out of scope for this closeout:
 
-- Suggested branch: `codex/018-performance-feedback-loop`
-- Commit logical checkpoints separately: metrics core, scheduler/input
-  instrumentation, then deterministic profiles.
-- Use short imperative messages such as `Add runtime performance budgets`.
-- Do not push or open a PR unless instructed.
+- gameplay, balance, tick-rate, scheduler-budget, pathfinding, visibility, AI,
+  HUD, renderer, or display-object optimization;
+- new save fields or timing data entering deterministic state;
+- changing shared matrix rows, budgets, validity rules, browser qualification,
+  process policy, statistics, or artifact layout locally;
+- deployment or live-site debugging; and
+- host, browser, controller, or runtime changes while executing this
+  documentation rewrite.
 
-## Steps
+If acceptance exposes a harness defect that requires code, STOP and amend the
+scope before editing it.
 
-### Step 1: Establish the baseline
+## Commands required before capture
 
-Run typecheck, telemetry, scheduler, determinism, and asset commands from the
-table. The current checkout observed by the advisor had no `node_modules`; that
-is an environment fact, not permission to skip the baseline.
+Run after Wave 0 is accepted and before starting a browser:
 
-**Verify**: all five baseline commands exit 0. STOP on a red baseline.
+| Purpose | Command | Expected result |
+|---|---|---|
+| Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
+| Metrics | `npm run verify:performance-metrics` | exit 0; percentile, threshold, ring, profile, input-pairing, and display-object cases pass |
+| Telemetry | `npm run verify:playtest-telemetry` | exit 0 |
+| Scheduler | `npm run verify:simulation-scheduler` | exit 0 |
+| Determinism | `npm run verify:runtime-determinism` | exit 0 with the fixed-tick proof recorded below |
+| Asset gate | `npm run verify:wargus-assets` | exit 0 |
+| Build | `npm run build` | exit 0 |
 
-### Step 2: Add bounded raw measurements and pure summaries
+If `node_modules` is absent, run `npm ci` with approval if network access is
+required. Do not substitute a package manager or dependency version. STOP on
+any red baseline; a second identical failure confirms the blocker but does not
+authorize capture.
 
-Create `src/performance/runtimePerformance.ts` with:
+## Execution steps
 
-- fixed-capacity ring buffers, never unbounded arrays;
-- raw frame interval, update CPU, render-preparation CPU, smoke CPU, long-task,
-  and input-to-command/next-render samples;
-- counts for frames over 16.7, 33.3, and 50 ms;
-- p50, p95, p99, maximum, mean, sample count, and effective FPS;
-- one explicit reset/start/stop/snapshot lifecycle;
-- no dependency on `WorldState`.
+### Step 0: Prove the Wave 0 entry dependency
 
-Use nearest-rank percentiles over a copied/sorted snapshot. Keep collection
-allocation outside the normal frame path except when a summary is requested.
+Confirm Plans 026 and 027 are `DONE-VERIFIED` in `plans/README.md`, their
+evidence is accepted, and the integrated Wave 0 commit is the base of this
+worktree. Then run the drift checks above and the non-browser commands.
 
-**Verify**: `npm run verify:performance-metrics` covers empty, singleton,
-ordered, reverse-ordered, percentile-boundary, ring-wrap, and threshold cases.
+**Verify:** Wave 0 evidence, ancestry, drift, focused gates, assets, and build
+are green. Until then, STOP with Plan 018 `IN PROGRESS`.
 
-### Step 3: Expose scheduler work and lost-time diagnostics
+### Step 1: Produce fixed-tick determinism proof
 
-Change `simulateWorld` to return a diagnostic result without changing its state
-transition order:
+Use the fixed-tick non-browser contract in
+`PERFORMANCE-ACCEPTANCE.md#determinism`. Run every deterministic performance
+profile twice for the same exact simulation-tick offset. Record equality of
+the canonical state hash and all contract-required state, scheduler, and save
+fields.
 
-```ts
-type SimulationTurnResult = {
-  acceptedDeltaSeconds: number;
-  droppedDeltaSeconds: number;
-  processedSteps: number;
-  remainingBacklogSeconds: number;
-  turnMilliseconds: number;
-  maxStepMilliseconds: number;
-};
+Browser trials must match the initial profile-definition hash and initial
+entity/effect fingerprint. Browser runs are not required to end at identical
+world ticks because their duration is wall-clock controlled.
+
+**Verify:** committed evidence names the verifier command, commit, fixed tick
+offset, profiles, compared fields, and pass result. Timing measurements do not
+enter deterministic state.
+
+### Step 2: Qualify Halla and the browser
+
+Follow `HALLA-EXECUTION-POLICY.md` for host thresholds, listeners, unique port,
+conflicting benchmark detection, exact PID ownership, resource recording,
+browser choice, 120-second readiness watchdog, and cleanup. Performance
+captures run serially.
+
+Follow `PERFORMANCE-ACCEPTANCE.md` for browser executable/version, hardware
+renderer, GPU device/driver, focus, visibility, RAF, viewport, profile, and
+initial fingerprint qualification. A software renderer is invalid for
+frame-budget evidence.
+
+**Verify:** durable environment and resource-monitor records exist before the
+first valid trial. No pre-existing process or listener is touched.
+
+### Step 3: Run the canonical matrix
+
+Run the seven rows defined in `PERFORMANCE-ACCEPTANCE.md#measurement-matrix`,
+with three independent valid trials per row. Each trial uses a fresh profile
+page and the authoritative lifecycle:
+
+1. qualify load, renderer, document, RAF, profile, viewport, and fingerprint;
+2. warm up for 5 seconds;
+3. reset/start at `t0`;
+4. save CPU/input summary and heap window 1 at `t15`;
+5. save heap window 2 and stop at `t30`;
+6. export raw trial, resource summary, and checksum; and
+7. close the page and perform exact-owned cleanup when the session ends.
+
+There is no arbitrary valid-tab duration ceiling. Readiness remains governed
+by the shared no-progress watchdog and resource safety rules.
+
+For each `command-18` row, first validate the synthetic command hook in a
+disposable preflight page and close that page. Synthetic samples are excluded
+from measured percentiles. Use ten real alternating move/attack-move pairs during the first 10 measured seconds at the fixed offsets in the shared contract. Each trial must record at least 20 successful command outcomes, at least 40 input-handler-to-command samples, and at least 40 input-handler-to-next-render-callback samples.
+
+**Verify:** all 21 required valid trials exist. Apply the shared invalid and
+single-replacement rules exactly; retain invalid and replacement metadata.
+
+### Step 4: Calculate and review acceptance
+
+Calculate per-trial nearest-rank p50, p95, p99, mean, maximum, threshold counts,
+and sample counts. Report each trial separately. Apply the worst-trial rule per
+matrix row and never pool trial samples.
+
+Use the shared heap formula exactly:
+
+```text
+((usedHeapAtT30 - usedHeapAtT15) / max(usedHeapAtT15, 1)) * 100
 ```
 
-Existing callers may ignore the return value. Measure individual steps only
-when performance capture is active; otherwise avoid adding a clock call per
-tick. Record the result from the production ticker in the performance ring.
+Do not force garbage collection. An unsupported heap API leaves the heap gate
+unqualified. Apply every budget and validity rule from
+`PERFORMANCE-ACCEPTANCE.md`; do not create a local exception.
 
-**Verify**: `npm run verify:simulation-scheduler` still proves identical tick
-counts/save state and now also asserts accepted+dropped delta and backlog.
+**Verify:** each row has a validity disposition and worst-trial budget result,
+including honest failures. No row is accepted from historical diagnostic
+artifacts.
 
-### Step 4: Measure input acknowledgement and frame response
+### Step 5: Store durable evidence
 
-At the existing world pointer and HUD command dispatch seams in `src/main.ts`,
-record:
+Write raw evidence outside Git at the exact layout required by both shared
+contracts:
 
-1. input handler entry;
-2. order/command return;
-3. the next completed ticker render-preparation callback.
+```text
+.artifacts/performance/018/<commit>/<UTC-stamp>/
+```
 
-Keep two distinct metrics: synchronous input-to-command and
-input-to-next-render-callback. Name the latter honestly; do not call it GPU
-presentation latency. Install a bounded `PerformanceObserver` for `longtask`
-when supported and report unsupported status otherwise.
+Include one JSON file per trial, normalized matrix summary, SHA-256 checksums,
+resource-monitor summary, controller version/commit, invalid/replacement
+records, and the full environment metadata required by the acceptance
+contract. Update `plans/evidence/018.md` with concise normalized results and
+durable artifact/checksum references. `/tmp` may hold scratch data but may not
+be the only evidence location.
 
-**Verify**: the metrics verifier exercises pairing, missing-next-frame,
-overlapping inputs, and bounded retention.
+**Verify:** independently recompute the checksums and confirm every evidence
+link resolves on Halla.
 
-### Step 5: Add deterministic load profiles
+### Step 6: Close out and hand off
 
-Create smoke-only profiles in `performanceProfiles.ts`:
+Rerun all commands in the required-command table plus:
 
-- `idle-25`: 25 live units, no commands;
-- `army-100`: 100 live units plus representative buildings;
-- `army-200`: 200 live units plus representative buildings;
-- `command-18`: source maximum-sized selection issuing a distant formation
-  move and then attack-move;
-- `combat-100`: two 50-unit forces with projectiles/effects.
+```bash
+git diff --check
+git diff --name-only
+```
 
-Profiles must use fixed IDs, positions, owners, and commands. They may be
-loaded only when `?smoke=1&perfProfile=<id>` is present and must never alter the
-normal demo. Expose:
+Review the diff for gameplay/runtime changes, unexplained drift, scope
+mismatch, and evidence overclaiming. Plan 018 becomes `DONE-VERIFIED` only when
+the fixed-tick proof and complete hardware-qualified matrix are accepted.
+Update its `plans/README.md` row with the implementation and acceptance commit,
+evidence, and revalidation date.
 
-- `window.__WARGUS_TS_PERF_START__(profileId)`
-- `window.__WARGUS_TS_PERF_STOP__()`
-- `window.__WARGUS_TS_PERF_SUMMARY__()`
-- `window.__WARGUS_TS_PERF_RESET__()`
+The accepted normalized matrix, environment identity, artifact directory,
+checksums, and worst-trial row results are the unchanged baseline handoff for
+Plans 019–025. Those plans must use same-environment comparisons under the
+shared contract; they may not reinterpret Plan 018 diagnostic files or invent
+a competing measurement protocol.
 
-Each summary includes profile, viewport, world tick, entity/effect counts,
-scheduler diagnostics, frame/update/render/input distributions, long tasks,
-heap when supported, and display-object create/destroy counters.
+## STOP and rollback
 
-**Verify**: `npm run verify:performance-metrics` proves profile definitions are
-deterministic and reject unknown IDs.
+STOP immediately when:
 
-### Step 6: Run the bounded in-app Browser matrix
+- Wave 0 is not accepted or its integrated commit is absent;
+- a drift check is unexplained;
+- a required non-browser gate or asset/build check is red;
+- deterministic state or save output changes under instrumentation;
+- accurate collection would require manual Pixi rendering or a second render;
+- profile gating permits normal-demo access;
+- Halla violates a start/stop threshold;
+- renderer, focus, visibility, RAF, viewport, profile, fingerprint, required
+  command outcome, or paired sample qualification fails;
+- a trial slot exhausts its one replacement;
+- required environment metadata, resource records, raw files, or checksums
+  cannot be made durable; or
+- another performance capture is active.
 
-Follow `AGENTS.md`: use the Codex in-app Browser with the `iab` backend. Inspect
-Halla listeners first, choose an unused port, record the exact server PID, and
-clean up only that PID. Do not run any tab longer than 30 seconds.
-
-For each profile at 1280×720:
-
-1. load a fresh profile;
-2. warm up 5 seconds;
-3. reset metrics;
-4. capture 15 seconds;
-5. export the summary and close the tab.
-
-Repeat `command-18` at 1024×768. Record raw JSON artifact paths and a compact
-summary in `plans/evidence/018.md`; do not commit generated JSON.
-
-Freeze these roadmap exit budgets:
-
-- `army-100`: p95 frame ≤33.3 ms, p99 ≤50 ms, frames >50 ms ≤1%;
-- `command-18`: input-to-command p95 ≤50 ms and input-to-next-render p95
-  ≤100 ms;
-- no profile: scheduler dropped time or backlog older than 250 ms during the
-  measured window;
-- heap after warmup must not grow by more than 15% across equal consecutive
-  15-second windows.
-
-Plan 018 establishes honest baselines; it is DONE when measurements are
-captured even if budgets fail. Later plans are not DONE until their assigned
-profiles meet the frozen budgets.
-
-### Step 7: Close out
-
-Run all commands in the table, `git diff --check`, and the determinism source
-scan. Create `plans/evidence/018.md` with profile summaries, artifact paths,
-environment, and READY/NOT READY for use as a measurement harness.
-
-## Test plan
-
-- Pure metric edge cases and ring-buffer bounds in
-  `scripts/verify-performance-metrics.mjs`.
-- Scheduler result parity in `scripts/verify-simulation-scheduler.mjs`.
-- Existing telemetry hook/export checks strengthened to require distributions,
-  scheduler data, and performance profile hooks.
-- Two repeated `idle-25` runs must have identical simulation tick/entity state;
-  timings may differ.
-- In-app profiles exercise idle, density, commands, and combat.
+On capture failure, stop only the exact owned PIDs, verify owned ports and
+descendants are gone, preserve invalid-trial metadata and any diagnostic raw
+output, and leave Plan 018 `IN PROGRESS`. Do not delete or relabel a failed
+trial. This closeout plan authorizes no runtime mutation, so a code-level fix
+requires a reviewed amendment and a separate commit. If such an amendment is
+later approved and breaks determinism or a required gate, revert only that
+Plan 018-owned amendment to the last green checkpoint; never roll back
+unrelated Wave 0 or user work.
 
 ## Done criteria
 
-- [ ] Performance samples expose p50/p95/p99/max, missed-frame thresholds,
-  effective FPS, long tasks, scheduler backlog/dropped time, and input latency.
-- [ ] All buffers are bounded and resettable.
-- [ ] Five deterministic profiles are smoke-only.
-- [ ] `npm run verify:performance-metrics`,
-  `verify:simulation-scheduler`, `verify:playtest-telemetry`,
-  `verify:runtime-determinism`, and `verify:wargus-assets` pass.
-- [ ] The bounded profile matrix is recorded in `plans/evidence/018.md`.
-- [ ] No gameplay or optimization change is mixed into the diff.
-- [ ] `plans/README.md` marks 018 DONE.
-
-## STOP conditions
-
-- Instrumentation changes deterministic world/save output.
-- Accurate collection requires manual Pixi rendering or a second render per
-  frame.
-- A profile is reachable without `?smoke=1`.
-- A live browser segment would exceed 30 seconds.
-- The required in-app Browser is unavailable; report rather than falling back.
-- Any baseline or focused verifier fails twice.
-
-## Maintenance notes
-
-Every performance PR should attach before/after summaries from the same
-profile, viewport, build mode, and Halla environment. Reviewers should reject
-optimizations supported only by averages. If Pixi later exposes reliable GPU
-timings, add them as a separate optional phase without relabeling the current
-next-render-callback metric.
+- [x] Bounded, resettable runtime distributions and threshold counts exist.
+- [x] Scheduler dropped time, backlog, and step diagnostics exist.
+- [x] Smoke-only deterministic profiles and capture hooks exist.
+- [x] Input-to-command and input-to-next-render-callback are distinct.
+- [x] Display-object instrumentation covers the recorded renderer surfaces.
+- [ ] Wave 0 is complete and accepted.
+- [ ] Required non-browser gates, assets, and build pass at the capture commit.
+- [ ] Fixed-tick determinism proof is accepted.
+- [ ] The hardware renderer and environment are qualified.
+- [ ] All seven matrix rows have three independent valid trials.
+- [ ] Real command inputs satisfy every required outcome and sample count.
+- [ ] Per-trial statistics and worst-trial row results are recorded.
+- [ ] Heap growth uses the canonical `t15`/`t30` formula.
+- [ ] Durable raw artifacts, resource summary, environment metadata, and
+  SHA-256 checksums are verified.
+- [ ] Normalized committed evidence is accepted without overclaiming failures.
+- [ ] `plans/README.md` records the final acceptance commit and date.
