@@ -136,9 +136,19 @@ instrumentation labels its scope as instrumented Pixi scene objects and
 excludes texture destruction. It is not permission to optimize or refactor
 rendering.
 
-Capture also depends on the browser verifier surfaces named in the drift
-section. They must be reviewed for drift, but ownership remains with their
-source plans and Wave 0.
+Ownership is explicit:
+
+| Owner | Files and interfaces |
+|---|---|
+| Plan 018 | Owns the performance summary schema, deterministic profiles, runtime/display-object instrumentation, matrix evidence, and focused `verify-performance-metrics`, `verify-playtest-telemetry`, and `verify-simulation-scheduler` contracts listed above. It does not own browser process control or the Wave 0 gate repairs. |
+| Plan 026 | Owns the shared browser execution controller, browser verifier server/debug-port/PID-cleanup migrations, hardware-renderer qualification, and generic resource-monitor/artifact helpers. It may expose generic records to Plan 018 but may not alter Plan 018 measurements or acceptance. |
+| Plan 027 | Owns only its `verify-source-resource-ui` portability repair, the two named `verify-fixed-demo-polish` assertion repairs, and focused revalidation needed for those gates. It does not own the performance contract, controller, or Plan 018 instrumentation. |
+| Wave coordinator | Owns integration edits to `plans/README.md`, `package.json`, and any shared verifier integration named in this plan that crosses the Plan 018/026/027 boundaries. Plan branches must not independently resolve a shared-file conflict by absorbing another plan's ownership. |
+
+The browser verifier surfaces named in the drift section follow this map:
+Plan 026 owns their browser-execution behavior, Plan 027 may only revalidate or
+make its narrowly scoped gate repair, and cross-plan integration is
+coordinator-owned.
 
 Out of scope for this closeout:
 
@@ -270,7 +280,8 @@ contracts:
 
 Include one JSON file per trial, normalized matrix summary, SHA-256 checksums,
 resource-monitor summary, controller version/commit, invalid/replacement
-records, and the full environment metadata required by the acceptance
+records, both the initial profile-definition hash and initial entity/effect
+fingerprint, and the full environment metadata required by the acceptance
 contract. Update `plans/evidence/018.md` with concise normalized results and
 durable artifact/checksum references. `/tmp` may hold scratch data but may not
 be the only evidence location.
@@ -293,11 +304,12 @@ the fixed-tick proof and complete hardware-qualified matrix are accepted.
 Update its `plans/README.md` row with the implementation and acceptance commit,
 evidence, and revalidation date.
 
-The accepted normalized matrix, environment identity, artifact directory,
-checksums, and worst-trial row results are the unchanged baseline handoff for
-Plans 019–025. Those plans must use same-environment comparisons under the
-shared contract; they may not reinterpret Plan 018 diagnostic files or invent
-a competing measurement protocol.
+The accepted normalized matrix, initial profile-definition hash, initial
+entity/effect fingerprint, environment identity, artifact directory, checksums,
+and worst-trial row results are the unchanged baseline handoff for Plans
+019–025. Those plans must use same-environment comparisons under the shared
+contract; they may not reinterpret Plan 018 diagnostic files or invent a
+competing measurement protocol.
 
 ## STOP and rollback
 
