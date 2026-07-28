@@ -444,7 +444,7 @@ Expected observable behavior:
 - [x] Icon atlas loads from normalized tileset paths.
 - [x] Disabled source commands expose a specific actionable reason.
 - [x] The one-Peasant `1/0` state explains the Hall requirement without changing supply.
-- [x] Up to six queue entries are visible and cancel by real index; overflow count is shown.
+- **IMPLEMENTED / WAIVED:** Six indexed queue targets and overflow rendering landed; index-2 cancellation was not replayed and remains waived.
 - [x] Queued units do not reserve food; supply/limit completion blocks report and clear their reason.
 - [x] Trained units search outward past an occupied ring; `no-egress` is reserved for a whole-map-invalid safety case.
 - [x] Time/status/stat text reflects actual mechanics.

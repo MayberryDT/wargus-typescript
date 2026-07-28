@@ -307,7 +307,7 @@ chosen pair must have land AI and lie inside the band when eligible pairs exist.
   from a detached Plan 014 launch with real attack/attack-move orders, and
   contact from the first visible living launched id—not the starting Peon,
   neutral, building, or unrelated scout.
-- [x] Use the three representative seeds from the winning candidate's bakeoff.
+- [x] Configure the three representative seeds for the user-accepted Candidate B checkpoint; this does not claim a measured bakeoff winner.
 - [x] Assert and record `wc2-land-attack` for every selected enemy source slot;
   a strategy mismatch invalidates the timing run.
 - [x] Keep measurements in verifier output/telemetry; do not add mission objectives or tutorial UI.
