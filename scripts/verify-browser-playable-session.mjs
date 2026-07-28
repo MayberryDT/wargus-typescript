@@ -1,16 +1,22 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { inflateSync } from "node:zlib";
+import { connectDevTools } from "./lib/browser-devtools-client.mjs";
 
 const PORT = 5199;
 const DEBUG_PORT = 9226;
+const CDP_REQUEST_TIMEOUT_MS = 30_000;
+const MAP_LOAD_TIMEOUT_MS = 20_000;
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const SESSION_COUNT = Number(process.env.WARGUS_BROWSER_PLAYABLE_SESSIONS ?? 12);
+const REQUESTED_MAP = process.env.WARGUS_BROWSER_PLAYABLE_MAP ?? null;
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
-const maps = representativeSetupMaps((manifest.maps ?? []).filter((map) => map.setupJson)).slice(0, SESSION_COUNT);
+const representativeMaps = representativeSetupMaps((manifest.maps ?? []).filter((map) => map.setupJson)).slice(0, SESSION_COUNT);
+const maps = REQUESTED_MAP ? representativeMaps.filter((map) => map.path === REQUESTED_MAP) : representativeMaps;
+if (REQUESTED_MAP && maps.length !== 1) throw new Error(`Requested playable-session map is not representative: ${REQUESTED_MAP}`);
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-playable-chrome-"));
 const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   detached: true,
@@ -18,6 +24,7 @@ const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--stri
 });
 let chrome = null;
 let client = null;
+let activeAuditMapPath = null;
 
 try {
   await waitForHttp(URL, 20_000);
@@ -32,7 +39,10 @@ try {
   ], { detached: true, stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
-  client = await connectDevTools(target.webSocketDebuggerUrl);
+  client = await connectDevTools(target.webSocketDebuggerUrl, {
+    requestTimeoutMs: CDP_REQUEST_TIMEOUT_MS,
+    requestContext: () => activeAuditMapPath ? `map ${activeAuditMapPath}` : null
+  });
   const pageErrors = [];
   client.on("Runtime.exceptionThrown", (params) => {
     pageErrors.push(params.exceptionDetails?.text ?? params.exceptionDetails?.exception?.description ?? "unknown page exception");
@@ -48,14 +58,16 @@ try {
   const failures = [];
   let completed = 0;
   for (const map of maps) {
+    activeAuditMapPath = map.path;
     if (completed > 0) {
       console.log(`Browser playable session progress: ${completed}/${maps.length}`);
     }
+    console.log(`Browser playable session loading: ${completed + 1}/${maps.length} ${map.path}`);
     const loadResult = await client.send("Runtime.evaluate", {
       expression: `window.__WARGUS_TS_LOAD_MAP__(${JSON.stringify(map.path)})`,
       awaitPromise: true,
       returnByValue: true
-    });
+    }, MAP_LOAD_TIMEOUT_MS);
     if (loadResult.exceptionDetails || loadResult.result?.value !== true) {
       failures.push(`${map.path}: smoke load failed ${loadResult.exceptionDetails?.text ?? JSON.stringify(loadResult.result?.value)}`);
       continue;
@@ -113,7 +125,6 @@ try {
   client?.close();
   await stopProcess(chrome);
   await stopProcess(server);
-  cleanupDedicatedProcesses();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -223,56 +234,6 @@ async function waitForPageTarget(url, timeoutMs) {
   throw new Error("Timed out waiting for a Chrome page target.");
 }
 
-async function connectDevTools(url) {
-  const socket = new WebSocket(url);
-  const pending = new Map();
-  const listeners = new Map();
-  let nextId = 1;
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve, { once: true });
-    socket.addEventListener("error", reject, { once: true });
-  });
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      message.error ? reject(new Error(message.error.message)) : resolve(message.result ?? {});
-      return;
-    }
-    for (const handler of listeners.get(message.method) ?? []) {
-      handler(message.params ?? {});
-    }
-  });
-  return {
-    on(method, handler) {
-      listeners.set(method, [...(listeners.get(method) ?? []), handler]);
-    },
-    send(method, params = {}) {
-      const id = nextId++;
-      socket.send(JSON.stringify({ id, method, params }));
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-      });
-    },
-    waitFor(method, timeoutMs) {
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${method}`)), timeoutMs);
-        listeners.set(method, [...(listeners.get(method) ?? []), (params) => {
-          clearTimeout(timeout);
-          resolve(params);
-        }]);
-      });
-    },
-    close() {
-      try {
-        socket.close();
-      } catch {
-        // Already closed.
-      }
-    }
-  };
-}
 
 async function waitForExpression(client, expression, timeoutMs) {
   if (await waitForExpressionValue(client, expression, timeoutMs)) {
@@ -439,15 +400,6 @@ async function stopProcess(process) {
   }
 }
 
-function cleanupDedicatedProcesses() {
-  for (const pattern of [`--remote-debugging-port=${DEBUG_PORT}`, `--port ${PORT} --strictPort`]) {
-    try {
-      execFileSync("pkill", ["-f", pattern], { stdio: "ignore" });
-    } catch {
-      // Best-effort cleanup.
-    }
-  }
-}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

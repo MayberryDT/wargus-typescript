@@ -190,7 +190,7 @@
     "verify:source-big-screen": "node scripts/verify-source-big-screen.mjs",
     "verify:source-frame-skip": "node scripts/verify-source-frame-skip.mjs",
     "verify:source-grayscale-icons": "node scripts/verify-source-grayscale-icons.mjs",
-    "verify:browser-playable-session": "node scripts/verify-browser-playable-session.mjs",
+    "verify:browser-playable-session": "node scripts/verify-browser-playable-session-contract.mjs && node scripts/verify-browser-playable-session.mjs",
     "verify:browser-harvest-session": "node scripts/verify-browser-harvest-session.mjs",
     "verify:browser-combat-session": "node scripts/verify-browser-combat-session.mjs",
     "verify:browser-spell-session": "node scripts/verify-browser-spell-session.mjs",
