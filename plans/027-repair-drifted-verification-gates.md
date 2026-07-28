@@ -56,8 +56,8 @@ At `4c94af0c16813bf53fc488c95ed0445b639389c8`:
 | Red source-root baseline | `npm run verify:source-resource-ui` | before repair: ENOENT under `/home/tyler/.../stratagus-src/src/ui/mouse.cpp` |
 | Red stale-contract baseline | `npm run verify:fixed-demo-polish` | before repair: exactly the two named failures |
 | Original-source preflight | `test -n "$WARGUS_ORIGINAL_SOURCE_ROOT" && test -r "$WARGUS_ORIGINAL_SOURCE_ROOT/src/ui/mouse.cpp" && test -r "$WARGUS_ORIGINAL_SOURCE_ROOT/src/ui/interface.cpp" && test -r "$WARGUS_ORIGINAL_SOURCE_ROOT/src/ui/mainscr.cpp"` | exits 0 or fails explicitly before assertions |
-| Affected verifier set | `npm run verify:source-resource-ui && npm run verify:fixed-demo-polish && npm run verify:source-pathfinding && npm run verify:browser-runtime-smoke && npm run verify:browser-native-viewport` | all pass after repair |
-| Historical-contract revalidation | `npm run verify:source-resource-ui && npm run verify:fixed-demo-polish && npm run verify:source-pathfinding && npm run verify:browser-native-viewport` | revalidation record names Plans 003, 005, 006, 007, 009, and 010 |
+| Affected verifier set | `npm run verify:source-resource-ui && npm run verify:fixed-demo-polish && npm run verify:source-pathfinding && npm run verify:browser-runtime-smoke && npm run verify:browser-native-viewport && npm run verify:modern-hud-layout` | all pass after repair |
+| Historical-contract revalidation | `npm run verify:source-resource-ui && npm run verify:fixed-demo-polish && npm run verify:source-pathfinding && npm run verify:browser-native-viewport && npm run verify:modern-hud-layout` | revalidation record names Plans 003, 005, 006, 007, 009, and 010 |
 
 ## Scope
 
@@ -152,7 +152,8 @@ Record the focused result for each affected historical plan:
 - Plan 006: source pathfinding verifies the orders extraction seam.
 - Plan 007: runtime smoke runs under the current process policy.
 - Plan 009: browser native viewport/harness contract remains valid.
-- Plan 010: fixed-demo polish and modern HUD/layout contract do not conflict.
+- Plan 010: `npm run verify:modern-hud-layout` passes and proves fixed-demo
+  polish does not conflict with its primary live layout contract.
 
 Any failure is current drift owned by this plan only if it arises from these
 two repairs; otherwise STOP and assign it to the appropriate successor.
@@ -166,6 +167,7 @@ two repairs; otherwise STOP and assign it to the appropriate successor.
   plus existing blocked-movement pathfinding verification.
 - Loading-screen contract: tracked visible layer, progress, first-load copy,
   and user-facing error state, plus runtime/browser smoke.
+- Plan 010's primary `npm run verify:modern-hud-layout` gate.
 - Regression check that no fixed-demo polish assertion besides the two named
   ones changes.
 

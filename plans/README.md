@@ -31,8 +31,12 @@ Until then, unknown historical completion/revalidation dates are `not recorded`.
 | 4 — High-risk scheduling | 024, 025 |
 | 5 — Release | combined verification, review, preview, production |
 
-Implementation may be parallel within a wave only under the approved ownership
-rules. Performance captures are serial. A later wave starts only after its
+Plans 026/027 in Wave 0, Plans 019/020/021 in Wave 2, and Plans 022/023 in
+Wave 3 execute in parallel in isolated worktrees. Plans 024/025 in Wave 4 may
+execute in parallel only under their rewritten ownership boundary: Plan 024
+owns path requests and save-schema changes; Plan 025 owns visibility/fog caches
+and may not add save fields. If that boundary cannot be preserved, serialize
+Wave 4. Performance captures are serial. A later wave starts only after its
 predecessor's exit gate is accepted.
 
 ## Plan status and dependencies

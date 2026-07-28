@@ -62,7 +62,7 @@ The drift inspection at `4c94af0c16813bf53fc488c95ed0445b639389c8` found:
 | Fresh-process GPU read | `su - halla -c 'test -r /dev/dri/card1 && test -r /dev/dri/renderD128'` | exits 0 after the group change and fresh login |
 | Listener inventory | `ss -ltnp` | required ports are inspected before allocation |
 | Fixed-port inventory | `rg -n --glob 'scripts/*.mjs' 'const (PORT|DEBUG_PORT) =|WARGUS_[A-Z0-9_]+_PORT .\?\?' scripts` | every remaining fixed/default port is listed |
-| Focused controller tests | `npm run verify:browser-execution-controller` | occupied-port, descendant, unrelated-process, renderer, and safety-abort cases pass |
+| Focused controller tests | `npm run verify:browser-execution-controller` | occupied-port, descendant, unrelated-process, renderer, readiness-watchdog, valid-capture-duration, and safety-abort cases pass |
 | Browser qualification | controller hardware-renderer preflight | records a non-software Chrome renderer, GPU device/driver, focus/visibility, and advancing RAF |
 
 ## Scope
@@ -135,6 +135,15 @@ device/driver, viewport, focus, visibility, and advancing RAF.
 **Verify:** a hardware renderer is qualified before any frame-budget capture;
 software renderer fixtures are rejected without starting measurement.
 
+Implement the Halla policy's browser lifecycle in the controller: readiness
+has a 120-second no-progress watchdog, while a valid capture has no arbitrary
+tab-duration ceiling and ends only through its protocol's explicit stop
+lifecycle.
+
+**Verify:** a simulated readiness stall aborts at the 120-second no-progress
+boundary, while a valid advancing-RAF capture is not stopped by an arbitrary
+tab-duration timer.
+
 ### Step 3: Replace fixed ports with inspected unique allocations
 
 Create one controller allocation API for server and Chrome-debug ports. It must
@@ -185,6 +194,8 @@ artifact record.
 - Unrelated-process survival, including no `pkill`, `killall`, process-group,
   or port-owner cleanup path.
 - Software-renderer rejection and hardware-renderer qualification metadata.
+- A 120-second readiness no-progress watchdog and proof that valid captures
+  have no arbitrary tab-duration ceiling.
 - Start/stop threshold checks, durable artifact creation, and residual-state
   reporting.
 
@@ -210,6 +221,8 @@ residual state. Raw artifacts remain outside Git in the shared artifact path;
 - [ ] `halla` has fresh-process read access to both required DRM devices.
 - [ ] A hardware Chrome renderer is qualified with the required environment
   metadata; software renderers are rejected.
+- [ ] The 120-second readiness no-progress watchdog passes, and a valid capture
+  is proven free of any arbitrary tab-duration ceiling.
 - [ ] Every current browser/debug fixed port is migrated to inspected unique
   allocation.
 - [ ] Exact owned-PID/descendant cleanup passes while an unrelated process
@@ -225,6 +238,7 @@ residual state. Raw artifacts remain outside Git in the shared artifact path;
   group change.
 - The available renderer is software-only, hidden/unfocused, or RAF does not
   advance when a qualifying capture is requested.
+- Browser readiness makes no progress for 120 seconds.
 - A cleanup implementation would use a process group, broad match, port owner,
   or any PID not recorded as owned.
 - Any resource stop threshold fires and exact cleanup cannot be proven.
