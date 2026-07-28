@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { assertMinimapRuntimeSmoke } from "./lib/browser-runtime-smoke-assertions.mjs";
 
 const source = readFileSync(new URL("../src/view/renderHud.ts", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
@@ -316,6 +317,41 @@ assert.deepEqual(fogOnlyOperations, [
   ["clear", 0, 0, 1, 1],
   ["fill", "#000000", 0.5, 0, 0, 1, 1]
 ]);
+
+const cachedBrowserMinimap = {
+  drawCount: 20,
+  terrainRebuildCount: 1,
+  terrainKeyChangeCount: 1,
+  terrainKey: "maps/example.pud|2x2",
+  terrainTileCount: 4,
+  fogTileCount: 3,
+  rasterWidth: 3,
+  rasterHeight: 3,
+  rasterCanvasCreateCount: 1,
+  rasterTextureCreateCount: 1,
+  rasterSpriteCreateCount: 1,
+  rasterResizeCount: 0,
+  rasterUpdateCount: 1,
+  visualRootAttached: true,
+  hitTargetAttached: true,
+  visualRootIndex: 1,
+  hitTargetIndex: 19,
+  visualRootChildCount: 2,
+  visualRootMinChildCount: 2,
+  visualRootMaxChildCount: 2,
+  hitTargetChildCount: 0,
+  pointerDownListenerCount: 1,
+  pointerMoveListenerCount: 1
+};
+const cachedBrowserFailures = [];
+assertMinimapRuntimeSmoke(cachedBrowserMinimap, 4, cachedBrowserFailures);
+assert.deepEqual(cachedBrowserFailures, [], "Browser smoke must accept reuse of an unchanged minimap raster");
+const redrawEveryFrameFailures = [];
+assertMinimapRuntimeSmoke({ ...cachedBrowserMinimap, rasterUpdateCount: cachedBrowserMinimap.drawCount }, 4, redrawEveryFrameFailures);
+assert.ok(redrawEveryFrameFailures.some((failure) => failure.startsWith("minimap stable raster objects/updates:")), "Browser smoke must reject a raster upload on every unchanged HUD draw");
+const missingInitialUploadFailures = [];
+assertMinimapRuntimeSmoke({ ...cachedBrowserMinimap, rasterUpdateCount: 0 }, 4, missingInitialUploadFailures);
+assert.ok(missingInitialUploadFailures.some((failure) => failure.startsWith("minimap stable raster objects/updates:")), "Browser smoke must require the initial minimap raster upload");
 
 class LiteralRasterContext {
   fillStyle = "#000000";

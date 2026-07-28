@@ -2,6 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { connect } from "node:net";
+import { assertMinimapRuntimeSmoke } from "./lib/browser-runtime-smoke-assertions.mjs";
 
 const PORT = Number(process.env.WARGUS_BROWSER_RUNTIME_PORT ?? 54314);
 const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=ai-staged-pressure`;
@@ -112,18 +113,7 @@ function assertRuntimeSmoke(result) {
   const mapLayerChildren = Number(result.smoke?.displayObjects?.mapLayerChildren ?? 0);
   if (!(mapLayerChildren > 0 && mapLayerChildren <= 3000)) failures.push(`viewport-bounded terrain: ${mapLayerChildren}`);
   const mapTileCount = Number(result.smoke?.mapWidth ?? 0) * Number(result.smoke?.mapHeight ?? 0);
-  const minimap = result.smoke?.minimapRenderCache;
-  if (!minimap) {
-    failures.push("minimap render cache debug state: missing");
-  } else {
-    if (!(minimap.drawCount > 1 && minimap.terrainRebuildCount === 1 && minimap.terrainKeyChangeCount === 1 && minimap.terrainKey)) failures.push(`minimap terrain cache reuse: ${JSON.stringify(minimap)}`);
-    if (!(minimap.visualRootAttached && minimap.hitTargetAttached && minimap.visualRootIndex === 1 && minimap.hitTargetIndex > minimap.visualRootIndex)) failures.push(`minimap cache attachment/order: ${JSON.stringify(minimap)}`);
-    if (!(minimap.visualRootChildCount === 2 && minimap.visualRootMinChildCount === 2 && minimap.visualRootMaxChildCount === 2 && minimap.hitTargetChildCount === 0)) failures.push(`minimap stable child counts: ${JSON.stringify(minimap)}`);
-    if (!(minimap.pointerDownListenerCount === 1 && minimap.pointerMoveListenerCount === 1)) failures.push(`minimap stable pointer listeners: ${JSON.stringify(minimap)}`);
-    if (!(minimap.rasterCanvasCreateCount === 1 && minimap.rasterTextureCreateCount === 1 && minimap.rasterSpriteCreateCount === 1 && minimap.rasterResizeCount === 0 && minimap.rasterUpdateCount === minimap.drawCount)) failures.push(`minimap stable raster objects/updates: ${JSON.stringify(minimap)}`);
-    if (!(minimap.rasterWidth > 0 && minimap.rasterHeight > 0 && minimap.rasterWidth <= 256 && minimap.rasterHeight <= 256)) failures.push(`minimap bounded raster dimensions: ${JSON.stringify(minimap)}`);
-    if (!(mapTileCount > 0 && minimap.terrainTileCount === mapTileCount && minimap.fogTileCount > 0 && minimap.fogTileCount <= mapTileCount)) failures.push(`minimap terrain/fog composite counts: tiles=${mapTileCount} cache=${JSON.stringify(minimap)}`);
-  }
+  assertMinimapRuntimeSmoke(result.smoke?.minimapRenderCache, mapTileCount, failures);
   const selectedUnitTypes = result.smoke?.selectedUnitTypes ?? [];
   const counts = result.smoke?.ownedUnitCounts ?? {};
   const resources = result.smoke?.visibilityPlayerResources ?? {};
