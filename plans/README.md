@@ -39,6 +39,20 @@ and may not add save fields. If that boundary cannot be preserved, serialize
 Wave 4. Performance captures are serial. A later wave starts only after its
 predecessor's exit gate is accepted.
 
+Wave 2 begins only after Plan 018 is accepted and integrated, not after its
+documentation rewrite alone. Plans 019, 020, and 021 then execute independently;
+Plan 021 does not depend on Plan 020 and does not consume its simulation index.
+Parallel ownership is frozen as follows:
+
+| Plan | Exclusive implementation slice | Exclusive focused verifier/evidence |
+|---|---|---|
+| 019 | terrain metadata plus terrain-only consumers in `passability.ts` and `world.ts` | `verify-terrain-metadata-cache`, evidence 019 |
+| 020 | transient simulation unit-ID lookup and invalidation in `worldSelectors.ts` and `orders.ts` | `verify-unit-index`, evidence 020 |
+| 021 | render-only prepared snapshots and their consumption in `renderWorld.ts` | `verify-render-preparation`, evidence 021 |
+
+The Wave coordinator owns shared `package.json`, `plans/README.md`, and any
+cross-plan verifier integration.
+
 ## Plan status and dependencies
 
 | Plan | Title | Wave | Priority | Dependencies | Status | Implementation / acceptance commit | Evidence | Last revalidated | Successor |
@@ -63,7 +77,7 @@ predecessor's exit gate is accepted.
 | 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | IN PROGRESS | implementation `fc41c95`–`e80215e`; acceptance pending | [018](evidence/018.md) | 2026-07-28 | — |
 | 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
-| 021 | Cull before sorting and build one indexed render snapshot | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
+| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | TODO | — | — | — | — |
 | 023 | Add a deterministic spatial occupancy index | 3 — Structural optimization | P1 | 018, 019, 020 | TODO | — | — | — | — |
 | 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |

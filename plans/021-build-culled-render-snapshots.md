@@ -1,153 +1,357 @@
-# Plan 021: Cull Before Sorting And Build One Indexed Render Snapshot
+# Plan 021: Cull Before Sorting And Build Prepared Render Snapshots
 
-> **Executor instructions**: This is render preparation only. Do not retain
-> Pixi display objects yet; plan 022 owns that lifecycle change.
->
-> **Drift check (run first)**:
-> `git diff --stat 8ac0006..HEAD -- src/view/renderWorld.ts src/view/renderPreparation.ts scripts/verify-render-preparation.mjs scripts/verify-browser-runtime-smoke.mjs package.json plans/021-build-culled-render-snapshots.md plans/evidence/021.md plans/README.md`
+> **Executor instructions:** Execute this Wave 2 plan in an isolated Halla
+> worktree only after Plan 018 is accepted and integrated. Follow
+> [the Halla execution policy](HALLA-EXECUTION-POLICY.md) and
+> [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) unchanged.
+> This plan is render preparation only. Preserve Plan 018 display-object
+> create/destroy instrumentation and do not consume Plan 020's simulation
+> index. Stop on every STOP condition.
 
 ## Status
 
-- **Priority**: P1
-- **Effort**: M
-- **Risk**: LOW
-- **Depends on**: plans/018-establish-runtime-performance-feedback-loop.md, plans/020-add-transient-unit-id-index.md
-- **Category**: perf
-- **Planned at**: commit `8ac0006`, 2026-07-27
+- **Status:** TODO
+- **Wave:** 2 — Independent hot paths
+- **Priority:** P1
+- **Effort:** M
+- **Risk:** MEDIUM — visual ordering and viewport parity
+- **Depends on:** accepted and integrated Plan 018 only
+- **Category:** performance, rendering
+- **Original planning base:** `8ac0006`, 2026-07-27
+- **Roadmap rewrite base:** `d4ad3868d5d0df9f1fa20e83cbc9f19a90b94aed`
+  (`git rev-parse --short HEAD` printed `d4ad386`)
+
+Plan 020 is not a dependency. Plan 021 must build its own render-only,
+per-viewport `unitById` map and must not import, expose, or consume Plan 020's
+simulation index. Plan 018's documentation rewrite is also not the entry gate:
+the Wave 1 coordinator must accept and integrate Plan 018, then refresh the
+concrete drift SHA and excerpts below if a cited seam changed. Never substitute
+a symbolic commit token. Until the accepted Plan 018 commit and baseline
+handoff are concrete and present, STOP.
 
 ## Why this matters
 
-The renderer currently copies and sorts the complete world before culling.
-Corpses, projectiles, and spell effects are each copied/sorted twice for two
-draw strata, and visible units repeatedly scan research, attack, animation,
-and unit arrays. One prepared snapshot limits work to visible candidates and
-builds shared indexes once per rendered viewport.
+`renderWorld` currently copies and sorts complete entity arrays before culling,
+and corpse/projectile/effect arrays repeat that work for two draw strata.
+Visible-unit rendering also repeats manifest, research, pending-attack, and unit
+ID scans. A pure snapshot prepared independently for each viewport can cull
+before sort and share render-only indexes without altering simulation or Pixi
+object lifecycle.
 
-## Current state
+## Current state and drift checks
+
+At the concrete rewrite base, the post-Plan-018 renderer has these exact seams:
 
 ```ts
-// src/view/renderWorld.ts:534
+// src/view/renderWorld.ts:534-543
 const visibleUnits = [...world.units]
   .sort(compareUnitDrawOrder)
-  .filter((unit) => ...circleIntersectsViewport(...));
+  .filter((unit) => (
+    !isUnitHiddenInConstruction(unit)
+    && !isInvisibleUtilityUnit(unit)
+    && !isUnitInsideResourceSource(unit)
+    && isUnitVisibleToPlayer(world, unit, world.visibilityPlayer)
+    && circleIntersectsViewport(unit.x, unit.y, Math.max(unit.radius + 96, unit.frameWidth, unit.frameHeight), viewport)
+  ));
 
-// src/view/renderWorld.ts:75-83
-drawCorpses(... { maxDrawLevel: 39 });
-...
-drawCorpses(... { minDrawLevel: 40 });
+// src/view/renderWorld.ts:76-84
+drawCorpses(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
+drawLastSeenBuildings(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
+drawProjectiles(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
+drawSpellEffects(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
+drawUnits(unitLayer, world, manifest, selectedUnitIds, controlGroups, sourceShowOrdersVisible, unitAtlases, missileAtlases, statusDecorationAtlas, viewport);
+drawLastSeenBuildings(unitLayer, world, manifest, unitAtlases, viewport, { minDrawLevel: 40 });
+drawCorpses(unitLayer, world, manifest, unitAtlases, viewport, { minDrawLevel: 40 });
+drawProjectiles(unitLayer, world, viewport, missileAtlases, { minDrawLevel: 40 });
+drawSpellEffects(unitLayer, world, viewport, missileAtlases, { minDrawLevel: 40 });
+
+// repeated render-only scans
+manifest.animations.find((candidate) => candidate.id === unit.animation);
+world.pendingAttacks.find((attack) => attack.sourceId === unit.id);
+world.activeResearch.some((research) => research.buildingId === unit.id);
+world.units.find((candidate) => candidate.id === unit.teleportDestinationId);
 ```
 
-Animation rendering also calls `manifest.animations.find`,
-`world.pendingAttacks.find/some`, and `world.activeResearch.some` per unit.
-Preserve current draw-level and Y-order comparison exactly.
+Plan 018 routes scene-object allocation/destruction in this file through
+`createTrackedContainer`, `createTrackedGraphics`, `createTrackedSprite`,
+`createTrackedText`, and `destroyTrackedDisplayObject`. Its counters report
+`trackedCreated`, `trackedDestroyed`, and `windowLiveDelta` with scope
+`instrumented-pixi-scene-objects-textures-excluded`. Those calls, counter
+meaning, and scope must remain unchanged.
+
+Run before editing:
+
+```bash
+test "$(hostname)" = halla
+git merge-base --is-ancestor d4ad3868d5d0df9f1fa20e83cbc9f19a90b94aed HEAD
+git diff --stat d4ad3868d5d0df9f1fa20e83cbc9f19a90b94aed..HEAD -- \
+  src/view/renderWorld.ts src/view/renderPreparation.ts \
+  src/performance/displayObjectPerformance.ts \
+  scripts/verify-render-preparation.mjs \
+  plans/021-build-culled-render-snapshots.md plans/evidence/021.md
+rg -n "compareUnitDrawOrder|drawCorpses|drawProjectiles|drawSpellEffects|circleIntersectsViewport|manifest\.animations\.find|pendingAttacks\.(find|some)|activeResearch\.(find|some)|world\.units\.find|createTracked|destroyTracked" \
+  src/view/renderWorld.ts src/performance/displayObjectPerformance.ts
+```
+
+Expected: the rewrite base is an ancestor; later changes are the accepted Plan
+018 integration or explained coordinator integration; the sort/cull, repeated
+lookup, and tracked display-object seams are reconciled. If accepted Plan 018
+changes a cited seam, the Wave 1 coordinator must amend this plan with its
+accepted concrete SHA and refreshed exact excerpts before Plan 021 begins.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
+| Purpose | Command | Expected result |
 |---|---|---|
+| Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Preparation parity | `npm run verify:render-preparation` | exits 0 |
-| Runtime smoke | `npm run verify:browser-runtime-smoke` | exits 0 |
-| Native viewport | `npm run verify:browser-native-viewport` | exits 0 |
-| Determinism | `npm run verify:runtime-determinism` | exits 0 |
-| Profiles | Plan 018 `army-100`, `army-200`, `combat-100` | no regression |
+| Preparation parity | `node scripts/verify-render-preparation.mjs` | IDs, order, strata, viewports, indexes, counters, and diagnostics pass |
+| Runtime smoke | `npm run verify:browser-runtime-smoke` | exit 0 under the Halla policy |
+| Native viewport | `npm run verify:browser-native-viewport` | single/split viewport behavior passes |
+| Determinism | `npm run verify:runtime-determinism` | fixed-tick simulation/save output unchanged |
+| Asset gate | `npm run verify:wargus-assets` | exit 0 |
+| Build | `npm run build` | exit 0 |
+| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; every assigned budget passes |
+
+Run baseline commands before implementation. Performance captures run serially
+under the shared contracts and never overlap another plan's capture.
 
 ## Scope
 
-**In scope**:
+**Plan 021 owns:**
 
-- `src/view/renderPreparation.ts` (create)
-- `src/view/renderWorld.ts`
-- `scripts/verify-render-preparation.mjs` (create)
-- `scripts/verify-browser-runtime-smoke.mjs`, summary assertions only
-- `package.json`
-- `plans/evidence/021.md` and `plans/README.md`
+- `src/view/renderPreparation.ts` (new);
+- `src/view/renderWorld.ts`, render preparation and prepared-list/index
+  consumption only;
+- `scripts/verify-render-preparation.mjs` (new); and
+- `plans/evidence/021.md`.
 
-**Out of scope**:
+**Out of scope:**
 
-- Pixi object retention/pooling
-- HUD, minimap, fog, terrain chunks, or simulation
-- Changing visibility rules or draw comparators
-- Cross-viewport cache reuse that can mix different camera visibility
+- simulation, gameplay, `world.ts`, `orders.ts`, `passability.ts`, Plan 020's
+  index, saves, deterministic state, or entity-array mutation;
+- Pixi object retention, pooling, lifecycle redesign, terrain/fog/minimap/HUD
+  caching, visibility semantics, draw comparator changes, or cross-viewport
+  snapshot reuse;
+- changes to `src/performance/displayObjectPerformance.ts`, existing browser
+  verifiers, Plan 018 metric/counter schemas, or another plan's evidence; and
+- weakening any budget, fingerprint, renderer, validity, pixel, or
+  determinism requirement.
+
+The Wave coordinator owns `package.json` integration and `plans/README.md`
+integration. The Plan 021 branch must not edit either file.
 
 ## Git workflow
 
-- Suggested branch: `codex/021-render-snapshot`
-- Commit pure preparation/parity tests before integrating the renderer.
+- Branch from the accepted Wave 2 start into an isolated `plan-021` worktree.
+- Commit pure preparation/parity work before renderer consumption.
+- Do not merge Plan 020, import its selector, resolve shared package/index
+  conflicts, push, deploy, or open a PR unless instructed.
+
+## Shared interfaces and ownership
+
+- The accepted Plan 018 handoff supplies the normalized matrix, initial
+  profile-definition hash, initial entity/effect fingerprint, environment
+  identity, raw baseline directory, checksums, worst-trial row results, and
+  tracked display-object counter baseline. They are read-only inputs.
+- `HALLA-EXECUTION-POLICY.md` governs Halla/browser execution, process
+  ownership, serial captures, and durable artifacts.
+- `PERFORMANCE-ACCEPTANCE.md` governs renderer/viewport qualification, trials,
+  fingerprints, statistics, replacement limits, and budgets.
+- Plan 021 exclusively owns render-only prepared snapshots and
+  `renderWorld.ts`. Plan 019 owns terrain metadata and passability/FOV consumer
+  seams. Plan 020 owns simulation ID lookup and `orders.ts`; none of its APIs
+  are consumed here.
+- Existing runtime-smoke/native-viewport verifiers are read-only gates.
+  Shared-verifier integration belongs to the coordinator.
 
 ## Steps
 
-### Step 1: Baseline
+### Step 0: Prove the entry gate and freeze the baseline
 
-Run all existing checks and capture three profiles. Save screenshot hashes or
-pixel statistics from the runtime smoke for parity.
+Confirm Plan 018 is `DONE-VERIFIED`, its acceptance commit is integrated, and
+the durable `army-100`, `army-200`, and `combat-100` baseline artifacts and
+checksums resolve on Halla. Record environment identity, profile-definition
+hash, initial entity/effect fingerprint, per-trial/worst-trial results, visual
+reference artifacts, and `trackedCreated`/`trackedDestroyed`/
+`windowLiveDelta` values. Run drift and all non-browser baseline gates.
 
-### Step 2: Create a pure render snapshot
+**Verify:** dependency, ancestry, drift, checksums, fingerprints, display-object
+scope, host policy, and baseline gates are green. Plan 020 is neither integrated
+nor required for this entry gate.
 
-Create `renderPreparation.ts` with a `prepareWorldRenderSnapshot` function
-that, for one world/viewport:
+### Step 1: Build a pure per-viewport snapshot
 
-1. builds static `animationById` once per manifest identity;
-2. builds `unitById`, `researchByBuildingId`, and
-   `pendingAttackBySourceId` once per rendered frame;
-3. iterates each entity array once, culls hidden/fogged/off-viewport entries
-   before sorting, and sorts only retained entries;
-4. partitions the sorted corpse/projectile/effect lists into `below40` and
-   `atLeast40` without a second copy/sort.
+Create `prepareWorldRenderSnapshot(world, manifest, viewport)` that does not
+mutate source arrays or world state. For each invocation:
 
-Do not mutate source arrays. Preserve stable comparator tie-breaking.
+1. build or reuse an immutable `animationById` cache keyed only by manifest
+   identity;
+2. build fresh render-only `unitById`, `researchByBuildingId`, and
+   `pendingAttackBySourceId` indexes from the authoritative arrays;
+3. iterate units, corpses, projectiles, and spell effects once per viewport,
+   applying the exact current hidden/fog/visibility/viewport rules before sort;
+4. preserve existing stable draw comparators and array-order tie behavior; and
+5. partition each already sorted corpse/projectile/effect list at draw level
+   40 into `below40` and `atLeast40`, without a second source copy or sort.
 
-**Verify**: parity verifier compares IDs/order/strata against a local copy of
-the current algorithm across empty, all-visible, mostly-offscreen, fogged,
-equal-Y, and draw-level-boundary fixtures.
+Each source viewport gets an independent snapshot, including the active
+viewport. Do not retain dynamic snapshot data across frames or viewports. Do
+not import `worldSelectors` or consume Plan 020's index.
 
-### Step 3: Consume the snapshot
+Add resettable plan-local diagnostics with these exact namespaces:
 
-Build one snapshot in `renderWorld` per viewport and pass prepared lists/maps
-to draw functions. Remove internal copies, sorts, and repeated global
-definition/reference scans. Keep drawing output unchanged.
+- `plan021.renderPreparation.sourceCounts`
+- `plan021.renderPreparation.retainedCounts`
+- `plan021.renderPreparation.sortCounts`
+- `plan021.renderPreparation.sortedItems`
+- `plan021.renderPreparation.snapshotCount`
 
-**Verify**: preparation parity, runtime smoke, and native viewport pass.
+Diagnostics remain outside world/save/deterministic state and the Plan 018
+summary schema. Focused verification/evidence may read them; shared capture
+wiring is coordinator-owned.
 
-### Step 4: Measure
+**Verify:** a reference implementation of the current algorithm matches exact
+IDs, order, strata, and lookup results across every focused fixture, while
+mostly-offscreen fixtures prove culling occurs before sorting.
 
-Capture the same profiles and record:
+### Step 2: Consume one prepared snapshot per viewport
 
-- source versus retained entity counts;
-- sort counts and items sorted;
-- render-preparation p50/p95/p99;
-- screenshot/pixel parity.
+Prepare one snapshot before the draw sequence for each viewport and pass its
+lists/maps into draw functions. Remove only the superseded internal copies,
+sorts, and repeated exact-key scans. Preserve draw call order, comparator
+functions, visual interpolation, visibility predicates, sprite/graphics
+creation, and all tracked create/destroy wrappers.
 
-Write `plans/evidence/021.md`, then run typecheck and determinism.
+The snapshot contains data only. It must not retain Pixi objects, create a
+second/manual render, change destruction timing, or change the Plan 018
+display-object scope/counter calculations.
+
+**Verify:** preparation parity, runtime smoke, native viewport, and a focused
+counter assertion pass. The source diff contains no Plan 020 import and no
+untracked Pixi constructor/destructor replacement.
+
+### Step 3: Prove visual and viewport parity
+
+Compare deterministic screenshot hashes when byte stability is available and
+otherwise store before/after images and pixel statistics. Do not invent a
+tolerance: any unexplained visual difference or existing-verifier failure is a
+STOP. Cover empty, all-visible, mostly-offscreen, fogged, hidden construction,
+invisible utility, resource-contained units, equal-Y and equal-draw-order
+units, draw levels 39/40, viewport edges, and split viewports.
+
+**Verify:** exact entity draw IDs/order/strata match the reference algorithm,
+each viewport snapshot is independent, and visual/pixel parity passes without a
+new or relaxed tolerance.
+
+### Step 4: Revalidate and measure
+
+Run every command in the table. Capture three independent valid trials for each
+assigned row with the exact accepted Plan 018 environment, specification,
+viewport, warmup, duration, fingerprints, statistics, and worst-trial rule.
+Do not pool samples. Record source/retained/sorted counts, render-preparation
+distributions, pixel evidence, and the unchanged Plan 018 display-object
+counters. Every applicable shared budget must pass; a greater-than-5%
+worsening of worst-trial frame p95 also counts as a regression even if the
+budget passes.
+
+**Verify:** all gates and budgets pass, counter semantics are unchanged, and
+evidence is durable and checksum-verified.
 
 ## Test plan
 
-- Exact ordering parity for all dynamic entity types.
-- Off-viewport culling before sort.
-- Draw level 39/40 partition.
-- Hidden construction, invisible utility, fog, and viewport edges.
-- Static manifest index reuse and per-frame dynamic index replacement.
-- Split viewport produces independent snapshots.
+- Exact current ordering parity for units, corpses, projectiles, effects, and
+  both draw strata, including stable equal-key ties.
+- Cull-before-sort proof for hidden, fogged, off-viewport, and edge candidates.
+- Draw-level 39/40 partition without repeated source copy/sort.
+- Static manifest cache identity and fresh per-frame/per-viewport dynamic maps.
+- Independent active and split-view snapshots with no cross-viewport reuse.
+- Render-only `unitById`; no import or behavior dependency on Plan 020.
+- Screenshot or pixel parity under the same renderer/viewport.
+- Plan 018 tracked creation/destruction/live-delta values and instrumentation
+  scope remain comparable and all constructors/destructors remain tracked.
+- Namespaced diagnostics reset and count only Plan 021 preparation.
+
+## Performance acceptance
+
+The accepted Plan 018 rows and tracked display-object values are the before
+baseline. Each assigned row needs three independent valid after trials under
+the unchanged shared lifecycle, nearest-rank statistics, and worst-trial rule.
+Never discard a valid budget or visual failure. Plan 021 cannot close while an
+assigned budget fails, environment/fingerprints differ, pixel parity fails,
+counter scope changes, or evidence is incomplete. No local rule may weaken the
+shared contract.
+
+## Evidence contract
+
+Store raw artifacts outside Git at:
+
+```text
+.artifacts/performance/021/<commit>/<UTC-stamp>/
+```
+
+Include accepted Plan 018 baseline directory/checksum references, environment
+comparison, profile-definition and initial entity/effect fingerprints, one
+JSON per trial, normalized summaries, source/retained/sort diagnostics,
+render-preparation distributions, before/after visual artifacts and pixel
+results, display-object counter comparison, determinism/focused-test results,
+controller/resource records, invalid/replacement records, and SHA-256
+checksums. Independently recompute new checksums and verify baseline references.
+Commit only concise normalized results to `plans/evidence/021.md`; `/tmp` is
+not durable evidence.
 
 ## Done criteria
 
-- [ ] Complete world arrays are no longer sorted before culling.
-- [ ] Effects/corpses/projectiles are sorted once per viewport.
-- [ ] Animation/research/attack/unit lookup indexes are prepared once.
-- [ ] Visual smoke and viewport tests pass unchanged.
-- [ ] Profiles show no regression and evidence is recorded.
-- [ ] Only in-scope files changed; README row is DONE.
+- [ ] Accepted Plan 018 integration and durable assigned baselines are
+  verified; Plan 020 is not an entry dependency.
+- [ ] Hidden/fogged/off-viewport candidates are culled before sorting.
+- [ ] Each entity list is sorted once per viewport and partitions preserve
+  exact draw order and level-39/40 behavior.
+- [ ] Every viewport uses an independent render-only prepared snapshot.
+- [ ] No simulation index, save state, gameplay behavior, visibility rule,
+  comparator, Pixi lifecycle, or cross-viewport cache coupling exists.
+- [ ] Visual/pixel parity and Plan 018 display-object counter semantics pass.
+- [ ] Typecheck, preparation, runtime smoke, native viewport, determinism,
+  assets, and build pass.
+- [ ] Every assigned performance budget passes with durable,
+  checksum-verified evidence.
+- [ ] The branch contains only Plan 021-owned files; coordinator integration is
+  pending or complete separately.
 
 ## STOP conditions
 
-- The parity verifier exposes undocumented array-order dependence.
-- Culling requires changing visibility semantics.
-- A snapshot is reused across viewports with different bounds.
-- Visual smoke changes cannot be attributed to a pre-existing nondeterministic
-  capture.
+- Plan 018 is not accepted/integrated, or its baselines,
+  checksums/fingerprints, visual reference, counter values, and environment
+  cannot be verified.
+- Drift, excerpts, comparator, visibility, or instrumentation seams differ
+  without a concrete coordinator refresh.
+- Correct preparation requires Plan 020, simulation/save changes, visibility or
+  comparator changes, cross-viewport reuse, retained Pixi objects, or a second
+  render.
+- Exact ID/order/strata parity, visual/pixel parity, independent viewport
+  snapshots, or tracked display-object counter semantics cannot be preserved.
+- An owned edit reaches `orders.ts`, `world.ts`, `passability.ts`,
+  `displayObjectPerformance.ts`, an existing shared verifier, `package.json`,
+  or `plans/README.md`.
+- Any focused, type, browser, determinism, asset, or build gate fails twice.
+- Halla/browser qualification fails, another capture is active, a trial
+  exhausts its replacement, an assigned budget fails, or frame p95 regresses
+  by more than 5%.
+- Durable evidence or checksums cannot be produced and verified.
+
+## Rollback
+
+Revert only the unaccepted Plan 021 preparation and renderer-consumption
+commits. Restore prepared immediate rendering: the legacy per-draw copies,
+sorts, culls, exact-key scans, and draw sequence, while keeping Plan 018's
+tracked create/destroy wrappers and counter semantics intact. Preserve
+failed/invalid evidence, accepted Plan 018, and other Wave 2 work. Stop only
+exact owned processes; remove only an artifact directory proven exclusive to
+the rolled-back attempt.
 
 ## Maintenance notes
 
-New render-time global lookups belong in the prepared snapshot. Keep static
-manifest indexes separate from per-frame world indexes, and never use these
-derived maps to drive simulation.
+New render-only exact-key lookups belong in the per-viewport snapshot. Static
+manifest indexes may be identity-cached; dynamic world indexes may not cross
+frames or viewports. Keep simulation selectors, Pixi lifecycle, and persistent
+state outside this module.
