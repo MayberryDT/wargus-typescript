@@ -42,3 +42,11 @@ export function getPerformanceProfile(id: string): PerformanceProfileDefinition 
   if (!definition) throw new Error(`Unknown performance profile: ${id}`);
   return copyDefinition(definition);
 }
+
+export function selectionForLoadedPerformanceProfile(
+  profileId: PerformanceProfileId | null,
+  profileSelection: readonly string[],
+  fixedDemoSelection: readonly string[]
+): string[] {
+  return profileId === null ? [...fixedDemoSelection] : [...profileSelection];
+}

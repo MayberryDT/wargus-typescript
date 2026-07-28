@@ -1,7 +1,7 @@
 import { Application, Container, Sprite, Text } from "pixi.js";
 import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedText, resetDisplayObjectPerformance, setDisplayObjectPerformanceCapture, snapshotDisplayObjectPerformance } from "./performance/displayObjectPerformance";
 import { RuntimePerformanceCollector, type RuntimePerformanceSnapshot } from "./performance/runtimePerformance";
-import { getPerformanceProfile, type PerformanceProfileId } from "./performance/performanceProfiles";
+import { getPerformanceProfile, selectionForLoadedPerformanceProfile, type PerformanceProfileId } from "./performance/performanceProfiles";
 import "./styles.css";
 import type { WargusEngineSettings, WargusManifest, WargusMap, WargusMapSetup } from "./wargus/types";
 import { chooseInitialMap, filteredMapPickerMatches as findMapPickerMatches, loadWargusManifest, nextCampaignMapFor } from "./wargus/manifest";
@@ -4125,7 +4125,11 @@ try {
   startBriefingAudio(world);
   resetUnitAtlasTracking();
   focusInitialCameraOnPlayableStart(world);
-  selectedUnitIds = isFixedBrowserDemoMap(activeMap) ? fixedBrowserDemoInitialSelection(world) : selectedUnitIds;
+  selectedUnitIds = selectionForLoadedPerformanceProfile(
+    activePerformanceProfileId,
+    selectedUnitIds,
+    isFixedBrowserDemoMap(activeMap) ? fixedBrowserDemoInitialSelection(world) : selectedUnitIds
+  );
   setLoadingScreen({ message: "Loading battlefield art", detail: "Preparing terrain, units, command buttons, and fog.", progress: 0.78 });
   applyCompleteWorldViewAssets(await loadCompleteWorldViewAssets(manifest, world, setup));
   setLoadingScreen({ message: "Entering battle", detail: "The map is ready.", progress: 0.96 });

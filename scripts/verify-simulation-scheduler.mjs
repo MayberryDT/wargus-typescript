@@ -17,6 +17,9 @@ try {
     "src/simulation/orders.ts",
     "src/wargus/demoScenario.ts",
     "src/wargus/saveGame.ts",
+    "src/performance/performanceProfiles.ts",
+    "src/performance/runtimePerformance.ts",
+    "src/view/hudCommandExecution.ts",
     "--outDir", output,
     "--target", "ES2022",
     "--module", "CommonJS",
@@ -43,6 +46,9 @@ try {
   const demo = require(join(output, "wargus/demoScenario.js"));
   const worldModule = require(join(output, "simulation/world.js"));
   const orders = require(join(output, "simulation/orders.js"));
+  const profiles = require(join(output, "performance/performanceProfiles.js"));
+  const runtimePerformance = require(join(output, "performance/runtimePerformance.js"));
+  const hudCommands = require(join(output, "view/hudCommandExecution.js"));
   const pathfinding = require(join(output, "simulation/pathfinding.js"));
   const saveGame = require(join(output, "wargus/saveGame.js"));
   const originalFindPath = pathfinding.findPath;
@@ -355,6 +361,55 @@ try {
       "The smoke-only idle-25 profile must not resolve a match before its bounded 15-second capture finishes.");
     assert.equal(idleProfileWorld.tick, idleProfileExpectedTicks,
       "The smoke-only idle-25 profile must continue executing real simulation ticks throughout its bounded 15-second capture.");
+
+    const commandProfile = profiles.getPerformanceProfile("command-18");
+    const commandProfileWorld = loadPristineWorld();
+    const commandProfileUnit = commandProfileWorld.unitDefinitions.find((candidate) => candidate.id === "unit-footman");
+    assert.ok(commandProfileUnit, "Command performance profile fixture requires the Footman definition.");
+    commandProfileWorld.units = Array.from({ length: 18 }, (_, index) => worldModule.createWorldUnit({
+      unit: commandProfileUnit,
+      id: `__perf-command-18-local-${String(index).padStart(3, "0")}`,
+      player: commandProfileWorld.visibilityPlayer,
+      tileX: 6 + index % 18,
+      tileY: 6,
+      tileset: null
+    }));
+    const commandProfileSelection = commandProfileWorld.units.map((unit) => unit.id);
+    const fixedDemoSelection = demo.fixedBrowserDemoInitialSelection(commandProfileWorld);
+    const selectedAfterLoad = profiles.selectionForLoadedPerformanceProfile(commandProfile.id, commandProfileSelection, fixedDemoSelection);
+    assert.deepEqual(selectedAfterLoad, commandProfileSelection,
+      "The command-18 selection must survive fixed-demo initial selection during smoke-profile loading.");
+    assert.deepEqual(profiles.selectionForLoadedPerformanceProfile(null, commandProfileSelection, ["unit-peasant"]), ["unit-peasant"],
+      "Fixed-demo initial selection must remain unchanged when no performance profile is active.");
+    const commandCollector = new runtimePerformance.RuntimePerformanceCollector(16);
+    commandCollector.start(commandProfile.id);
+    let commandNow = 0;
+    const issueHudInput = (command, input = {}) => {
+      const token = commandCollector.beginInput(commandNow);
+      commandNow += 1;
+      const result = hudCommands.executeHudCommandForSelection(commandProfileWorld, manifest, command, selectedAfterLoad, 0, null, input);
+      commandCollector.finishInput(token, commandNow);
+      commandNow += 1;
+      return result;
+    };
+    const issuePointerInput = (pendingCommand, x, y, queue) => {
+      const token = commandCollector.beginInput(commandNow);
+      commandNow += 1;
+      const issued = orders.issuePendingWorldCommandAt(commandProfileWorld, selectedAfterLoad, pendingCommand, x, y, queue);
+      commandCollector.finishInput(token, commandNow);
+      commandNow += 1;
+      return issued;
+    };
+    const move = issueHudInput("move");
+    assert.equal(move.pendingWorldCommand, "move", "The command-18 selection must enter the real move targeting seam.");
+    assert.equal(issuePointerInput(move.pendingWorldCommand, commandProfileWorld.tileSize * 24, commandProfileWorld.tileSize * 24, false), true,
+      "The command-18 selection must issue the real move command.");
+    const attackMove = issueHudInput("attack-move", { shiftKey: true });
+    assert.equal(attackMove.pendingWorldCommand, "attack-move", "The command-18 selection must enter the real attack-move targeting seam.");
+    assert.equal(issuePointerInput(attackMove.pendingWorldCommand, commandProfileWorld.tileSize * 8, commandProfileWorld.tileSize * 24, true), true,
+      "The command-18 selection must issue the real queued attack-move command.");
+    assert.equal(commandCollector.snapshot().inputToCommand.sampleCount, 4,
+      "The command-18 action must record nonzero input samples for both HUD and pointer command seams.");
 
     const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
     assert.match(mainSource,
