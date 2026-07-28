@@ -5453,6 +5453,7 @@ export type SimulationTurnBudget = {
   maxBacklogSeconds: number;
   diagnosticNow?: () => number;
   captureStepTiming?: () => boolean;
+  suppressMatchResolution?: () => boolean;
 };
 
 export type SimulationTurnResult = {
@@ -5489,6 +5490,7 @@ export function simulateWorld(world: WorldState, deltaSeconds: number, turnBudge
   const budgetStartedAt = turnBudget?.now() ?? 0;
   const captureStepTiming = turnBudget?.captureStepTiming?.() ?? false;
   const diagnosticNow = captureStepTiming ? turnBudget?.diagnosticNow : undefined;
+  const suppressMatchResolution = turnBudget?.suppressMatchResolution?.() ?? false;
   const diagnosticTurnStartedAt = diagnosticNow?.() ?? 0;
   let maxStepMilliseconds = 0;
   let processedSteps = 0;
@@ -5500,7 +5502,7 @@ export function simulateWorld(world: WorldState, deltaSeconds: number, turnBudge
       break;
     }
     const stepStartedAt = diagnosticNow?.() ?? 0;
-    stepWorld(world, tickSeconds);
+    stepWorld(world, tickSeconds, suppressMatchResolution);
     updateVisibility(world);
     world.tick += 1;
     world.accumulator -= tickSeconds;
@@ -5523,7 +5525,7 @@ function sourceFrameSeconds(world: WorldState): number {
   return 1 / sourceDefaultGameSpeed(world);
 }
 
-function stepWorld(world: WorldState, tickSeconds: number): void {
+function stepWorld(world: WorldState, tickSeconds: number, suppressMatchResolution = false): void {
   stepVisibilityReveals(world);
   stepSourceRevelationTimers(world);
   stepForestRegrowth(world);
@@ -5648,7 +5650,9 @@ function stepWorld(world: WorldState, tickSeconds: number): void {
   }
   stepObjectiveCapture(world);
   removeDeadUnits(world, expiredUnitIds);
-  updateMatchState(world);
+  if (!suppressMatchResolution) {
+    updateMatchState(world);
+  }
 }
 
 function stepVisibilityReveals(world: WorldState): void {

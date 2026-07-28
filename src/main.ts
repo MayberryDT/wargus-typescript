@@ -226,7 +226,8 @@ const SIMULATION_TURN_BUDGET: SimulationTurnBudget = {
   maxSteps: 8,
   maxBacklogSeconds: SIMULATION_MAX_BACKLOG_SECONDS,
   diagnosticNow: () => performance.now(),
-  captureStepTiming: () => runtimePerformanceCollector.isCapturing()
+  captureStepTiming: () => runtimePerformanceCollector.isCapturing(),
+  suppressMatchResolution: () => activePerformanceProfileId !== null
 };
 const FIXED_DEMO_HUD_REFRESH_SECONDS = 0.5;
 const BROWSER_SMOKE_REFRESH_MS = 250;

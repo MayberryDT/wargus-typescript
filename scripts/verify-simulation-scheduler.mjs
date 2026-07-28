@@ -312,6 +312,50 @@ try {
     }, "Non-playing worlds must return an explicit zero-work result.");
     assert.equal(endedWorld.tick, endedTick, "Non-playing diagnostics must not mutate world state.");
 
+    const idleProfileWorld = loadPristineWorld();
+    const idleProfileUnit = idleProfileWorld.unitDefinitions.find((candidate) => candidate.id === "unit-footman");
+    assert.ok(idleProfileUnit, "Idle performance profile fixture requires the Footman definition.");
+    idleProfileWorld.units = Array.from({ length: 25 }, (_, index) => worldModule.createWorldUnit({
+      unit: idleProfileUnit,
+      id: `__idle-profile-${index}`,
+      player: idleProfileWorld.visibilityPlayer,
+      tileX: 6 + index % 20,
+      tileY: 6 + Math.floor(index / 20),
+      tileset: null
+    }));
+    idleProfileWorld.corpses = [];
+    idleProfileWorld.projectiles = [];
+    idleProfileWorld.pendingAttacks = [];
+    idleProfileWorld.spellEffects = [];
+    idleProfileWorld.events = [];
+    idleProfileWorld.aiStates = [];
+    idleProfileWorld.victoryRequirements = [];
+    idleProfileWorld.victoryRequirementGroups = [];
+    idleProfileWorld.defeatRequirements = [];
+    idleProfileWorld.timedVictoryTriggers = [];
+    idleProfileWorld.locationBuildRequirements = [];
+    idleProfileWorld.circleOfPowerRequirements = [];
+    idleProfileWorld.rescuedCircleRequirements = [];
+    idleProfileWorld.requiredSurvivalUnitIds = [];
+    idleProfileWorld.pendingTimedVictory = null;
+    idleProfileWorld.matchState = { status: "playing", winner: null, endedTick: null };
+    idleProfileWorld.tick = 0;
+    idleProfileWorld.elapsed = 0;
+    idleProfileWorld.accumulator = 0;
+    const idleProfileCaptureSeconds = 15;
+    const idleProfileTickSeconds = 1 / orders.sourceDefaultGameSpeed(idleProfileWorld);
+    const idleProfileExpectedTicks = Math.round(idleProfileCaptureSeconds / idleProfileTickSeconds);
+    for (let frameIndex = 0; frameIndex < idleProfileExpectedTicks; frameIndex += 1) {
+      orders.simulateWorld(idleProfileWorld, idleProfileTickSeconds, {
+        ...steadyBudget,
+        suppressMatchResolution: () => true
+      });
+    }
+    assert.equal(idleProfileWorld.matchState.status, "playing",
+      "The smoke-only idle-25 profile must not resolve a match before its bounded 15-second capture finishes.");
+    assert.equal(idleProfileWorld.tick, idleProfileExpectedTicks,
+      "The smoke-only idle-25 profile must continue executing real simulation ticks throughout its bounded 15-second capture.");
+
     const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
     assert.match(mainSource,
       /if \(!paused && !briefingOpen\) \{\s+if \(!titleScreenOpen\) \{\s+const simulationResult = simulateWorld\(world, deltaSeconds \* sourceRuntimeGameSpeedMultiplier\(world, gameSpeed\), SIMULATION_TURN_BUDGET\);/,
