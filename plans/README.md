@@ -53,11 +53,13 @@ Parallel ownership is frozen as follows:
 The Wave coordinator owns shared `package.json`, `plans/README.md`, and any
 cross-plan verifier integration.
 
-Wave 3 begins only after its specific Wave 2 dependencies are accepted and
-integrated. Plan 022 requires accepted Plan 021 and owns renderer-only retained
-objects and per-view caches. Plan 023 requires accepted Plans 019 and 020 and
-owns deterministic simulation occupancy plus its passability/order mutation
-seams. They then execute independently in isolated worktrees:
+Wave 3 has a strict coordinator start barrier: Plans 019, 020, and 021 must all
+pass their Wave 2 exit gates and integrate before either Wave 3 executor starts.
+After that barrier opens, the technical dependency edges remain narrower: Plan
+022 consumes accepted Plan 021 and owns renderer-only retained objects and
+per-view caches; Plan 023 consumes accepted Plans 019 and 020 and owns
+deterministic simulation occupancy plus its passability/order mutation seams.
+Plan 022 and Plan 023 then execute independently in isolated worktrees:
 
 | Plan | Exclusive implementation slice | Exclusive focused verifier/evidence |
 |---|---|---|

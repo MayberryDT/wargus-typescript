@@ -1,8 +1,10 @@
 # Plan 023: Add A Deterministic Spatial Occupancy Index
 
 > **Executor instructions:** Execute this Wave 3 plan in an isolated Halla
-> worktree only after Plans 018, 019, and 020 are accepted and integrated.
-> Follow [the Halla execution policy](HALLA-EXECUTION-POLICY.md) and
+> worktree only after Plans 019, 020, and 021 pass their Wave 2 exit gates and
+> integrate. Plan 023's technical dependencies remain Plans 018, 019, and 020;
+> Plan 021 is a coordinator wave barrier, not an API dependency. Follow
+> [the Halla execution policy](HALLA-EXECUTION-POLICY.md) and
 > [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) unchanged.
 > Preserve `world.units` as the authoritative ordered collection and preserve
 > every first-match, iteration, passability, placement, collision, and path
@@ -16,17 +18,19 @@
 - **Effort:** L
 - **Risk:** HIGH — simulation mutation coverage and deterministic ordering
 - **Depends on:** accepted and integrated Plans 018, 019, and 020
+- **Wave entry gate:** accepted and integrated Plans 019, 020, and 021
 - **Category:** performance, simulation
 - **Original planning base:** `8ac0006`, 2026-07-27
 - **Roadmap rewrite base:** `d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae`
   (`git rev-parse HEAD` printed the same SHA)
 
-Plans 019/020's documentation rewrites are not dependencies. The Wave
-coordinator must accept and integrate their implementations on top of accepted
-Plan 018, then replace the concrete drift SHA and refresh the exact
-passability/query/mutation inventory below if an integrated seam changed.
-Never use a symbolic commit token. Until those integrated commits, durable
-baseline handoffs, and concrete refresh exist, STOP.
+Plans 019/020 are Plan 023's technical implementation dependencies; Plan 021
+is not consumed. The strict coordinator wave barrier is broader: Plans 019,
+020, and 021 must all pass their Wave 2 exit gates and integrate before any Wave
+3 executor starts. The coordinator then replaces the concrete drift SHA and
+refreshes the exact passability/query/mutation inventory below if an integrated
+seam changed. Never use a symbolic commit token. Until the barrier, technical
+handoffs, durable baselines, and concrete refresh are present, STOP.
 
 ## Why this matters
 
@@ -96,6 +100,7 @@ contains:
 | Position/teleport/movement | unload `4059-4060`; builder release `5060-5061`; anchor snap `5850-5851`; teleport `6290-6291`, `14587-14588`, `14632-14633`; path movement `10746-10747`, `10778-10779`; stack escape `10844-10845`; death revealer placement `16469-16470` |
 | Footprint-shape transform | unit conversion writes `tileWidth`/`tileHeight` at `15706-15707` |
 | Predicate-only blocking state | `kind` at `15678`, `nonSolid` at `15749`, hit points, construction, hidden-in-construction, order/path activity, speed, and resource containment mutate at runtime seams; they are read live by existing predicates and do not change bucket membership |
+| Coordinator-owned same-world fixtures | `main.ts:913` filters fixture units; fixture selectors at `1183-1248` push at `1209` and `1247`; the spell fixture at `3163-3216` pushes at `3216`. The coordinator owns an occupancy invalidation immediately after each mutation. |
 
 Projectile/effect coordinates are not unit occupancy. Cargo-unit coordinates
 while absent from `world.units` are not indexed. The executor must regenerate,
@@ -108,7 +113,7 @@ Run before editing:
 test "$(hostname)" = halla
 git merge-base --is-ancestor d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae HEAD
 git diff --stat d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
-  src/simulation/passability.ts src/simulation/orders.ts \
+  src/main.ts src/simulation/passability.ts src/simulation/orders.ts \
   src/simulation/worldSelectors.ts src/simulation/occupancyIndex.ts \
   scripts/verify-terrain-metadata-cache.mjs scripts/verify-unit-index.mjs \
   scripts/verify-occupancy-index.mjs plans/evidence/019.md \
@@ -118,15 +123,17 @@ rg -n "blockerCrossingCost|hasPathPlanningOccupancy|hasMobilePathPlanningOccupan
   src/simulation/passability.ts src/simulation/orders.ts
 rg -n "world\.units\s*=|world\.units\.(push|splice|pop|shift|unshift|sort|reverse|copyWithin|fill)|\.x\s*(\+|-|\*|/)?=|\.y\s*(\+|-|\*|/)?=|\.tileWidth\s*=|\.tileHeight\s*=|\.kind\s*=|\.nonSolid\s*=" \
   src/simulation/orders.ts
+rg -n "clearBrowserSmokeFixtures|world\.units\s*=|world\.units\.push" src/main.ts
 ```
 
 Expected: the rewrite base is an ancestor; later changes are accepted Plans
 018/019/020 or explained coordinator integration; Plan 019's terrain-only
-passability seam and Plan 020's unit-ID/invalidation seam are intact; and every
-production occupancy query and mutation is classified. If accepted upstream
-work changes a cited seam, the Wave coordinator must amend this plan with the
-accepted concrete SHA, exact excerpts, and refreshed inventory before Plan 023
-begins.
+passability seam and Plan 020's unit-ID/invalidation seam are intact; every
+production occupancy query/mutation and the named same-world `main.ts` fixture
+mutation is classified. If accepted upstream work changes a cited seam, the
+Wave coordinator must amend this plan with the accepted concrete SHA, exact
+excerpts, complete inventories, and refreshed coordinator invalidation points
+before Plan 023 begins.
 
 ## Commands you will need
 
@@ -134,7 +141,7 @@ begins.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Occupancy parity | `node scripts/verify-occupancy-index.mjs` | order, first-match, query, mutation, rebuild, diagnostics, save/load, and fallback cases pass |
+| Occupancy parity | `node scripts/verify-occupancy-index.mjs` | order, first-match, query, mutation, coordinator-fixture invalidation/rebuild, timing, diagnostics, save/load, and fallback cases pass |
 | Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | accepted Plan 019 terrain/passability semantics remain exact |
 | Unit-ID parity | `node scripts/verify-unit-index.mjs` | accepted Plan 020 first-match lookup/invalidation semantics remain exact |
 | Pathfinding | `npm run verify:source-pathfinding` | path results and tie-breaking unchanged |
@@ -142,9 +149,10 @@ begins.
 | Runtime determinism | `npm run verify:runtime-determinism` | fixed-tick state/order/hash/save output unchanged |
 | Browser playable | `npm run verify:browser-playable-session` | movement, placement, transport, and combat pass |
 | Browser demo | `npm run verify:browser-demo-session` | deterministic demo behavior passes |
+| Browser fixture parity | `npm run verify:browser-runtime-smoke` | clear/single/mixed/spell same-world fixture invalidation and first-query rebuild preserve ordered outcomes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; every unchanged shared budget passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; every unchanged shared budget passes |
 
 Run baseline commands before implementation. Performance captures run serially
 under the shared contracts and never overlap another executor's capture.
@@ -180,8 +188,12 @@ under the shared contracts and never overlap another executor's capture.
   first-match assertion, or evidence requirement.
 
 The Wave coordinator owns shared `main`, performance-schema, package-script,
-and roadmap integration. Plan 023 emits plan-local namespaced diagnostics from
-its owned module; shared capture export is coordinator integration.
+and roadmap integration. In particular, it owns
+`invalidateWorldOccupancyIndex(world)` calls immediately after the same-world
+fixture filter at `src/main.ts:913` and pushes at `1209`, `1247`, and `3216`.
+The Plan 023 branch must not edit `src/main.ts`; it supplies the invalidation API
+and focused rebuild/parity contract. Plan 023 emits plan-local namespaced
+diagnostics from its owned module; shared capture export is coordinator work.
 
 ## Git workflow
 
@@ -203,8 +215,12 @@ its owned module; shared capture export is coordinator integration.
   it may not alter terrain classification or fallback semantics.
 - The accepted Plan 020 handoff supplies first-match stable-ID lookup,
   `world.units` mutation inventory, and unit-index invalidation. Plan 023 adds
-  occupancy lifecycle calls at accepted mutation owners without changing Plan
-  020's API, invalidation timing, or duplicate-ID behavior.
+  occupancy lifecycle calls at accepted `orders.ts` mutation owners without
+  changing Plan 020's API, invalidation timing, or duplicate-ID behavior.
+- Coordinator-owned `src/main.ts` keeps same-world browser fixtures. The
+  coordinator owns occupancy invalidation immediately after their array filter/
+  push mutations and runs their parity gates; the Plan 023 branch only exports
+  and tests the invalidation/rebuild contract.
 - `HALLA-EXECUTION-POLICY.md` governs host/browser execution, exact-owned
   process cleanup, serial captures, and durable artifacts.
 - `PERFORMANCE-ACCEPTANCE.md` governs trial qualification, fingerprints,
@@ -247,6 +263,7 @@ Lifecycle ownership is exact:
 | Unregister | owning filter/removal seam calls `unregisterWorldOccupant` for each removed object before replacing the authoritative array |
 | Transition | owning mutation snapshots old covered tiles, performs the complete atomic position/footprint change, then calls `transitionWorldOccupant` before any later occupancy query |
 | Batch/temporary replacement | owning seam calls `invalidateWorldOccupancyIndex`; first query rebuilds from that temporary array, and restoration invalidates again |
+| Coordinator-owned same-world fixtures | after the filter at `src/main.ts:913` and pushes at `1209`, `1247`, and `3216`, the coordinator calls `invalidateWorldOccupancyIndex(world)`; the Plan 023 branch never edits `main.ts`, and the first later query rebuilds |
 | Load/world replacement | no cache transfer; new `WorldState` builds independently on first query |
 | Unknown or failed validation | mark invalid and use authoritative full scan for that query; rebuild before the next indexed query |
 
@@ -258,16 +275,27 @@ Add resettable plan-local diagnostics with these exact namespaces:
 
 - `plan023.occupancy.queries`
 - `plan023.occupancy.candidatesVisited`
+- `plan023.occupancy.queryDurationMs`
 - `plan023.occupancy.registers`
+- `plan023.occupancy.registerDurationMs`
 - `plan023.occupancy.unregisters`
+- `plan023.occupancy.unregisterDurationMs`
 - `plan023.occupancy.transitions`
+- `plan023.occupancy.transitionDurationMs`
 - `plan023.occupancy.invalidations`
+- `plan023.occupancy.invalidationDurationMs`
 - `plan023.occupancy.rebuilds`
-- `plan023.occupancy.rebuildDuration`
+- `plan023.occupancy.rebuildDurationMs`
+- `plan023.occupancy.maintenanceTotalMs`
 - `plan023.occupancy.fullScanFallbacks`
 - `plan023.occupancy.parityFailures`
 
-Diagnostics remain outside `WorldState`, saves, gameplay decisions, and Plan
+Each duration namespace retains bounded samples for nearest-rank summaries;
+`maintenanceTotalMs` is the resettable, non-overlapping wall-time sum of
+register, unregister, transition, invalidation, and rebuild work during the
+capture. Nested helper work is attributed once to its outer operation; it is not
+re-summed from diagnostic sub-operation samples. Timers and
+diagnostics remain outside `WorldState`, saves, gameplay decisions, and Plan
 018's shared summary schema. Focused verification/evidence may read them; any
 shared capture wiring is coordinator-owned and namespaced.
 
@@ -275,15 +303,23 @@ shared capture wiring is coordinator-owned and namespaced.
 
 ### Step 0: Prove the entry gate and freeze the baseline
 
-Confirm Plans 018, 019, and 020 are `DONE-VERIFIED`, their acceptance commits
-are integrated, and durable assigned baseline artifacts/checksums resolve on
-Halla. Record the accepted environment, profile-definition hash, initial
+Confirm Plans 019, 020, and 021 all passed their Wave 2 exit gates and their
+acceptance commits are integrated. Confirm the technical dependencies—accepted
+Plans 018, 019, and 020—and their durable assigned artifacts/checksums resolve
+on Halla. Record the accepted environment, profile-definition hash, initial
 entity/effect fingerprint, per-trial/worst-trial results, Plan 019 terrain
-parity, Plan 020 first-match/index behavior, and exact integrated mutation
-inventory. Run refreshed drift checks and all non-browser baseline commands.
+parity, Plan 020 first-match/index behavior, and exact integrated `orders.ts`
+and same-world `main.ts` mutation inventories.
 
-**Verify:** dependencies, ancestry, inventory, checksums/fingerprints, host
-policy, upstream parity, save schema, determinism, and baseline gates are green.
+Before migrating query consumers, capture direct legacy full-scan occupancy-
+query duration with the exact timer boundaries that the indexed path will use.
+Record query count, p50/p95/p99/mean/max/total, processed simulation steps,
+candidate visits, and zero index-maintenance cost for every assigned profile.
+Run refreshed drift checks and all non-browser baseline commands.
+
+**Verify:** the all-Wave-2 barrier, technical dependencies, ancestry,
+inventories, checksums/fingerprints, timing baseline, host policy, upstream
+parity, save schema, determinism, and baseline gates are green.
 
 ### Step 1: Build a read-only ordered occupancy index
 
@@ -318,10 +354,18 @@ movement/waypoint snap, stack escape, teleport/portal, builder hide/release,
 unit conversion, temporary build probes, world replacement, and save load.
 Predicate-only mutations remain live-read fixtures and must not reindex.
 
-**Verify:** a deterministic scenario hits every inventory row; former tiles
-clear, new tiles contain the unit in authoritative order, no duplicate object
-membership exists, and forced invalidation performs one explained rebuild.
-Any uncovered production mutation is a STOP.
+The coordinator adds `invalidateWorldOccupancyIndex(world)` immediately after
+`clearBrowserSmokeFixtures` replaces `world.units` at `main.ts:913` and after
+fixture pushes at `main.ts:1209`, `1247`, and `3216`. The Plan 023 branch must
+not edit `main.ts`. The first later occupancy query rebuilds from the exact
+same-world array; browser fixture parity proves ordered candidates, first match,
+and final results are unchanged for clear, single, mixed, and spell fixtures.
+
+**Verify:** a deterministic scenario hits every owned inventory row; former
+tiles clear, new tiles contain the unit in authoritative order, and no duplicate
+object membership exists. Each coordinator fixture mutation invalidates once,
+its first later query rebuilds once, and parity passes. Any uncovered production
+or named fixture mutation is a STOP.
 
 ### Step 3: Migrate occupancy read paths with exact semantic parity
 
@@ -360,19 +404,29 @@ resumes parity.
 ### Step 5: Revalidate behavior and measure
 
 Run every command in the table. Capture three independent valid trials per
-assigned row using exact accepted Plan 018 environment, profile, viewport,
+assigned row using the exact accepted Plan 018 environment, profile, viewport,
 warmup, duration, fingerprints, per-trial statistics, and worst-trial rule. Do
-not pool samples. Record query/candidate/update/rebuild/fallback/parity
-diagnostics outside deterministic state.
+not pool samples. Record candidate counts and direct occupancy-query duration
+from identical legacy/indexed timer boundaries. Record register, unregister,
+transition, invalidation, and rebuild duration separately and sum every
+maintenance/update millisecond for each trial.
 
-Every shared budget must pass. A greater-than-5% worsening of worst-trial frame
-p95 is also a regression. `army-200` must reduce p95 occupancy-query candidate
-work from the full-scan baseline without command-latency regression or
-mass-mutation spikes.
+Report direct query p50/p95/p99/mean/max/total and maintenance operation
+p50/p95/p99/mean/max/total. Normalize combined work as
+`(query total ms + maintenance total ms) / processed simulation steps`, using
+the same processed-step field for before and after. Every shared Plan 018 budget
+must pass, and a greater-than-5% worsening of worst-trial frame p95 remains a
+regression.
 
-**Verify:** upstream parity, pathfinding, save, browser, and determinism gates
-pass; no unexplained fallback/parity failure occurs; budgets pass; evidence is
-durable and checksum-verified.
+For `army-200`, worst-trial indexed query p95 must be lower than the legacy
+full-scan p95, candidate visits must fall, and worst-trial maintenance-inclusive
+per-step cost must not exceed the legacy query-only per-step cost. A candidate
+reduction with flat/worse direct timing or shifted maintenance cost fails.
+
+**Verify:** upstream and fixture parity, pathfinding, save, browser, and
+determinism gates pass; direct timing improves, combined cost does not regress,
+no unexplained fallback/parity failure occurs, shared budgets pass, and evidence
+is durable and checksum-verified.
 
 ## Test plan
 
@@ -381,6 +435,9 @@ durable and checksum-verified.
   and stack-recovery selection.
 - Every accepted-base membership/order and position/footprint mutation,
   including temporary replacement/restoration.
+- Coordinator-owned fixture filter at `main.ts:913` and pushes at `1209`,
+  `1247`, and `3216`: immediate invalidation, one first-query rebuild, exact
+  candidate/order/first-match parity, and no Plan 023 branch edit to `main.ts`.
 - Live predicate-only hit point, construction, hidden/resource, `kind`,
   `nonSolid`, speed, and path changes without stale decisions/reindexing.
 - Multi-tile move/teleport/convert clears former tiles and registers new once.
@@ -388,16 +445,31 @@ durable and checksum-verified.
 - Invalid revision/order/membership full-scans, records fallback, rebuilds once.
 - Save/load/world isolation and exact save/hash exclusion.
 - Deterministic full/sampled oracle; zero unexplained `parityFailures`.
+- Legacy and indexed query-duration distributions, every maintenance/update
+  duration, summed maintenance cost, and maintenance-inclusive per-step cost.
 - Namespaced diagnostic reset/count behavior and local-candidate scaling.
 
 ## Performance acceptance
 
-Accepted Plan 018 assigned rows are the before baseline. Each row needs three
-independent valid trials under unchanged lifecycle, nearest-rank statistics,
-and worst-trial rule. Never discard a valid budget, parity, or fallback failure.
-Plan 023 cannot close while a budget fails, frame p95 regresses over 5%, command
-latency regresses, environment/fingerprints differ, unexplained production
-fallback/parity occurs, or evidence is incomplete.
+Accepted Plan 018 assigned rows are the shared-budget baseline. Before query
+migration, capture a checksum-verified legacy full-scan timing baseline with the
+same plan-local query boundaries and assigned profiles. Every before/after trial
+reports nearest-rank p50/p95/p99, mean, maximum, sample count, and total elapsed
+milliseconds for occupancy queries; after trials additionally report each
+register/unregister/transition/invalidation/rebuild distribution and total
+maintenance milliseconds.
+
+Each assigned row needs three independent valid trials under the unchanged
+lifecycle and worst-trial rule. For `army-200`, the worst after-trial direct
+occupancy-query p95 must be lower than the worst legacy trial, and
+`(query total ms + maintenance total ms) / processed simulation steps` must not
+exceed the legacy `query total ms / processed simulation steps`. Candidate
+visits must also fall, but candidate reduction cannot substitute for either
+timing result. Never discard a valid timing, maintenance, budget, parity, or
+fallback failure. Plan 023 cannot close while a shared budget fails, frame p95
+regresses over 5%, command latency regresses, timing work merely shifts into
+maintenance, environment/fingerprints differ, unexplained production fallback/
+parity occurs, or evidence is incomplete.
 
 ## Evidence contract
 
@@ -409,10 +481,13 @@ Store raw artifacts outside Git at:
 
 Include accepted Plan 018/019/020 artifact/checksum references, environment,
 profile-definition and initial entity/effect fingerprints, one JSON per trial,
-normalized summaries, exact mutation inventory, ordered/first-match parity,
-save/load and determinism, all plan diagnostics, controller/resource records,
-invalid/replacement records, and SHA-256 checksums. Independently recompute new
-checksums and verify every baseline reference.
+normalized summaries, exact `orders.ts` and coordinator-owned `main.ts` mutation
+inventories, fixture invalidation/rebuild parity, ordered/first-match parity,
+save/load and determinism, candidate counts, direct query-time distributions,
+per-operation maintenance-time distributions and total maintenance time,
+maintenance-inclusive cost per processed simulation step, controller/resource
+records, invalid/replacement records, and SHA-256 checksums. Independently
+recompute new checksums and verify every baseline reference.
 
 Commit only concise normalized results to the single evidence file
 `plans/evidence/023.md`; do not create `plans/evidence/023/`, and do not rely
@@ -420,16 +495,21 @@ on `/tmp` as durable evidence.
 
 ## Done criteria
 
-- [ ] Accepted Plans 018/019/020 and durable handoffs are integrated/verified.
+- [ ] The strict Wave 3 barrier is open: Plans 019, 020, and 021 passed their
+  exit gates and are integrated; technical Plans 018/019/020 handoffs verify.
 - [ ] `world.units` remains authoritative and candidates match exact reference
   order and first-match behavior.
 - [ ] Complete mutation inventory has a register, unregister, transition,
   invalidation/rebuild, or live-predicate owner.
+- [ ] Coordinator integration invalidates after the named same-world `main.ts`
+  fixture mutations, and the first later query rebuilds with exact parity.
 - [ ] Passability, stack recovery, and migrated queries preserve predicates,
   early exits, costs, iteration order, ties, and outcomes.
 - [ ] Save/load review proves no serialization and independent loaded cache.
 - [ ] Full/sampled parity, fallback, mutation, terrain, unit-ID, pathfinding,
-  save, browser, determinism, asset, and build gates pass.
+  save, fixture, browser, determinism, asset, and build gates pass.
+- [ ] Direct occupancy-query p95 improves and maintenance-inclusive total cost
+  does not exceed the legacy full-scan baseline; candidate work also falls.
 - [ ] Diagnostics show bounded local work with zero unexplained fallback/parity.
 - [ ] Assigned rows pass unchanged budgets with durable,
   checksum-verified evidence in `plans/evidence/023.md`.
@@ -438,11 +518,15 @@ on `/tmp` as durable evidence.
 
 ## STOP conditions
 
-- Plans 018/019/020 are not accepted/integrated, or baselines, checksums,
-  fingerprints, terrain parity, ID-index semantics, and mutation handoff fail.
-- Drift, passability/stack excerpts, or inventory differ without refresh.
+- Any Wave 2 plan has not passed its exit gate and integrated, or Plans
+  018/019/020 baselines, checksums, fingerprints, terrain parity, ID-index
+  semantics, and mutation handoff fail.
+- Drift, passability/stack excerpts, the `orders.ts` inventory, or the named
+  same-world `main.ts` fixture seams differ without coordinator refresh.
 - A membership/order/position/footprint mutation has no exact owner or permits
   same-tick stale membership.
+- A coordinator-owned fixture filter/push lacks immediate occupancy
+  invalidation, its first later query does not rebuild, or fixture parity fails.
 - Bucket results differ from authoritative object order, duplicate IDs collapse,
   or first-match/early-exit behavior changes.
 - Correctness requires terrain/ID-index/array/path/placement/gameplay,
@@ -451,10 +535,13 @@ on `/tmp` as durable evidence.
   randomness, or a loaded world reuses another cache.
 - Production uses a partially trusted bucket, has unexplained fallback,
   rebuilds per stable query, or reports parity failure.
+- Direct occupancy-query timing is missing, maintenance/update timing is
+  incomplete, query p95 does not improve, or maintenance-inclusive cost shifts
+  rather than reduces the measured work.
 - An owned edit reaches renderer/cache, `main`, performance schema,
   `package.json`, `plans/README.md`, or shared verifier before integration.
-- Any occupancy, upstream, type, pathfinding, save, browser, determinism,
-  asset, or build gate fails twice.
+- Any occupancy, upstream, type, pathfinding, save, fixture, browser,
+  determinism, asset, or build gate fails twice.
 - Halla/browser qualification fails, capture overlaps, replacement exhausts,
   budget/command latency fails, or frame p95 regresses over 5%.
 - Durable single-file evidence or checksums cannot be verified.
@@ -474,6 +561,8 @@ owned processes; remove only exclusive artifacts.
 
 Every new `world.units` membership/order mutation or unit position/footprint
 write requires an inventory row, exact lifecycle call, transition fixture, and
-parity proof. Predicate-only state stays live-read unless amended. Keep
-authoritative order, first-match behavior, save exclusion, deterministic
-validation, and full-scan rollback executable.
+parity proof. Every new same-world fixture mutation in coordinator-owned
+`src/main.ts` requires an immediate coordinator-owned invalidation plus fixture
+parity before the next occupancy query. Predicate-only state stays live-read
+unless amended. Keep authoritative order, first-match behavior, save exclusion,
+deterministic validation, timing visibility, and full-scan rollback executable.
