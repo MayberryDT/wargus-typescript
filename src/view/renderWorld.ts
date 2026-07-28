@@ -1,4 +1,5 @@
-import { Application, BlurFilter, Container, Graphics, Sprite, Text } from "pixi.js";
+import { Application, BlurFilter, Container, Graphics } from "pixi.js";
+import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText } from "../performance/displayObjectPerformance";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
 import { isCircleVisibleToPlayer, isInvisibleUtilityUnit, isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
@@ -218,11 +219,11 @@ function ensureSourceViewportPaneRenderers(app: Application, worldLayer: Contain
     sourceViewportPaneRenderers.set(worldLayer, renderers);
   }
   while (renderers.length < count) {
-    const root = new Container();
-    const mapLayer = new Container();
-    const unitLayer = new Container();
-    const fogLayer = new Container();
-    const mask = new Graphics();
+    const root = createTrackedContainer();
+    const mapLayer = createTrackedContainer();
+    const unitLayer = createTrackedContainer();
+    const fogLayer = createTrackedContainer();
+    const mask = createTrackedGraphics();
     root.addChild(mapLayer, unitLayer, fogLayer);
     app.stage.addChildAt(root, Math.min(app.stage.children.length, app.stage.getChildIndex(worldLayer) + 1 + renderers.length));
     app.stage.addChildAt(mask, Math.min(app.stage.children.length, app.stage.getChildIndex(root)));
@@ -234,7 +235,7 @@ function ensureSourceViewportPaneRenderers(app: Application, worldLayer: Contain
 function applySourceMapAreaMask(app: Application, worldLayer: Container, mapArea: { x: number; y: number; width: number; height: number }): void {
   let mask = worldLayerMasks.get(worldLayer);
   if (!mask) {
-    mask = new Graphics();
+    mask = createTrackedGraphics();
     worldLayerMasks.set(worldLayer, mask);
   }
   if (mask.parent !== app.stage) {
@@ -270,8 +271,8 @@ function drawMap(layer: Container, world: WorldState, tileAtlas: TileTextureAtla
     layer.cacheAsTexture(false);
   }
   destroyLayerChildren(layer);
-  const baseGraphics = new Graphics();
-  const overlayGraphics = new Graphics();
+  const baseGraphics = createTrackedGraphics();
+  const overlayGraphics = createTrackedGraphics();
   const useTileSprites = tileAtlas;
   layer.addChild(baseGraphics);
   for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
@@ -281,7 +282,7 @@ function drawMap(layer: Container, world: WorldState, tileAtlas: TileTextureAtla
       baseGraphics.fill(colorForTile(world, tile));
       const tileTexture = useTileSprites ? getTileTexture(tileAtlas, tile) : null;
       if (tileTexture) {
-        const sprite = new Sprite(tileTexture);
+        const sprite = createTrackedSprite(tileTexture);
         sprite.position.set(x * world.tileSize, y * world.tileSize);
         layer.addChild(sprite);
         continue;
@@ -440,7 +441,7 @@ function shouldRenderViewportBoundedMap(world: WorldState): boolean {
 function destroyLayerChildren(layer: Container): void {
   const children = layer.removeChildren();
   children.forEach((child) => {
-    child.destroy({ children: true });
+    destroyTrackedDisplayObject(child, { children: true });
   });
 }
 
@@ -543,7 +544,7 @@ function drawUnits(
   if (visibleUnits.length === 0) {
     return;
   }
-  const graphics = new Graphics();
+  const graphics = createTrackedGraphics();
   const selected = new Set(selectedUnitIds);
   const sourceSelectedOrdersVisible = world.engineSettings.showOrdersDefault && sourceShowOrdersVisible;
   for (const stateUnit of visibleUnits) {
@@ -564,7 +565,7 @@ function drawUnits(
             ? 0
           : getAnimatedFrameNumber(unit, manifest, world, atlas.numDirections);
       const texture = getFrameTexture(atlas, frameNumber);
-      const sprite = new Sprite(texture);
+      const sprite = createTrackedSprite(texture);
       const direction = spriteDirectionForFacing(unit.facing ?? 4, atlas.numDirections);
       const fixedDemo = isFixedBrowserDemoMap(world.map);
       const building = isRuntimeSourceBuildingUnit(unit);
@@ -898,7 +899,7 @@ function drawSourceControlGroupNumber(layer: Container, world: WorldState, unit:
   if (groupId === null) {
     return;
   }
-  const text = new Text({
+  const text = createTrackedText({
     text: String(groupId),
     style: {
       fill: "#ffffff",
@@ -997,7 +998,7 @@ function drawSourceVariableDecorations(layer: Container, unit: WorldState["units
   const healthRatio = unit.maxHitPoints > 0 ? unit.hitPoints / unit.maxHitPoints : 0;
   const healthTexture = getStatusBarTexture(atlas, "health", healthRatio);
   if (healthDecoration && healthTexture && sourceDecorationValueVisible(healthDecoration, unit.hitPoints, unit.maxHitPoints, unit, isOwned)) {
-    const health = new Sprite(healthTexture);
+    const health = createTrackedSprite(healthTexture);
     health.anchor.set(0.5, 1);
     const position = sourceDecorationPosition(unit, healthDecoration, sourceDecorationSpriteOffset("sprite-health"));
     health.position.set(position.x, position.y);
@@ -1010,7 +1011,7 @@ function drawSourceVariableDecorations(layer: Container, unit: WorldState["units
       if (!manaTexture) {
         return;
       }
-      const mana = new Sprite(manaTexture);
+      const mana = createTrackedSprite(manaTexture);
       mana.anchor.set(0.5, 1);
       const position = sourceDecorationPosition(unit, bar.decoration, sourceDecorationSpriteOffset("sprite-mana"));
       mana.position.set(position.x, position.y + index * 5);
@@ -1079,7 +1080,7 @@ function drawSourceStatusDecorations(layer: Container, unit: WorldState["units"]
   }
   const entries = sourceStatusDecorations(unit, isOwned, decorations);
   entries.forEach((decoration, index) => {
-    const sprite = new Sprite(getStatusDecorationTexture(atlas, decoration.frame ?? index));
+    const sprite = createTrackedSprite(getStatusDecorationTexture(atlas, decoration.frame ?? index));
     sprite.anchor.set(0.5, 1);
     const position = sourceDecorationPosition(unit, decoration, sourceDecorationSpriteOffset(decoration.sprite));
     sprite.position.set(position.x - 8, position.y - unit.radius - 12);
@@ -1158,7 +1159,7 @@ function drawBurningBuilding(layer: Container, world: WorldState, manifest: Warg
     return;
   }
   const texture = getMissileFrameTexture(atlas, burningBuildingMissileFrame(world, atlas));
-  const sprite = new Sprite(texture);
+  const sprite = createTrackedSprite(texture);
   sprite.anchor.set(0.5, 0.82);
   sprite.position.set(unit.x + burningOffsetX(unit), unit.y - Math.max(4, unit.boxHeight * 0.25));
   const scale = Math.max(0.72, Math.min(1.35, Math.max(unit.boxWidth, unit.boxHeight) / 96));
@@ -1283,7 +1284,7 @@ function drawLastSeenBuildings(layer: Container, world: WorldState, manifest: Wa
   if (world.lastSeenBuildings.length === 0) {
     return;
   }
-  const graphics = new Graphics();
+  const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
   for (const building of [...world.lastSeenBuildings].sort(compareLastSeenBuildingDrawOrder)) {
     if (building.drawLevel < (strata.minDrawLevel ?? 0) || building.drawLevel > (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY)) {
@@ -1296,7 +1297,7 @@ function drawLastSeenBuildings(layer: Container, world: WorldState, manifest: Wa
     if (atlas) {
       const frameNumber = getLastSeenBuildingFrameNumber(building, manifest, atlas.numDirections);
       const texture = getFrameTexture(atlas, frameNumber);
-      const sprite = new Sprite(texture);
+      const sprite = createTrackedSprite(texture);
       const direction = spriteDirectionForFacing(building.facing ?? 4, atlas.numDirections);
       sprite.anchor.set(0.5, 0.72);
       sprite.position.set(building.x, building.y + 10);
@@ -1357,7 +1358,7 @@ function drawCorpses(layer: Container, world: WorldState, manifest: WargusManife
   if (!world.corpses || world.corpses.length === 0) {
     return;
   }
-  const graphics = new Graphics();
+  const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
   for (const corpse of [...world.corpses].sort(compareCorpseDrawOrder)) {
     if (corpse.drawLevel < (strata.minDrawLevel ?? 0) || corpse.drawLevel > (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY)) {
@@ -1372,7 +1373,7 @@ function drawCorpses(layer: Container, world: WorldState, manifest: WargusManife
     const texture = atlas && frameNumber !== null ? getFrameTexture(atlas, frameNumber) : null;
     if (atlas && texture) {
       const direction = spriteDirectionForFacing(corpse.facing ?? 4, atlas.numDirections);
-      const sprite = new Sprite(texture);
+      const sprite = createTrackedSprite(texture);
       sprite.anchor.set(0.5, 0.72);
       sprite.position.set(corpse.x, corpse.y + 10);
       sprite.scale.set(direction.mirror ? -0.72 : 0.72, 0.72);
@@ -1435,7 +1436,7 @@ function drawProjectiles(layer: Container, world: WorldState, viewport: WorldVie
   if (world.projectiles.length === 0) {
     return;
   }
-  const graphics = new Graphics();
+  const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
   const projectiles = [...world.projectiles].sort((a, b) => a.drawLevel - b.drawLevel);
   for (const projectile of projectiles) {
@@ -1462,7 +1463,7 @@ function drawProjectiles(layer: Container, world: WorldState, viewport: WorldVie
     }
     if (atlas) {
       const texture = getMissileFrameTexture(atlas, missileFrameNumber(world, projectile, atlas));
-      const sprite = new Sprite(texture);
+      const sprite = createTrackedSprite(texture);
       sprite.anchor.set(0.5);
       sprite.position.set(drawPosition.x, drawPosition.y);
       sprite.rotation = atlas.numDirections > 1 ? 0 : Math.atan2(dy, dx);
@@ -1548,7 +1549,7 @@ function isDamageHitProjectile(projectile: WorldState["projectiles"][number]): b
 }
 
 function drawDamageHitProjectile(layer: Container, projectile: WorldState["projectiles"][number], position: { x: number; y: number }): void {
-  const text = new Text({
+  const text = createTrackedText({
     text: String(projectile.displayDamage ?? -projectile.damage),
     style: {
       fontFamily: "monospace",
@@ -1637,7 +1638,7 @@ function drawSpellEffects(layer: Container, world: WorldState, viewport: WorldVi
   if (!world.spellEffects || world.spellEffects.length === 0) {
     return;
   }
-  const graphics = new Graphics();
+  const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
   const enhancedEffects = world.engineSettings.enhancedEffectsDefault !== false;
   const effects = [...world.spellEffects].sort(compareSpellEffectDrawOrder);
@@ -1663,7 +1664,7 @@ function drawSpellEffects(layer: Container, world: WorldState, viewport: WorldVi
         continue;
       }
       const texture = getMissileFrameTexture(atlas, spellEffectMissileFrame(world, effect, atlas));
-      const sprite = new Sprite(texture);
+      const sprite = createTrackedSprite(texture);
       sprite.anchor.set(0.5);
       sprite.position.set(effect.x, effect.y);
       sprite.alpha = Math.max(0.05, alpha);
@@ -1734,7 +1735,7 @@ function drawAreaSpellMissiles(layer: Container, world: WorldState, effect: Worl
   const frameTick = Math.floor(effect.age * missileFrameRate(world, atlas));
   for (const impact of impacts) {
     const texture = getMissileFrameTexture(atlas, (frameTick + impact.index) % Math.max(1, atlas.framesPerDirection));
-    const sprite = new Sprite(texture);
+    const sprite = createTrackedSprite(texture);
     sprite.anchor.set(0.5);
     sprite.position.set(impact.x, impact.y);
     sprite.alpha = Math.max(0.08, alpha * (0.55 + ((impact.seed * 7) % 40) / 100));
@@ -2025,9 +2026,9 @@ function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, f
   fogRenderKeys.set(layer, key);
   destroyLayerChildren(layer);
   applySourceFogBlur(layer, world, fastFog);
-  const sourceEdgeLayer = new Container();
-  const knownFogGraphics = new Graphics();
-  const unknownFogGraphics = new Graphics();
+  const sourceEdgeLayer = createTrackedContainer();
+  const knownFogGraphics = createTrackedGraphics();
+  const unknownFogGraphics = createTrackedGraphics();
   let drewKnownFallbackGraphics = false;
   let drewUnknownFogGraphics = false;
   let drewSourceEdges = false;
@@ -2062,7 +2063,7 @@ function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, f
   if (drewSourceEdges) {
     layer.addChild(sourceEdgeLayer);
   } else {
-    sourceEdgeLayer.destroy({ children: true });
+    destroyTrackedDisplayObject(sourceEdgeLayer, { children: true });
   }
   if (drewUnknownFogGraphics) {
     layer.addChild(unknownFogGraphics);
@@ -2174,7 +2175,7 @@ function drawSourceFogTile(
 ): void {
   const texture = fogAtlas ? getFogTexture(fogAtlas, frameIndex) : null;
   if (texture) {
-    const sprite = new Sprite(texture);
+    const sprite = createTrackedSprite(texture);
     sprite.position.set(x * tileSize, y * tileSize);
     sprite.width = tileSize;
     sprite.height = tileSize;
@@ -2319,7 +2320,7 @@ function drawSelectionHitArea(layer: Container, world: WorldState): void {
   }
   selectionHitAreaKeys.set(layer, key);
   destroyLayerChildren(layer);
-  const graphics = new Graphics();
+  const graphics = createTrackedGraphics();
   graphics.rect(0, 0, world.map.width * world.tileSize, world.map.height * world.tileSize);
   graphics.fill({ color: 0x000000, alpha: 0.001 });
   layer.addChild(graphics);

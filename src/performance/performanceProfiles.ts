@@ -17,7 +17,14 @@ const DEFINITIONS: readonly PerformanceProfileDefinition[] = [
   { id: "combat-100", mobileUnitCount: 100, buildingTypeIds: [], playerUnitCounts: [50, 50], commandSequence: ["attack-target"], projectileCount: 8, effectCount: 8 }
 ];
 
+function validateDefinition(definition: PerformanceProfileDefinition): void {
+  if (definition.playerUnitCounts[0] + definition.playerUnitCounts[1] !== definition.mobileUnitCount) {
+    throw new Error(`Performance profile ${definition.id} player counts do not match mobileUnitCount.`);
+  }
+}
+
 function copyDefinition(definition: PerformanceProfileDefinition): PerformanceProfileDefinition {
+  validateDefinition(definition);
   return {
     ...definition,
     buildingTypeIds: [...definition.buildingTypeIds],

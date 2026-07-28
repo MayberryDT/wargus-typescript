@@ -314,10 +314,14 @@ try {
 
     const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
     assert.match(mainSource,
-      /if \(!paused && !briefingOpen\) \{\s+if \(!titleScreenOpen\) \{\s+simulateWorld\(world, deltaSeconds \* sourceRuntimeGameSpeedMultiplier\(world, gameSpeed\), SIMULATION_TURN_BUDGET\);/,
+      /if \(!paused && !briefingOpen\) \{\s+if \(!titleScreenOpen\) \{\s+const simulationResult = simulateWorld\(world, deltaSeconds \* sourceRuntimeGameSpeedMultiplier\(world, gameSpeed\), SIMULATION_TURN_BUDGET\);/,
       "The production RAF seam must retain Pause/briefing guards and use the bounded scheduler.");
     assert.match(mainSource, /now: \(\) => performance\.now\(\)/,
       "The production scheduler must use the existing monotonic performance clock.");
+    assert.match(mainSource, /diagnosticNow: \(\) => performance\.now\(\)/,
+      "Performance diagnostics must use a clock separate from budget slicing.");
+    assert.match(mainSource, /runtimePerformanceCollector\.recordScheduler\(simulationResult\)/,
+      "The production ticker must record scheduler diagnostics.");
 
     console.log(`Simulation scheduler verified (Fast16 requested=${expectedRequestedTicks} ticks, processed=${processedTicks}, backlog=${backlogTicks}, catch-up=${catchupTurns} turns, default=${normalWorld.tick - normalTickBefore} ticks, deterministic=${deterministicTicks} ticks, turn=${turnElapsedMs.toFixed(3)}ms, UI=${uiLatencyMs.toFixed(3)}ms).`);
   }

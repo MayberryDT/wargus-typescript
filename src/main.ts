@@ -1,4 +1,7 @@
-import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
+import { Application, Container, Sprite, Text } from "pixi.js";
+import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedText, resetDisplayObjectPerformance, setDisplayObjectPerformanceCapture, snapshotDisplayObjectPerformance } from "./performance/displayObjectPerformance";
+import { RuntimePerformanceCollector, type RuntimePerformanceSnapshot } from "./performance/runtimePerformance";
+import { getPerformanceProfile, type PerformanceProfileId } from "./performance/performanceProfiles";
 import "./styles.css";
 import type { WargusEngineSettings, WargusManifest, WargusMap, WargusMapSetup } from "./wargus/types";
 import { chooseInitialMap, filteredMapPickerMatches as findMapPickerMatches, loadWargusManifest, nextCampaignMapFor } from "./wargus/manifest";
@@ -7,7 +10,7 @@ import { applyFixedBrowserDemoWorldPresentation, FIXED_BROWSER_DEMO_ENEMY_PLAYER
 import { fixedDemoMissionSummary, type FixedDemoMissionSummary } from "./wargus/demoMission";
 import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGameJson, loadSavedGame, loadSavedGameJson, type LoadedSavedGame } from "./wargus/saveGame";
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
-import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, createPlan014AiKnowledgeFixtureWorld, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiKnowledgeFixture, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceAiRuntimeEvidence, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
+import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, createPlan014AiKnowledgeFixtureWorld, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupQueueAttackMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiKnowledgeFixture, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceAiRuntimeEvidence, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { SIMULATION_MAX_BACKLOG_SECONDS, type SimulationTurnBudget } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
@@ -65,14 +68,14 @@ await app.init({
 
 root.appendChild(app.canvas);
 
-const worldLayer = new Container();
-const hudLayer = new Container();
-const cursorLayer = new Container();
-const mapLayer = new Container();
-const unitLayer = new Container();
-const fogLayer = new Container();
-const selectionLayer = new Container();
-const overlayLayer = new Container();
+const worldLayer = createTrackedContainer();
+const hudLayer = createTrackedContainer();
+const cursorLayer = createTrackedContainer();
+const mapLayer = createTrackedContainer();
+const unitLayer = createTrackedContainer();
+const fogLayer = createTrackedContainer();
+const selectionLayer = createTrackedContainer();
+const overlayLayer = createTrackedContainer();
 worldLayer.addChild(mapLayer, unitLayer, fogLayer, selectionLayer);
 app.stage.addChild(worldLayer, hudLayer, overlayLayer, cursorLayer);
 
@@ -87,11 +90,11 @@ type LoadingScreenState = {
   progress: number;
 };
 
-const loadingLayer = new Container();
-const loadingBackdrop = new Graphics();
-const loadingFrame = new Graphics();
-const loadingProgress = new Graphics();
-const loadingTitle = new Text({
+const loadingLayer = createTrackedContainer();
+const loadingBackdrop = createTrackedGraphics();
+const loadingFrame = createTrackedGraphics();
+const loadingProgress = createTrackedGraphics();
+const loadingTitle = createTrackedText({
   text: "",
   style: {
     fill: "#f4d78a",
@@ -100,7 +103,7 @@ const loadingTitle = new Text({
     fontWeight: "700"
   }
 });
-const loadingMapName = new Text({
+const loadingMapName = createTrackedText({
   text: "",
   style: {
     fill: "#f2e4b2",
@@ -109,7 +112,7 @@ const loadingMapName = new Text({
     fontWeight: "700"
   }
 });
-const loadingMessage = new Text({
+const loadingMessage = createTrackedText({
   text: "",
   style: {
     fill: "#d8d3bd",
@@ -118,7 +121,7 @@ const loadingMessage = new Text({
     fontWeight: "700"
   }
 });
-const loadingDetail = new Text({
+const loadingDetail = createTrackedText({
   text: "",
   style: {
     fill: "#a99d79",
@@ -126,7 +129,7 @@ const loadingDetail = new Text({
     fontSize: 13
   }
 });
-const loadingProgressLabel = new Text({
+const loadingProgressLabel = createTrackedText({
   text: "",
   style: {
     fill: "#f8e3a0",
@@ -135,7 +138,7 @@ const loadingProgressLabel = new Text({
     fontWeight: "700"
   }
 });
-const statusText = new Text({
+const statusText = createTrackedText({
   text: "",
   style: {
     fill: "#f2e4b2",
@@ -221,7 +224,9 @@ const SIMULATION_TURN_BUDGET: SimulationTurnBudget = {
   now: () => performance.now(),
   maxMilliseconds: 8,
   maxSteps: 8,
-  maxBacklogSeconds: SIMULATION_MAX_BACKLOG_SECONDS
+  maxBacklogSeconds: SIMULATION_MAX_BACKLOG_SECONDS,
+  diagnosticNow: () => performance.now(),
+  captureStepTiming: () => runtimePerformanceCollector.isCapturing()
 };
 const FIXED_DEMO_HUD_REFRESH_SECONDS = 0.5;
 const BROWSER_SMOKE_REFRESH_MS = 250;
@@ -255,6 +260,10 @@ type BrowserSmokePairCache = {
 };
 let browserSmokePairCache: BrowserSmokePairCache | null = null;
 let browserSmokeScenarioSnapshot: BrowserSmokeScenarioSnapshot | null = null;
+const runtimePerformanceCollector = new RuntimePerformanceCollector();
+let performanceCaptureStartedAt = Number.POSITIVE_INFINITY;
+let activePerformanceProfileId: PerformanceProfileId | null = null;
+
 const renderPerformance = {
   averageFrameMs: null as number | null,
   averageUpdateMs: null as number | null,
@@ -280,6 +289,7 @@ type PlaytestTelemetryEntry = {
   titleScreenOpen: boolean;
   briefingOpen: boolean;
   performance: typeof renderPerformance;
+  runtimePerformance: RuntimePerformanceTelemetry;
   jankReasons: string[];
   displayObjects: {
     mapLayerChildren: number;
@@ -443,6 +453,7 @@ type BrowserSmokeState = {
     nextAttackTick: number;
     evidence: ReturnType<typeof sourceAiRuntimeEvidence>;
   }>;
+  runtimePerformance: RuntimePerformanceTelemetry;
   performance: {
     averageFrameMs: number | null;
     averageUpdateMs: number | null;
@@ -570,11 +581,291 @@ declare global {
     __WARGUS_TS_PLAYTEST_LOG__?: () => PlaytestTelemetryEntry[];
     __WARGUS_TS_EXPORT_PLAYTEST_LOG__?: () => string;
     __WARGUS_TS_CLEAR_PLAYTEST_LOG__?: () => number;
+    __WARGUS_TS_PERF_START__?: (profileId: string) => RuntimePerformanceBrowserSummary;
+    __WARGUS_TS_PERF_STOP__?: () => RuntimePerformanceBrowserSummary;
+    __WARGUS_TS_PERF_SUMMARY__?: () => RuntimePerformanceBrowserSummary;
+    __WARGUS_TS_PERF_RESET__?: () => RuntimePerformanceBrowserSummary;
+    __WARGUS_TS_PERF_ACTION__?: () => { issued: boolean; moveIssued: boolean; attackMoveIssued: boolean; inputSamples: number };
   }
 }
 
-const browserSmokeStateEnabled = new URLSearchParams(window.location.search).has("smoke");
+const runtimeSearchParams = new URLSearchParams(window.location.search);
+const browserSmokeStateEnabled = runtimeSearchParams.has("smoke");
+const performanceSmokeEnabled = runtimeSearchParams.get("smoke") === "1";
 installPlaytestTelemetryHooks();
+installRuntimePerformanceHooks();
+
+type RuntimePerformanceTelemetry = {
+  lifecycle: RuntimePerformanceSnapshot["lifecycle"];
+  profile: string | null;
+  longTaskSupport: RuntimePerformanceSnapshot["longTaskSupport"];
+  frame: RuntimePerformanceSnapshot["frame"];
+  update: RuntimePerformanceSnapshot["update"];
+  renderPreparation: RuntimePerformanceSnapshot["renderPreparation"];
+  smoke: RuntimePerformanceSnapshot["smoke"];
+  longTasks: RuntimePerformanceSnapshot["longTasks"];
+  inputToCommand: RuntimePerformanceSnapshot["inputToCommand"];
+  inputToNextRender: RuntimePerformanceSnapshot["inputToNextRender"];
+  scheduler: RuntimePerformanceSnapshot["scheduler"];
+  displayObjects: ReturnType<typeof snapshotDisplayObjectPerformance>;
+};
+
+type RuntimePerformanceBrowserSummary = RuntimePerformanceSnapshot & {
+  viewport: { width: number; height: number; resolution: number };
+  worldTick: number | null;
+  entityCounts: {
+    units: number;
+    mobileUnits: number;
+    buildings: number;
+    corpses: number;
+    projectiles: number;
+    spellEffects: number;
+  };
+  heap: { supported: boolean; usedJsHeapSize: number | null; totalJsHeapSize: number | null; jsHeapSizeLimit: number | null };
+  displayObjects: ReturnType<typeof snapshotDisplayObjectPerformance>;
+};
+
+function installRuntimePerformanceHooks(): void {
+  if (!performanceSmokeEnabled) return;
+  if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes.includes("longtask")) {
+    runtimePerformanceCollector.setLongTaskSupport("supported");
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.entryType === "longtask" && entry.startTime >= performanceCaptureStartedAt) {
+          runtimePerformanceCollector.recordLongTask(entry.duration);
+        }
+      }
+    });
+    observer.observe({ entryTypes: ["longtask"] });
+  } else {
+    runtimePerformanceCollector.setLongTaskSupport("unsupported");
+  }
+  window.__WARGUS_TS_PERF_START__ = (profileId) => {
+    const profile = getPerformanceProfile(profileId);
+    if (activePerformanceProfileId !== profile.id) applyPerformanceProfile(profile.id);
+    resetDisplayObjectPerformance();
+    setDisplayObjectPerformanceCapture(true);
+    runtimePerformanceCollector.start(profile.id);
+    performanceCaptureStartedAt = performance.now();
+    return runtimePerformanceSummary();
+  };
+  window.__WARGUS_TS_PERF_STOP__ = () => {
+    runtimePerformanceCollector.stop();
+    setDisplayObjectPerformanceCapture(false);
+    performanceCaptureStartedAt = Number.POSITIVE_INFINITY;
+    return runtimePerformanceSummary();
+  };
+  window.__WARGUS_TS_PERF_SUMMARY__ = () => runtimePerformanceSummary();
+  window.__WARGUS_TS_PERF_RESET__ = () => {
+    runtimePerformanceCollector.reset();
+    setDisplayObjectPerformanceCapture(false);
+    resetDisplayObjectPerformance();
+    performanceCaptureStartedAt = Number.POSITIVE_INFINITY;
+    return runtimePerformanceSummary();
+  };
+  window.__WARGUS_TS_PERF_ACTION__ = () => runPerformanceProfileAction();
+}
+
+function runtimePerformanceTelemetry(): RuntimePerformanceTelemetry {
+  const snapshot = runtimePerformanceCollector.snapshot();
+  return {
+    lifecycle: snapshot.lifecycle,
+    profile: snapshot.profile ?? activePerformanceProfileId,
+    longTaskSupport: snapshot.longTaskSupport,
+    frame: snapshot.frame,
+    update: snapshot.update,
+    renderPreparation: snapshot.renderPreparation,
+    smoke: snapshot.smoke,
+    longTasks: snapshot.longTasks,
+    inputToCommand: snapshot.inputToCommand,
+    inputToNextRender: snapshot.inputToNextRender,
+    scheduler: snapshot.scheduler,
+    displayObjects: snapshotDisplayObjectPerformance()
+  };
+}
+
+function runtimePerformanceSummary(): RuntimePerformanceBrowserSummary {
+  const metrics = runtimePerformanceCollector.snapshot();
+  const memory = (performance as Performance & {
+    memory?: { usedJSHeapSize?: number; totalJSHeapSize?: number; jsHeapSizeLimit?: number };
+  }).memory;
+  return {
+    ...metrics,
+    profile: metrics.profile ?? activePerformanceProfileId,
+    viewport: { width: app.screen.width, height: app.screen.height, resolution: app.renderer.resolution },
+    worldTick: world?.tick ?? null,
+    entityCounts: {
+      units: world?.units.length ?? 0,
+      mobileUnits: world?.units.filter((unit) => unit.kind !== "building").length ?? 0,
+      buildings: world?.units.filter((unit) => unit.kind === "building").length ?? 0,
+      corpses: world?.corpses.length ?? 0,
+      projectiles: world?.projectiles.length ?? 0,
+      spellEffects: world?.spellEffects.length ?? 0
+    },
+    heap: {
+      supported: Boolean(memory),
+      usedJsHeapSize: memory?.usedJSHeapSize ?? null,
+      totalJsHeapSize: memory?.totalJSHeapSize ?? null,
+      jsHeapSizeLimit: memory?.jsHeapSizeLimit ?? null
+    },
+    displayObjects: snapshotDisplayObjectPerformance()
+  };
+}
+
+function applyRequestedPerformanceProfile(): void {
+  if (!performanceSmokeEnabled) return;
+  const requested = runtimeSearchParams.get("perfProfile");
+  if (!requested) return;
+  const profile = getPerformanceProfile(requested);
+  applyPerformanceProfile(profile.id);
+  resetDisplayObjectPerformance();
+  setDisplayObjectPerformanceCapture(true);
+  runtimePerformanceCollector.start(profile.id);
+  performanceCaptureStartedAt = performance.now();
+}
+
+function applyPerformanceProfile(profileId: PerformanceProfileId): void {
+  if (!performanceSmokeEnabled || !world) throw new Error("Performance profiles require ?smoke=1 and a loaded world.");
+  const profile = getPerformanceProfile(profileId);
+  const localPlayerId = world.visibilityPlayer;
+  const enemyPlayerId = world.players.find((player) => player.id !== localPlayerId)?.id ?? localPlayerId;
+  const localDefinition = world.unitDefinitions.find((unit) => unit.id === "unit-footman")
+    ?? world.unitDefinitions.find((unit) => !unit.building && unit.canAttack);
+  const enemyDefinition = world.unitDefinitions.find((unit) => unit.id === "unit-grunt") ?? localDefinition;
+  if (!localDefinition || !enemyDefinition) throw new Error("Performance profile combat definitions are unavailable.");
+
+  world.units = [];
+  world.corpses = [];
+  world.projectiles = [];
+  world.pendingAttacks = [];
+  world.spellEffects = [];
+  world.events = [];
+  world.aiStates = [];
+  world.activeResearch = [];
+  world.queuedResearch = [];
+  world.victoryRequirements = [];
+  world.victoryRequirementGroups = [];
+  world.defeatRequirements = [];
+  world.timedVictoryTriggers = [];
+  world.locationBuildRequirements = [];
+  world.circleOfPowerRequirements = [];
+  world.rescuedCircleRequirements = [];
+  world.requiredSurvivalUnitIds = [];
+  world.pendingTimedVictory = null;
+  world.matchState = { status: "playing", winner: null, endedTick: null };
+  world.elapsed = 0;
+  world.tick = 0;
+  world.accumulator = 0;
+  world.briefingText = null;
+  world.briefingVoiceFiles = [];
+  world.nextUnitSerial = 1;
+  for (const player of world.players) player.ai = null;
+
+  const localCount = profile.playerUnitCounts[0];
+  const enemyCount = profile.playerUnitCounts[1];
+  const makeUnit = (index: number, player: number, enemy: boolean): WorldUnit => {
+    const column = index % 20;
+    const row = Math.floor(index / 20);
+    const tileX = enemy
+      ? Math.max(2, world!.map.width - 8 - column * 2)
+      : Math.min(world!.map.width - 3, 6 + column * 2);
+    const tileY = Math.min(world!.map.height - 3, 6 + row * 2);
+    return createWorldUnit({
+      unit: enemy ? enemyDefinition : localDefinition,
+      id: `__perf-${profile.id}-${enemy ? "enemy" : "local"}-${String(index).padStart(3, "0")}`,
+      player,
+      tileX,
+      tileY,
+      tileset: activeMap?.setup?.tileset ?? null
+    });
+  };
+  const localUnits = Array.from({ length: localCount }, (_, index) => makeUnit(index, localPlayerId, false));
+  const enemyUnits = Array.from({ length: enemyCount }, (_, index) => makeUnit(index, enemyPlayerId, true));
+  world.units.push(...localUnits, ...enemyUnits);
+
+  for (let index = 0; index < profile.buildingTypeIds.length; index += 1) {
+    const typeId = profile.buildingTypeIds[index];
+    const definition = world.unitDefinitions.find((unit) => unit.id === typeId);
+    if (!definition) throw new Error(`Performance profile building is unavailable: ${typeId}`);
+    world.units.push(createWorldUnit({
+      unit: definition,
+      id: `__perf-${profile.id}-building-${String(index).padStart(2, "0")}`,
+      player: localPlayerId,
+      tileX: 4 + index * 4,
+      tileY: Math.max(2, world.map.height - 10),
+      tileset: activeMap?.setup?.tileset ?? null
+    }));
+  }
+
+  const distantX = Math.max(world.tileSize * 4, (world.map.width - 8) * world.tileSize);
+  const distantY = Math.max(world.tileSize * 4, (world.map.height - 8) * world.tileSize);
+  if (profile.id === "command-18") {
+    const ids = localUnits.map((unit) => unit.id);
+    issueGroupMoveOrder(world, ids, distantX, distantY, localPlayerId);
+    issueGroupQueueAttackMoveOrder(world, ids, world.tileSize * 8, distantY, localPlayerId);
+  }
+  if (profile.id === "combat-100") {
+    for (let index = 0; index < localUnits.length; index += 1) {
+      issueAttackOrder(world, localUnits[index].id, enemyUnits[index % enemyUnits.length].id);
+    }
+    for (let index = 0; index < profile.projectileCount; index += 1) {
+      const sourceUnit = localUnits[index % localUnits.length];
+      const targetUnit = enemyUnits[index % enemyUnits.length];
+      world.projectiles.push({
+        id: `__perf-combat-projectile-${String(index).padStart(2, "0")}`, sourceId: sourceUnit.id,
+        targetId: targetUnit.id, sourceTypeId: sourceUnit.typeId, player: localPlayerId,
+        x: sourceUnit.x, y: sourceUnit.y, originX: sourceUnit.x, originY: sourceUnit.y,
+        targetX: targetUnit.x, targetY: targetUnit.y, speed: 0, damage: 0, missileId: null,
+        className: null, impactSoundId: null, impactMissileId: null, splashFactor: 0, range: 0,
+        canHitOwner: false, friendlyFire: false, canTargetLand: true, canTargetSea: false,
+        canTargetAir: false, bouncesRemaining: 0, hitUnitIds: [], drawLevel: 0, kind: "melee",
+        age: 0, delaySeconds: 0, ttlSeconds: 60
+      });
+    }
+    for (let index = 0; index < profile.effectCount; index += 1) {
+      const anchor = localUnits[index % localUnits.length];
+      world.spellEffects.push({
+        id: `__perf-combat-effect-${String(index).padStart(2, "0")}`, kind: "flame-shield",
+        player: localPlayerId, x: anchor.x, y: anchor.y, radius: world.tileSize,
+        age: 0, duration: 60, sourceTypeId: anchor.typeId, sourceUnitId: anchor.id,
+        missileId: null, spellId: null, drawLevel: 0
+      });
+    }
+  }
+  updateVisibility(world);
+  selectedUnitIds = localUnits.slice(0, 18).map((unit) => unit.id);
+  commandPage = 0;
+  pendingWorldCommand = null;
+  paused = false;
+  titleScreenOpen = false;
+  briefingOpen = false;
+  activePerformanceProfileId = profile.id;
+}
+
+function runPerformanceProfileAction(): { issued: boolean; moveIssued: boolean; attackMoveIssued: boolean; inputSamples: number } {
+  if (!performanceSmokeEnabled || activePerformanceProfileId !== "command-18" || !world) {
+    return { issued: false, moveIssued: false, attackMoveIssued: false, inputSamples: 0 };
+  }
+  const before = runtimePerformanceCollector.snapshot().inputToCommand.sampleCount;
+  const moveCommand = executeHudCommand("move");
+  const movePoint = { x: Math.max(world.tileSize * 4, (world.map.width - 8) * world.tileSize), y: Math.max(world.tileSize * 4, (world.map.height - 8) * world.tileSize) };
+  const moveResult = moveCommand
+    ? dispatchWorldPointerInput(movePoint.x, movePoint.y, { button: 0, shiftKey: false, ctrlKey: false, doubleClick: false })
+    : null;
+  const attackCommand = executeHudCommand("attack-move", { shiftKey: true });
+  const attackPoint = { x: world.tileSize * 8, y: movePoint.y };
+  const attackResult = attackCommand
+    ? dispatchWorldPointerInput(attackPoint.x, attackPoint.y, { button: 0, shiftKey: true, ctrlKey: false, doubleClick: false })
+    : null;
+  const moveIssued = moveResult?.kind === "command-feedback" && moveResult.issued;
+  const attackMoveIssued = attackResult?.kind === "command-feedback" && attackResult.issued;
+  return {
+    issued: moveIssued && attackMoveIssued,
+    moveIssued,
+    attackMoveIssued,
+    inputSamples: runtimePerformanceCollector.snapshot().inputToCommand.sampleCount - before
+  };
+}
 
 function captureBrowserSmokeScenarioSnapshot(): void {
   if (!world || !browserSmokeStateEnabled) {
@@ -3666,6 +3957,18 @@ window.addEventListener("blur", () => {
 });
 
 selectionLayer.eventMode = "static";
+function dispatchWorldPointerInput(
+  x: number,
+  y: number,
+  input: { button: number; shiftKey: boolean; ctrlKey: boolean; doubleClick: boolean }
+): ReturnType<typeof handleWorldPointerDown> {
+  if (!world) throw new Error("World pointer dispatch requires a loaded world.");
+  const inputToken = runtimePerformanceCollector.beginInput(performance.now());
+  const result = handleWorldPointerDown(world, x, y, input, selectedUnitIds, pendingWorldCommand);
+  runtimePerformanceCollector.finishInput(inputToken, performance.now());
+  return result;
+}
+
 selectionLayer.on("pointerdown", (event) => {
   unlockAudioForInput();
   if (!world || titleScreenOpen) {
@@ -3688,12 +3991,12 @@ selectionLayer.on("pointerdown", (event) => {
       return;
     }
   }
-  const result = handleWorldPointerDown(world, point.worldPoint.x, point.worldPoint.y, {
+  const result = dispatchWorldPointerInput(point.worldPoint.x, point.worldPoint.y, {
     button,
     shiftKey: nativeEvent instanceof PointerEvent && nativeEvent.shiftKey,
     ctrlKey: nativeEvent instanceof PointerEvent && nativeEvent.ctrlKey,
     doubleClick: pointerDownDoubleClick || event.detail >= 2
-  }, selectedUnitIds, pendingWorldCommand);
+  });
   pointerWorldPosition = result.pointerWorldPosition;
   pendingWorldCommand = result.pendingWorldCommand;
   if (result.kind === "click") {
@@ -3814,6 +4117,7 @@ try {
   audioEngine.setTileset(setup?.tileset);
   syncAudioSettingsFromWorld();
   resetWorldTransientState();
+  applyRequestedPerformanceProfile();
   titleScreenOpen = false;
   briefingOpen = Boolean(world.briefingText);
   resetBriefingAudioCue(audioCueState);
@@ -3829,7 +4133,7 @@ try {
   showLoadingError(error, "Unable to load Wargus data");
 }
 
-const frame = new Graphics();
+const frame = createTrackedGraphics();
 hudLayer.addChild(frame);
 
 app.ticker.add((ticker) => {
@@ -3849,7 +4153,8 @@ app.ticker.add((ticker) => {
     const updateStartedAt = performance.now();
     if (!paused && !briefingOpen) {
       if (!titleScreenOpen) {
-        simulateWorld(world, deltaSeconds * sourceRuntimeGameSpeedMultiplier(world, gameSpeed), SIMULATION_TURN_BUDGET);
+        const simulationResult = simulateWorld(world, deltaSeconds * sourceRuntimeGameSpeedMultiplier(world, gameSpeed), SIMULATION_TURN_BUDGET);
+        runtimePerformanceCollector.recordScheduler(simulationResult);
           autosaveClock += deltaSeconds;
       }
     }
@@ -4056,6 +4361,7 @@ function recordFrameTiming(elapsedMs: number): void {
   }
   renderPerformance.lastFrameMs = elapsedMs;
   renderPerformance.averageFrameMs = smoothedTiming(renderPerformance.averageFrameMs, elapsedMs);
+  runtimePerformanceCollector.recordFrame(elapsedMs);
 }
 
 function recordUpdateTiming(updateMs: number): void {
@@ -4064,14 +4370,17 @@ function recordUpdateTiming(updateMs: number): void {
   }
   renderPerformance.lastUpdateMs = updateMs;
   renderPerformance.averageUpdateMs = smoothedTiming(renderPerformance.averageUpdateMs, updateMs);
+  runtimePerformanceCollector.recordUpdate(updateMs);
 }
 
 function recordRenderTiming(renderMs: number, hudRendered: boolean): void {
   if (Number.isFinite(renderMs) && renderMs >= 0) {
     renderPerformance.lastRenderMs = renderMs;
     renderPerformance.averageRenderMs = smoothedTiming(renderPerformance.averageRenderMs, renderMs);
+    runtimePerformanceCollector.recordRenderPreparation(renderMs);
   }
   renderPerformance.hudRenderedLastFrame = hudRendered;
+  runtimePerformanceCollector.completeRenderPreparation(performance.now());
 }
 
 function recordSmokeTiming(smokeMs: number): void {
@@ -4080,6 +4389,7 @@ function recordSmokeTiming(smokeMs: number): void {
   }
   renderPerformance.lastSmokeMs = smokeMs;
   renderPerformance.averageSmokeMs = smoothedTiming(renderPerformance.averageSmokeMs, smokeMs);
+  runtimePerformanceCollector.recordSmoke(smokeMs);
 }
 
 function installPlaytestTelemetryHooks(): void {
@@ -4182,6 +4492,7 @@ function createPlaytestTelemetryEntry(now: number, kind: PlaytestTelemetryEntry[
     titleScreenOpen,
     briefingOpen,
     performance: { ...renderPerformance },
+    runtimePerformance: runtimePerformanceTelemetry(),
     jankReasons,
     displayObjects: {
       mapLayerChildren: mapLayer.children.length,
@@ -4563,6 +4874,7 @@ function publishBrowserSmokeState(force = false): void {
     fixedDemoMission: fixedDemoMissionSummary(world, briefingOpen),
     fixedDemoMovementPaceMultiplier: 1,
     performance: { ...renderPerformance },
+    runtimePerformance: runtimePerformanceTelemetry(),
     displayObjects: {
       mapLayerChildren: mapLayer.children.length,
       unitLayerChildren: unitLayer.children.length,
@@ -5347,7 +5659,9 @@ function executeHudCommand(command: HudCommandId, input: { ctrlKey?: boolean; sh
   if (!world || !manifest || selectedUnitIds.length === 0) {
     return null;
   }
+  const inputToken = runtimePerformanceCollector.beginInput(performance.now());
   const result = executeHudCommandForSelection(world, manifest, command, selectedUnitIds, commandPage, pendingWorldCommand, input);
+  runtimePerformanceCollector.finishInput(inputToken, performance.now());
   commandPage = result.commandPage;
   pendingWorldCommand = result.pendingWorldCommand;
   if (result.feedback === "click") {
@@ -5920,7 +6234,7 @@ function renderSourceSoftwareCursor(): void {
 function destroyLayerChildren(layer: Container): void {
   const children = layer.removeChildren();
   for (const child of children) {
-    child.destroy({ children: true });
+    destroyTrackedDisplayObject(child, { children: true });
   }
 }
 
@@ -5928,14 +6242,14 @@ function destroyLayerChildrenExcept(layer: Container, preserved: Container | Spr
   const children = layer.removeChildren();
   for (const child of children) {
     if (child !== preserved) {
-      child.destroy({ children: true });
+      destroyTrackedDisplayObject(child, { children: true });
     }
   }
 }
 
 function destroyCurrentCursorSprite(): void {
   if (cursorSprite && !cursorSprite.destroyed) {
-    cursorSprite.destroy({ children: true });
+    destroyTrackedDisplayObject(cursorSprite, { children: true });
   }
   cursorSprite = null;
   cursorSpriteKey = null;

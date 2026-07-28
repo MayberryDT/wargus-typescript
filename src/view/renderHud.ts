@@ -1,4 +1,5 @@
 import { Application, Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from "pixi.js";
+import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, recordTrackedCreation } from "../performance/displayObjectPerformance";
 import { canAttackGround, canEnterPendingWorldCommand, canIssueAutoHarvestOrder, canIssueDetonateOrder, canUseHudBuilderCommands, canIssueExploreOrder, canIssueHoldPosition, canIssueLoadTransport, canIssueReturnGoodsOrder, canReceiveMoveOrders, firstSourceCommandBlockReason, isAdvancedMeleeCombatDefinition, isAirCombatDefinition, isCasterDefinition, isDefensiveBuildingDefinition, isDemolitionLabDefinition, isDemolitionUnitDefinition, hasAnySourceResearchValue, hasSourceBuildButtonsForTypes, hasSourceResearchButtonsForTypes, hasSourceResearchValueMatching, hasSourceSpellResearchValue, hasSourceTrainButtonsForTypes, hasSourceTrainValueMatching, isGoldOrWoodWorkerDefinition, isHolyResearchUpgradeId as isHolyResearchUpgrade, isHolySupportResearchUpgradeId as isHolySupportResearchUpgrade, isHolyTransformationResearchUpgradeId as isHolyTransformationResearchUpgrade, isBlacksmithResearchUpgrade, isLumberMillResearchUpgrade, isMeleeLandCombatDefinition, isMeleeWeaponResearchUpgrade, isNavalCombatOrUtilityDefinition, isNavalResearchUpgrade, isNavalRoleDefinition, isOilRefineryDefinition, isOrdinaryBarracksCombatDefinition, isRangedLandCombatDefinition, isScoutAirDefinition, isShieldResearchUpgrade, isShipArmorResearchUpgradeId as isShipArmorResearchUpgrade, isShipCannonResearchUpgradeId as isShipCannonResearchUpgrade, isSiegeDefinition, isSiegeResearchUpgrade, isSourceConversionTarget, isSupplyProviderDefinition, isTransport, isWallDefinition, selectedCanCastTargetedSpell, sourceActionButtonsForHud, sourceBuildButtonsForHud, sourceBuildIconForHudCommand, sourceBuildPageButtonForHud, sourceBuildValuesDefinitionMatching, sourceBuildValuesProduceMatching, sourceBuildValuesResearchMatching, sourceBuildValuesUpgradeToMatching, sourceButtonForHudCommand, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceCancelButtonForSelection, sourceFallbackResearchIconForHudCommand, sourceFallbackSpellCommandForSpellId, sourceFallbackTrainIconForHudCommand, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceResearchIconForHudCommand, sourceRootBuildButtonsForHud, selectedCanResearchMatchingSource, selectedCanResearchSpellSource, selectedCanResearchAny, selectedCanTrainAny, selectedCanTrainMatching, selectedCanBuildAny, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTowerUpgradeTargetForTypes, sourceTownUpgradeTargetForTypes, sourceTrainButtonsForHud, sourceTrainIconForHudCommand, sourceTrainTargetForTypes, sourceUpgradeButtonsForHud, sourceWorkerTrainTargetForTypes, townCenterTierForPlayer, type SourceCommandBlockReason, type TargetedSpellCommand } from "../simulation/orders";
 import { getPlayerSupply, isInvisibleUtilityUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, isWorldTileSourceKnown, type WorldState } from "../simulation/world";
 import type { SavedGameSummary } from "../wargus/saveGame";
@@ -291,8 +292,8 @@ export function destroyMinimapRenderCache(hudLayer: Container): void {
   minimapRenderCaches.delete(hudLayer);
   cache.visualRoot.parent?.removeChild(cache.visualRoot);
   cache.hit.parent?.removeChild(cache.hit);
-  cache.visualRoot.destroy({ children: true });
-  cache.hit.destroy({ children: true });
+  destroyTrackedDisplayObject(cache.visualRoot, { children: true });
+  destroyTrackedDisplayObject(cache.hit, { children: true });
   cache.rasterTexture.destroy(true);
 }
 
@@ -513,7 +514,7 @@ function destroyHudLayerChildren(layer: Container, frame: Graphics): void {
   const children = layer.removeChildren();
   for (const child of children) {
     if (child !== frame && child !== minimapCache?.visualRoot && child !== minimapCache?.hit) {
-      child.destroy({ children: true });
+      destroyTrackedDisplayObject(child, { children: true });
     }
   }
   if (minimapCache && latestMinimapRenderCacheDebug) {
@@ -748,7 +749,7 @@ function drawFixedDemoResourceChip(layer: Container, graphics: Graphics, rect: H
   const iconSize = Math.min(23, Math.max(18, rect.height - 18));
   let textX = rect.x + 8;
   if (texture) {
-    const icon = new Sprite(texture);
+    const icon = createTrackedSprite(texture);
     icon.x = rect.x + 7;
     icon.y = rect.y + Math.round((rect.height - iconSize) / 2);
     icon.width = iconSize;
@@ -1012,7 +1013,7 @@ function drawFixedDemoPortraitFrame(layer: Container, graphics: Graphics, x: num
   graphics.rect(x, y, width, height);
   graphics.fill({ color: 0x15120b, alpha: 1 });
   if (texture) {
-    const icon = new Sprite(texture);
+    const icon = createTrackedSprite(texture);
     icon.x = x + 8;
     icon.y = y + 6;
     icon.width = width - 16;
@@ -1063,7 +1064,7 @@ function drawFixedDemoMultiSelectStrip(layer: Container, graphics: Graphics, x: 
       graphics.stroke({ width: unit.id === selected.id ? 2 : 1, color: unit.id === selected.id ? 0xf0df9a : 0x8b8f6d, alpha: 0.9 });
       const unitIcon = iconAtlas ? getIconTexture(iconAtlas, manifest.units.find((candidate) => candidate.id === unit.typeId)?.icon) : null;
       if (unitIcon) {
-        const icon = new Sprite(unitIcon);
+        const icon = createTrackedSprite(unitIcon);
         icon.x = cellX + 3;
         icon.y = cellY + 3;
         icon.width = cell - 6;
@@ -1071,7 +1072,7 @@ function drawFixedDemoMultiSelectStrip(layer: Container, graphics: Graphics, x: 
         layer.addChild(icon);
       }
       drawFixedDemoBar(graphics, cellX + 3, cellY + cell - 5, cell - 6, 3, unit.maxHitPoints > 0 ? unit.hitPoints / unit.maxHitPoints : 0, healthColor(unit.hitPoints, unit.maxHitPoints));
-      const hit = new Graphics();
+      const hit = createTrackedGraphics();
       hit.rect(cellX, cellY, cell, cell);
       hit.fill({ color: 0xffffff, alpha: 0.001 });
       hit.eventMode = "static";
@@ -1216,7 +1217,7 @@ function drawFixedDemoCommandButton(layer: Container, graphics: Graphics, x: num
   const texture = iconAtlas ? getIconTexture(iconAtlas, command.icon) : null;
   const iconSize = Math.min(32, Math.max(24, height - 24));
   if (texture) {
-    const icon = new Sprite(texture);
+    const icon = createTrackedSprite(texture);
     icon.x = x + Math.round((width - iconSize) / 2);
     icon.y = y + 8;
     icon.width = iconSize;
@@ -1341,7 +1342,7 @@ function drawFixedDemoButton(layer: Container, graphics: Graphics, x: number, y:
   if (label) {
     addFixedDemoText(layer, label, x + width / 2, y + 6, 12, disabled ? "#8f876d" : "#f6e8a8", 800, width - 8, 0.5);
   }
-  const hit = new Graphics();
+  const hit = createTrackedGraphics();
   hit.rect(x - hitPadding, y - hitPadding, width + hitPadding * 2, height + hitPadding * 2);
   hit.fill({ color: 0xffffff, alpha: 0.001 });
   if (!disabled) {
@@ -1365,7 +1366,7 @@ function drawFixedDemoBar(graphics: Graphics, x: number, y: number, width: numbe
 }
 
 function addFixedDemoHitTarget(layer: Container, rect: HudRect, disabled: boolean, onTap: (event: FederatedPointerEvent) => void, onPointerOver?: () => void, onPointerOut?: () => void): void {
-  const hit = new Graphics();
+  const hit = createTrackedGraphics();
   hit.rect(rect.x, rect.y, rect.width, rect.height);
   hit.fill({ color: 0xffffff, alpha: 0.001 });
   hit.eventMode = "static";
@@ -1397,7 +1398,7 @@ function addFixedDemoFitText(layer: Container, options: {
   maxLines?: number;
 }): FixedDemoTextFit {
   const minFontSize = options.minFontSize ?? 8;
-  const display = new Text({
+  const display = createTrackedText({
     text: options.text,
     style: {
       fill: options.fill,
@@ -1446,7 +1447,7 @@ function fixedDemoTextFits(display: Text, width: number, height: number, maxLine
 }
 
 function addFixedDemoText(layer: Container, text: string, x: number, y: number, fontSize: number, fill: string, fontWeight: number, maxWidth?: number, anchorX = 0): Text {
-  const display = new Text({
+  const display = createTrackedText({
     text,
     style: {
       fill,
@@ -1499,7 +1500,7 @@ function drawSourceMenuButton(layer: Container, graphics: Graphics, sourceButton
   graphics.rect(button.x, button.y, width, height);
   graphics.fill(palette.fill);
   if (sourceTexture) {
-    const sprite = new Sprite(sourceTexture);
+    const sprite = createTrackedSprite(sourceTexture);
     sprite.x = button.x;
     sprite.y = button.y;
     sprite.width = width;
@@ -1525,7 +1526,7 @@ function drawSourceMenuButton(layer: Container, graphics: Graphics, sourceButton
     }
   });
 
-  const hit = new Graphics();
+  const hit = createTrackedGraphics();
   hit.rect(button.x, button.y, width, height);
   hit.fill({ color: 0xffffff, alpha: 0.001 });
   hit.eventMode = "static";
@@ -1558,7 +1559,7 @@ function drawHudMessages(layer: Container, app: Application, sideWidth: number, 
   const messageCssColor = sourceTextColorCss(manifest, visibleRace, "normal", "#f0df9a");
   const panelHeight = visible.length * lineHeight + 10;
 
-  const panel = new Graphics();
+  const panel = createTrackedGraphics();
   panel.rect(x - 6, y - 4, width + 12, panelHeight);
   panel.fill({ color: 0x050403, alpha: 0.52 });
   layer.addChild(panel);
@@ -1567,15 +1568,15 @@ function drawHudMessages(layer: Container, app: Application, sideWidth: number, 
     const life = Math.max(1, message.expiresAt - message.createdAt);
     const fade = Math.max(0.3, Math.min(1, (message.expiresAt - now) / Math.min(life, 900)));
     const text = bitmapFonts
-      ? createWargusBitmapText(bitmapFonts, {
+      ? recordTrackedCreation(createWargusBitmapText(bitmapFonts, {
           text: message.text,
           fontId: messageUi?.font ?? world.engineSettings.statusLine?.font ?? "game",
           color: messageColor,
           paletteId: messagePaletteId,
           maxWidth: width,
           lineHeight
-        })
-      : new Text({
+        }))
+      : createTrackedText({
           text: message.text,
           style: {
             fill: messageCssColor,
@@ -1608,7 +1609,7 @@ function drawSourceHudPanels(
   if (!panels) {
     return;
   }
-  const info = new Sprite(panels.infoPanel);
+  const info = createTrackedSprite(panels.infoPanel);
   info.x = x;
   info.y = y;
   info.width = width;
@@ -1616,7 +1617,7 @@ function drawSourceHudPanels(
   info.alpha = 0.72;
   layer.addChild(info);
 
-  const top = new Sprite(panels.panel1);
+  const top = createTrackedSprite(panels.panel1);
   top.x = x;
   top.y = y;
   top.width = width;
@@ -1624,7 +1625,7 @@ function drawSourceHudPanels(
   top.alpha = 0.82;
   layer.addChild(top);
 
-  const bottom = new Sprite(panels.panel2);
+  const bottom = createTrackedSprite(panels.panel2);
   bottom.width = width;
   bottom.height = Math.min(height, Math.max(230, width * panels.panel2.height / panels.panel2.width));
   bottom.x = x;
@@ -1663,7 +1664,7 @@ function drawSelectedUnitIcon(
   graphics.fill(0x0d0a07);
   graphics.rect(x - 4, y - 4, iconSize + 8, iconSize + 4);
   graphics.stroke({ width: 1, color: 0x8b7346, alpha: 1 });
-  const sprite = new Sprite(texture);
+  const sprite = createTrackedSprite(texture);
   sprite.x = x;
   sprite.y = y;
   sprite.width = iconSize;
@@ -1714,7 +1715,7 @@ function drawResourceStrip(
     const sourceTexture = resourceUiAtlas && "sourceSlot" in resource ? getResourceUiTexture(resourceUiAtlas, resource.sourceSlot) : null;
     const texture = sourceTexture ?? (iconAtlas ? getIconTexture(iconAtlas, resource.icon) : null);
     if (texture) {
-      const icon = new Sprite(texture);
+      const icon = createTrackedSprite(texture);
       icon.x = cellX + 4;
       icon.y = y + 7;
       icon.width = sourceTexture ? 14 : 20;
@@ -1732,7 +1733,7 @@ function drawResourceStrip(
       fallbackStyle: { fill: sourceTextColorCss(manifest, race, "normal", "#f0df9a"), fontSize: 12, fontFamily: "system-ui, sans-serif", fontWeight: "700" }
     });
     if (resource.key === "workers" && Number(resource.value) > 0) {
-      const hitArea = new Graphics();
+      const hitArea = createTrackedGraphics();
       hitArea.rect(cellX, y, Math.max(24, cellWidth), 28);
       hitArea.fill({ color: 0x000000, alpha: 0.001 });
       hitArea.eventMode = "static";
@@ -1933,7 +1934,7 @@ function drawMultiSelectionPanel(
     const definition = manifest.units.find((candidate) => candidate.id === unit.typeId);
     const texture = iconAtlas ? getIconTexture(iconAtlas, definition?.icon) : null;
     if (texture) {
-      const icon = new Sprite(texture);
+      const icon = createTrackedSprite(texture);
       icon.x = cellX + 3;
       icon.y = cellY + 3;
       icon.width = cellSize - 6;
@@ -1947,7 +1948,7 @@ function drawMultiSelectionPanel(
       graphics.rect(cellX + 3, cellY + cellSize - 6, Math.max(0, Math.min(1, ratio)) * (cellSize - 6), 3);
       graphics.fill(healthColor(unit.hitPoints, unit.maxHitPoints));
     }
-    const hit = new Graphics();
+    const hit = createTrackedGraphics();
     hit.rect(cellX, cellY, cellSize, cellSize);
     hit.fill({ color: 0xffffff, alpha: 0.001 });
     hit.eventMode = "static";
@@ -2060,7 +2061,7 @@ function drawProductionQueuePanel(
 
     const texture = iconAtlas ? getIconTexture(iconAtlas, item.icon) : null;
     if (texture) {
-      const icon = new Sprite(texture);
+      const icon = createTrackedSprite(texture);
       icon.x = cellX + 3;
       icon.y = cellY + 3;
       icon.width = cellSize - 6;
@@ -2081,7 +2082,7 @@ function drawProductionQueuePanel(
       anchorX: 0.5,
       fallbackStyle: { fill: sourceTextColorCss(manifest, selectedRace, "normal", "#f0df9a"), fontSize: 8, fontFamily: "system-ui, sans-serif", fontWeight: "800", align: "center" }
     });
-    const hit = new Graphics();
+    const hit = createTrackedGraphics();
     hit.rect(cellX, cellY, cellSize, cellSize);
     hit.fill({ color: 0xffffff, alpha: 0.001 });
     hit.eventMode = "static";
@@ -2163,7 +2164,7 @@ function drawCargoPanel(
     const definition = manifest.units.find((candidate) => candidate.id === unit.typeId);
     const texture = iconAtlas ? getIconTexture(iconAtlas, definition?.icon) : null;
     if (texture) {
-      const icon = new Sprite(texture);
+      const icon = createTrackedSprite(texture);
       icon.x = cellX + 3;
       icon.y = cellY + 3;
       icon.width = cellSize - 6;
@@ -2178,7 +2179,7 @@ function drawCargoPanel(
       graphics.rect(cellX + 3, cellY + cellSize - 6, Math.max(0, Math.min(1, ratio)) * (cellSize - 6), 3);
       graphics.fill(healthColor(unit.hitPoints, unit.maxHitPoints));
     }
-    const hit = new Graphics();
+    const hit = createTrackedGraphics();
     hit.rect(cellX, cellY, cellSize, cellSize);
     hit.fill({ color: 0xffffff, alpha: 0.001 });
     hit.eventMode = "static";
@@ -2208,7 +2209,7 @@ function drawSourceHudBar(
   if (!texture) {
     return false;
   }
-  const sprite = new Sprite(texture);
+  const sprite = createTrackedSprite(texture);
   sprite.x = x;
   sprite.y = y;
   sprite.width = width;
@@ -2250,7 +2251,7 @@ function addHudText(layer: Container, bitmapFonts: WargusBitmapFontAtlas | null,
 
 function createHudText(bitmapFonts: WargusBitmapFontAtlas | null, options: HudTextOptions): Container | Text {
   if (bitmapFonts) {
-    const bitmapText = createWargusBitmapText(bitmapFonts, {
+    const bitmapText = recordTrackedCreation(createWargusBitmapText(bitmapFonts, {
       text: options.text,
       fontId: options.fontId,
       color: options.color,
@@ -2258,7 +2259,7 @@ function createHudText(bitmapFonts: WargusBitmapFontAtlas | null, options: HudTe
       paletteIndex: options.paletteIndex,
       maxWidth: options.maxWidth,
       lineHeight: options.lineHeight
-    });
+    }));
     if (bitmapText) {
       bitmapText.x = options.x;
       bitmapText.y = options.y;
@@ -2266,7 +2267,7 @@ function createHudText(bitmapFonts: WargusBitmapFontAtlas | null, options: HudTe
       return bitmapText;
     }
   }
-  const fallback = new Text({
+  const fallback = createTrackedText({
     text: options.text,
     style: options.fallbackStyle
   });
@@ -2371,7 +2372,7 @@ function drawMapPanel(
       fallbackStyle: { fill: sourceTextColorCss(manifest, "human", "normal", "#f0df9a"), fontSize: 11, fontFamily: "system-ui, sans-serif", fontWeight: "700" }
     });
     text.scale.set(bitmapFonts ? 0.58 : 1);
-    const hit = new Graphics();
+    const hit = createTrackedGraphics();
     hit.rect(cursor, by, buttonWidth, 20);
     hit.fill({ color: 0xffffff, alpha: 0.001 });
     hit.eventMode = "static";
@@ -2417,7 +2418,7 @@ function drawSourceMenuOverlay(
   }
   const localPlayer = world.players.find((player) => player.id === world.visibilityPlayer);
   const race = localPlayer?.race === "orc" ? "orc" : "human";
-  const overlay = new Graphics();
+  const overlay = createTrackedGraphics();
   overlay.rect(0, 0, app.screen.width, app.screen.height);
   overlay.fill({ color: 0x050708, alpha: 0.5 });
   layer.addChild(overlay);
@@ -2426,7 +2427,7 @@ function drawSourceMenuOverlay(
   const x = (app.screen.width - width) / 2;
   const panelHeight = 362;
   const y = Math.max(32, (app.screen.height - panelHeight) / 2);
-  const panel = new Graphics();
+  const panel = createTrackedGraphics();
   panel.rect(x, y, width, panelHeight);
   panel.fill(0x120d08);
   panel.rect(x + 4, y + 4, width - 8, panelHeight - 8);
@@ -2503,7 +2504,7 @@ function drawMapPicker(app: Application, layer: Container, manifest: WargusManif
   if (!picker.open) {
     return;
   }
-  const overlay = new Graphics();
+  const overlay = createTrackedGraphics();
   overlay.rect(0, 0, app.screen.width, app.screen.height);
   overlay.fill({ color: 0x050708, alpha: 0.72 });
   layer.addChild(overlay);
@@ -2559,7 +2560,7 @@ function drawMapPicker(app: Application, layer: Container, manifest: WargusManif
       fallbackStyle: { fill: completed ? "#8fdd9a" : "#d8d3bd", fontSize: 13, fontFamily: "system-ui, sans-serif", wordWrap: true, wordWrapWidth: width - 48 }
     });
     text.scale.set(bitmapFonts ? 0.7 : 1);
-    const hit = new Graphics();
+    const hit = createTrackedGraphics();
     hit.rect(x + 14, rowY, width - 28, 34);
     hit.fill({ color: 0xffffff, alpha: 0.001 });
     hit.eventMode = "static";
@@ -2661,7 +2662,7 @@ function drawCommandPanel(
 
     const texture = iconAtlas ? getIconTexture(iconAtlas, command.icon) : null;
     if (texture) {
-      const icon = new Sprite(texture);
+      const icon = createTrackedSprite(texture);
       icon.x = bx + 3;
       icon.y = by + sourceIconShiftY(world);
       icon.width = buttonSize - 6;
@@ -2736,7 +2737,7 @@ function drawCommandPanel(
       }
     }
 
-    const hit = new Graphics();
+    const hit = createTrackedGraphics();
     hit.rect(bx, by, buttonSize, buttonSize);
     hit.fill({ color: 0xffffff, alpha: 0.001 });
     if (!command.disabled) {
@@ -4030,10 +4031,10 @@ function createMinimapRenderCache(rasterWidth: number, rasterHeight: number): Mi
   }
   rasterContext.imageSmoothingEnabled = false;
   const rasterTexture = Texture.from(rasterCanvas, true);
-  const rasterSprite = new Sprite(rasterTexture);
-  const dynamic = new Graphics();
-  const hit = new Graphics();
-  const visualRoot = new Container();
+  const rasterSprite = createTrackedSprite(rasterTexture);
+  const dynamic = createTrackedGraphics();
+  const hit = createTrackedGraphics();
+  const visualRoot = createTrackedContainer();
   const cache: MinimapRenderCache = {
     visualRoot,
     rasterCanvas,
@@ -4398,7 +4399,7 @@ function drawMatchOverlay(
     sprite.y = (app.screen.height - sprite.texture.height * scale) / 2;
     layer.addChild(sprite);
   }
-  const overlay = new Graphics();
+  const overlay = createTrackedGraphics();
   overlay.rect(0, 0, app.screen.width, app.screen.height);
   overlay.fill({ color: 0x050708, alpha: sourceScreen ? 0.34 : 0.55 });
   layer.addChild(overlay);
@@ -4513,14 +4514,14 @@ function drawBriefingOverlay(app: Application, layer: Container, manifest: Wargu
   if (!open || !world.briefingText || world.matchState.status !== "playing") {
     return;
   }
-  const overlay = new Graphics();
+  const overlay = createTrackedGraphics();
   overlay.rect(0, 0, app.screen.width, app.screen.height);
   overlay.fill({ color: 0x050708, alpha: 0.82 });
   layer.addChild(overlay);
 
   const frame = sourceBriefingFrame(app, world.engineSettings.briefingLayout);
   const { x, y, width, height, scale, layout } = frame;
-  const panel = new Graphics();
+  const panel = createTrackedGraphics();
   panel.rect(x, y, width, height);
   panel.fill(0x12100c);
   panel.rect(x, y, width, height);
@@ -4632,7 +4633,7 @@ function drawBriefingButton(
   onTap: () => void,
   disabled = false
 ): void {
-  const button = new Graphics();
+  const button = createTrackedGraphics();
   button.rect(x, y, width, height);
   button.fill(disabled ? 0x15110c : 0x2a2118);
   button.rect(x, y, width, height);
@@ -4661,7 +4662,7 @@ function drawSourceTitleScreen(app: Application, layer: Container, manifest: War
   if (!open) {
     return;
   }
-  const background = new Graphics();
+  const background = createTrackedGraphics();
   background.rect(0, 0, app.screen.width, app.screen.height);
   background.fill(0x000000);
   layer.addChild(background);
@@ -4681,7 +4682,7 @@ function drawSourceTitleScreen(app: Application, layer: Container, manifest: War
 
   const compactTitle = app.screen.width < 620;
   const shadeHeight = compactTitle ? 156 : 116;
-  const shade = new Graphics();
+  const shade = createTrackedGraphics();
   shade.rect(0, app.screen.height - shadeHeight, app.screen.width, shadeHeight);
   shade.fill({ color: 0x000000, alpha: 0.58 });
   layer.addChild(shade);

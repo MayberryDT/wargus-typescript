@@ -1,4 +1,5 @@
-import { Container, Graphics, Text } from "pixi.js";
+import { Container } from "pixi.js";
+import { createTrackedGraphics, createTrackedText } from "../performance/displayObjectPerformance";
 import {
   canSelectedPlaceBuildingAtPoint,
   canSelectedIssuePendingWorldCommandAt,
@@ -66,7 +67,7 @@ export function renderSelectionDragOverlay(context: OverlayContext, selectionDra
   if (width < 3 || height < 3) {
     return;
   }
-  const dragBox = new Graphics();
+  const dragBox = createTrackedGraphics();
   dragBox.rect(left, top, width, height);
   dragBox.fill({ color: 0xf2df83, alpha: 0.08 });
   dragBox.rect(left, top, width, height);
@@ -99,7 +100,7 @@ export function renderBuildPlacementOverlay(context: PointerOverlayContext & { m
   const previewHeight = height * world.tileSize * camera.zoom;
   const color = valid ? 0x78d26f : 0xd94e45;
 
-  const preview = new Graphics();
+  const preview = createTrackedGraphics();
   preview.rect(left, top, previewWidth, previewHeight);
   preview.fill({ color, alpha: 0.18 });
   preview.rect(left, top, previewWidth, previewHeight);
@@ -129,7 +130,7 @@ export function renderPendingCommandOverlay(context: PointerOverlayContext & { p
     return;
   }
   const color = canSelectedIssuePendingWorldCommandAt(world, selectedUnitIds, command, pointerWorldPosition.x, pointerWorldPosition.y, world.visibilityPlayer) ? 0x78d26f : 0xd94e45;
-  const preview = new Graphics();
+  const preview = createTrackedGraphics();
   preview.circle(point.x, point.y, 13);
   preview.stroke({ width: 2, color, alpha: 0.92 });
   preview.moveTo(point.x - 18, point.y);
@@ -235,7 +236,7 @@ function drawSourceNamePopup(
   label: string,
   backgroundColor: number
 ): void {
-  const text = new Text({
+  const text = createTrackedText({
     text: label,
     style: {
       fill: "#ffffff",
@@ -251,7 +252,7 @@ function drawSourceNamePopup(
   const cursorHeight = 32;
   const x = Math.min(pointerScreenPosition.x + cursorWidth, mapArea.x + mapArea.width - 1 - width);
   const y = Math.min(pointerScreenPosition.y + cursorHeight + 10, mapArea.y + mapArea.height - 1 - height);
-  const box = new Graphics();
+  const box = createTrackedGraphics();
   box.rect(x, y, width, height);
   box.fill({ color: backgroundColor, alpha: 0.5 });
   box.rect(x, y, width, height);
@@ -288,7 +289,7 @@ export function renderAlertPingOverlays(context: OverlayContext, world: WorldSta
     const progress = Math.max(0, Math.min(1, (now - ping.createdAt) / Math.max(1, ping.expiresAt - ping.createdAt)));
     const alpha = 0.95 * (1 - progress);
     const radius = (20 + Math.sin(progress * Math.PI * 8) * 5 + progress * 48) * camera.zoom;
-    const alert = new Graphics();
+    const alert = createTrackedGraphics();
     alert.circle(point.x, point.y, Math.max(14, radius));
     alert.stroke({ width: 3, color: 0xd95d45, alpha });
     alert.moveTo(point.x - 18, point.y);

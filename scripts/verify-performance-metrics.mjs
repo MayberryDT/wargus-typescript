@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = process.cwd();
 const output = mkdtempSync(join(tmpdir(), "wargus-performance-metrics-"));
 try {
+  symlinkSync(resolve(root, "node_modules"), join(output, "node_modules"), "dir");
   const compiler = spawnSync(process.execPath, [
     resolve(root, "node_modules/typescript/bin/tsc"), "--ignoreConfig",
-    "src/performance/runtimePerformance.ts", "src/performance/performanceProfiles.ts",
+    "src/performance/runtimePerformance.ts", "src/performance/performanceProfiles.ts", "src/performance/displayObjectPerformance.ts",
     "--outDir", output, "--target", "ES2022", "--module", "CommonJS",
     "--moduleResolution", "Node", "--skipLibCheck", "--esModuleInterop",
     "--resolveJsonModule", "--verbatimModuleSyntax", "false", "--ignoreDeprecations", "6.0", "--noEmitOnError", "true"
@@ -19,6 +20,7 @@ try {
   const require = createRequire(import.meta.url);
   const metrics = require(join(output, "runtimePerformance.js"));
   const profiles = require(join(output, "performanceProfiles.js"));
+  const displayObjects = require(join(output, "displayObjectPerformance.js"));
   assert.deepEqual(metrics.summarizePerformanceSamples([]), { sampleCount: 0, meanMs: null, p50Ms: null, p95Ms: null, p99Ms: null, maxMs: null, effectiveFps: null, over16_7Ms: 0, over33_3Ms: 0, over50Ms: 0 });
   const singleton = metrics.summarizePerformanceSamples([12]);
   assert.deepEqual([singleton.p50Ms, singleton.p95Ms, singleton.p99Ms, singleton.maxMs], [12, 12, 12, 12]);
@@ -51,6 +53,41 @@ try {
   assert.deepEqual(firstProfiles, profiles.performanceProfileDefinitions());
   assert.deepEqual(firstProfiles.map((profile) => profile.id), ["idle-25", "army-100", "army-200", "command-18", "combat-100"]);
   assert.equal(profiles.getPerformanceProfile("command-18").mobileUnitCount, 18);
+  for (const profile of firstProfiles) assert.equal(profile.playerUnitCounts[0] + profile.playerUnitCounts[1], profile.mobileUnitCount, `${profile.id} owner counts must equal its mobile unit count.`);
   assert.throws(() => profiles.getPerformanceProfile("unknown"), /Unknown performance profile/);
+  displayObjects.resetDisplayObjectPerformance();
+  displayObjects.setDisplayObjectPerformanceCapture(false);
+  const inactiveRoot = displayObjects.createTrackedContainer();
+  inactiveRoot.addChild(displayObjects.createTrackedGraphics());
+  displayObjects.destroyTrackedDisplayObject(inactiveRoot, { children: true });
+  assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
+    scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: false,
+    trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0
+  }, "Display lifecycle counters must remain zero outside capture.");
+
+  const preexistingRoot = displayObjects.createTrackedContainer();
+  preexistingRoot.addChild(displayObjects.createTrackedGraphics());
+  displayObjects.resetDisplayObjectPerformance();
+  displayObjects.setDisplayObjectPerformanceCapture(true);
+  displayObjects.destroyTrackedDisplayObject(preexistingRoot, { children: true });
+  assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
+    scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true,
+    trackedCreated: 0, trackedDestroyed: 2, windowLiveDelta: -2
+  }, "A capture window must count the tracked preexisting object tree it destroys.");
+
+  displayObjects.resetDisplayObjectPerformance();
+  const trackedRoot = displayObjects.createTrackedContainer();
+  trackedRoot.addChild(displayObjects.createTrackedGraphics());
+  assert.equal(displayObjects.recordTrackedCreation(null), null, "Unavailable bitmap text must not increment creation counts.");
+  assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
+    scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true,
+    trackedCreated: 2, trackedDestroyed: 0, windowLiveDelta: 2
+  });
+  displayObjects.destroyTrackedDisplayObject(trackedRoot, { children: true });
+  assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
+    scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true,
+    trackedCreated: 2, trackedDestroyed: 2, windowLiveDelta: 0
+  }, "Recursive Pixi destruction must count the tracked tree once.");
+  displayObjects.setDisplayObjectPerformanceCapture(false);
   console.log("Performance metrics verified (percentiles, thresholds, ring wrap, input pairing, scheduler summaries, deterministic profiles).");
 } finally { rmSync(output, { recursive: true, force: true }); }
