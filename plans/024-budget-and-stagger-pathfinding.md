@@ -156,7 +156,7 @@ refresh required above, STOP.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Path scheduler | `node scripts/verify-pathfinding-budget.mjs` | node budget, resume, order, fairness, cancellation, save/load, route, and diagnostic cases pass |
+| Path scheduler | `node scripts/verify-pathfinding-budget.mjs` | node budget, immutable snapshots, resume, mid-quantum restoration, queue semantics, retry hash, cycle validation, fairness, cancellation, route, and diagnostics pass |
 | X12 | `node scripts/verify-x12-first-tick.mjs` | production X12 world advances exactly one first tick under the expansion cap, then reaches the legacy outcome |
 | Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | accepted Plan 019 terrain semantics remain exact |
 | Unit-ID parity | `node scripts/verify-unit-index.mjs` | accepted Plan 020 first-match semantics remain exact |
@@ -255,9 +255,14 @@ existing shared fields:
 - `enqueued`, `completed`, `failed`, `cancelled`, and `superseded`;
 - `nodeExpansions`, `expansionsPerTick`, and `searchDurationMs`;
 - `queueDepth`, `oldestAgeTicks`, and `firstServiceDelayTicks`;
-- `cyclesStarted`, `restarts`, `retryCount`, and `retryPhaseDelayTicks`;
+- `cyclesStarted`, `restarts`, `restartExhaustions`, `retryCount`, and
+  `retryPhaseDelayTicks`;
+- `snapshotsCreated`, `snapshotBytes`, `snapshotCaptureDurationMs`,
+  `snapshotWaitCycles`, `snapshotCapacityFailures`, `snapshotOversizeFailures`,
+  and `snapshotFingerprintFailures`;
 - `duplicateSearches` and `synchronousFallbackSearches`; and
-- `saveRestores`, `normalizerDrops`, and `frontierRestoreFailures`.
+- `saveRestores`, `midQuantumRestores`, `normalizerDrops`,
+  `cycleValidationFailures`, and `frontierRestoreFailures`.
 
 Duration and count samples are bounded and resettable. Timing, diagnostics,
 and capture state remain outside saves and gameplay decisions. Shared capture
@@ -273,6 +278,10 @@ There is no whole-search count budget. Freeze these constants in
 export const PATH_NODE_EXPANSIONS_PER_TICK = 512;
 export const PATH_NODE_EXPANSIONS_PER_QUANTUM = 16;
 export const PATH_RETRY_PHASE_COUNT = 8;
+export const PATH_MAX_ACTIVE_SNAPSHOTS = 8;
+export const PATH_SNAPSHOT_MAX_BYTES = 8_388_608;
+export const PATH_MAX_SNAPSHOT_WAIT_CYCLES = 64;
+export const PATH_MAX_SNAPSHOT_RESTARTS = 8;
 ```
 
 One budgeted expansion is one open-heap pop attempt, including a stale or
@@ -281,6 +290,15 @@ eight-neighbor loop atomically before yielding. Search initialization and
 final path reconstruction do not consume expansion units, but diagnostics
 time them. No path call routed by this plan may fall back to an unbudgeted
 synchronous search.
+
+The scheduler runs exactly once as the first operation of `stepWorld`, before
+`stepVisibilityReveals` and every existing per-tick mutation. Commands accepted
+between fixed steps are therefore visible to the next scheduler phase; a retry
+or replan discovered later inside the current `stepWorld` becomes eligible no
+earlier than the next fixed tick. If a save pauses inside the scheduler, load
+resumes that same first phase, completes its remaining work, then executes each
+later `stepWorld` phase exactly once. No executor may move service into a unit
+loop, render phase, promise, or another point in the fixed tick.
 
 The scheduler forms deterministic service cycles. At cycle creation, snapshot
 all eligible request sequences and sort them by:
@@ -291,11 +309,23 @@ all eligible request sequences and sort them by:
 3. stable `unitId`.
 
 Each cycle member receives one 16-expansion quantum before that sequence may
-enter the next cycle. Canceled members are skipped. A request enqueued or made
-eligible during a cycle joins the next cycle. Unused work from an early
+enter the next cycle. Cancellation immediately removes the member and its
+snapshot from `cycleMembers`; if its index is below `cycleCursor`, decrement
+the cursor, and if it is the active member, clear the active fields while
+leaving the cursor at the next member now occupying that index. Rewrite each
+remaining member's `cyclePosition` to its exact array index before another
+service/save boundary. A request enqueued or made eligible during a cycle joins
+the next cycle. Unused work from an early
 completion passes to the next member, but a fixed step never exceeds 512
-expansions. Persist `cycle`, `cycleMembers`, and `cycleCursor` so save/load
-restores the exact next service decision.
+expansions. `cycleCursor` always identifies the next member, except while
+`servicePhase === "inside-quantum"`, when it identifies the active member.
+Persist the cycle plus the processed tick's remaining global and member work:
+`schedulerTick`, `tickBudgetRemaining`, `servicePhase`,
+`activeMemberSequence`, and `activeQuantumRemaining`. A save requested while
+the scheduler runs is serviced only after the current heap pop, goal check,
+and neighbor loop finish and before another expansion begins. World mutation
+and tick advancement pause at that checkpoint. Saving inside that atomic
+expansion is prohibited.
 
 This is the starvation bound: a request eligible when a cycle forms receives
 its next quantum within
@@ -307,10 +337,91 @@ violation. Continuous new commands cannot jump into the active cycle.
 
 Automatic retries keep their existing base retry tick, then move only to the
 first tick at or after it whose modulo-8 phase equals
-`stableHash(unitId + ":" + requestKind) % 8`. Initial issued commands are
-eligible immediately. `eligibleTick` is authoritative and serialized. No
-randomness, wall clock, promise completion, collection insertion accident, or
-renderer frame decides request order or retry phase.
+`pathRequestHash32(unitId + "\0" + requestKind) % 8`. `requestKind` is exactly
+one of the ASCII discriminants `issued-command`, `active-order-replan`, or
+`automatic-retry`; use the stored `unitId` string without Unicode
+normalization. `pathRequestHash32Bytes` is FNV-1a 32-bit: start at unsigned
+`0x811c9dc5`; for each byte compute
+`hash = Math.imul((hash ^ byte) >>> 0, 0x01000193) >>> 0`; return `hash >>> 0`.
+`pathRequestHash32(text)` passes `TextEncoder` UTF-8 bytes to that function.
+There is no signed coercion, word grouping, platform byte order, Unicode
+normalization, or alternative hash. Freeze these golden vectors:
+
+| `unitId` | `requestKind` | Hash | Phase |
+|---|---|---:|---:|
+| `u1` | `issued-command` | `0x26c3f18c` | 4 |
+| `grunt-42` | `active-order-replan` | `0x8b227916` | 6 |
+| `peasant-é` | `automatic-retry` | `0x0ad00592` | 2 |
+| empty string | `automatic-retry` | `0x1223d109` | 1 |
+
+Initial issued commands are eligible immediately. Persist the resulting
+`eligibleTick` and fingerprint the hash algorithm/vectors in focused evidence;
+load never recomputes an already stored eligibility decision. No randomness,
+wall clock, promise completion, collection insertion accident, renderer frame,
+or implementation-selected hash decides request order or retry phase.
+
+## Immutable path-planning snapshot contract
+
+A resumable search never reads mutable `WorldState` passability or occupancy
+after its first expansion. Before a request's first expansion,
+`pathRequests.ts` atomically captures one request-owned
+`PathPlanningSnapshot` at the fixed-step scheduler boundary. The capture
+contains the exact request unit ID, footprint, movement kind, map
+width/height, tile size, start/target tiles, ordered attack-candidate tiles,
+and the two current occupancy summary booleans
+`hasPathPlanningOccupancy`/`hasMobilePathPlanningOccupancy`. It then calls
+the accepted-base `footprintSearchCost` for every in-map anchor in row-major
+order and freezes four `Uint8Array(tileCount)` cost planes in this exact mode
+order: `none`, `all`, `path-planning`, `static`. Encode blocked as 0,
+cost 1 as 1, and moving-occupant cost 5 as 5; any other accepted-base result is
+a drift STOP requiring a plan amendment. Out-of-map anchors remain implicitly
+blocked. These four planes fully cover goal validity, nearest tracking,
+diagonal corner checks, terrain rules, and Plan 023 ordered occupancy outcomes
+used by current `pathfinding.ts`.
+
+After capture, `advanceResumablePathSearch` accepts the snapshot rather than
+`WorldState` and reads only those planes/summary values. Any live-world
+terrain, occupancy, unit, or passability read from the search loop is a
+verifier failure. Ordered attack candidates share the same request snapshot.
+Thus every frontier is derived from one coherent world boundary, not a mixture
+of ticks, and the executor cannot select a partial input inventory.
+
+Snapshot identity is the pair `{ requestSequence, snapshotRevision }`.
+`snapshotRevision` starts at 1 and increases by one only on live commit
+revalidation restart. Canonical snapshot bytes use the field order above: unsigned integers
+are little-endian, the unit ID is length-prefixed `TextEncoder` UTF-8, candidate
+tiles retain their frozen order, summary booleans are bytes, and the four cost
+planes are concatenated in the frozen mode order. Persist those bytes plus
+their `pathRequestHash32Bytes` fingerprint; the bytes are authoritative and
+the fingerprint is a corruption guard.
+
+At most eight request snapshots may be live, each with at most 8,388,608
+canonical bytes. A request that reaches service while all slots are owned
+retains its sequence, consumes no expansion, increments serialized
+`snapshotWaitCycles`, and joins the next cycle; older snapshot owners
+therefore continue to completion. Snapshot capture itself is atomic for save:
+a save requested during capture is written immediately after the complete
+snapshot is installed and before the first expansion, represented as
+`inside-quantum` with the full 16 member/512 tick budgets. On its 64th blocked
+service opportunity,
+fail it deterministically as `path-snapshot-capacity` through the existing
+no-route outcome. A snapshot over 8,388,608 bytes fails deterministically as
+`path-snapshot-oversize`. Both failures are acceptance STOPs and neither may
+fall back synchronously or to live reads. Snapshot capture is atomic, timed,
+and included in direct fixed-step acceptance; a capture-time budget failure is
+also a STOP but never a wall-clock input to gameplay.
+
+Completion revalidates the path, target, unit eligibility, and intent against
+the current authoritative world. If the intent remains valid but the route is
+not, release the old snapshot, increment `snapshotRevision` and `restarts`,
+clear the entire frontier and ordered-candidate cursor, and place the same
+request sequence into the next cycle to capture a new snapshot. Do not retain
+any old node or enqueue at the tail. Service starvation bounds still apply to
+each restart, but completion time is not claimed to be bounded by that service
+formula. After eight such restarts, fail deterministically as
+`path-world-unstable` through the existing no-route outcome, release the
+snapshot, and record `restartExhaustions`; acceptance requires zero
+exhaustions. No synchronous fallback is allowed.
 
 ## Resumable A* and authoritative order contract
 
@@ -332,8 +443,8 @@ The state machine preserves exactly:
   path simplification;
 - comparator order by `f`, `h`, distance-to-goal, then original node
   `sequence`; an improved open node retains its existing sequence;
-- accepted Plan 023 authoritative occupancy candidate order and live
-  predicates at every passability call; and
+- the immutable snapshot's accepted Plan 023 authoritative occupancy
+  candidate order and frozen predicate inputs at every passability call; and
 - `findPathResult`'s path-planning search, static fallback, status, and
   endpoint-range comparison.
 
@@ -343,13 +454,10 @@ advancing to the next candidate. Return the first ready result or the first
 temporarily blocked result exactly as today. Do not introduce a multi-goal
 heuristic. Commit `2fa96ce` and its endpoint semantic change remain prohibited.
 
-Each completion revalidates the selected path, target, unit eligibility, and
-intent against current authoritative world state before commit. If a still
-valid intent's route became invalid while suspended, restart the same request
-with the same request sequence and increment `restarts`; do not enqueue it at
-the tail. If the intent itself is invalid, cancel it by the exact rules below.
-Repeated restarts that prevent the starvation bound or queue drain are an
-acceptance failure, not permission to use a synchronous fallback.
+The immutable snapshot contract above exclusively owns live completion
+revalidation, full-frontier restart, the eight-restart bound, and
+`path-world-unstable` failure. If the intent itself is invalid, cancel it by
+the exact rules below.
 
 ## Mandatory request and save contract
 
@@ -357,8 +465,9 @@ Runtime request state lives in a dedicated `WeakMap<WorldState,
 PathRequestSchedulerState>` owned by `pathRequests.ts`. Although it is not a
 `WorldState` field, it is authoritative simulation state: the determinism
 oracle, save writer, save loader, and canonical test snapshot must include it.
-Every new save writes the state even when the queue is empty.
-The mandatory pending-request representation is never optional for a new save or determinism snapshot.
+Every new save writes the state even when the queue is empty. The mandatory
+pending-request representation is never optional for a new save or determinism
+snapshot.
 
 The additive version-1 save field is exact:
 
@@ -376,6 +485,12 @@ interface SerializedPathRequestSchedulerState {
   cycle: number;
   cycleMembers: number[];
   cycleCursor: number;
+  schedulerTick: number;
+  tickBudgetRemaining: number;
+  servicePhase: "between-ticks" | "between-members" | "inside-quantum";
+  activeMemberSequence: number | null;
+  activeQuantumRemaining: number;
+  snapshots: SerializedPathPlanningSnapshot[];
   requests: SerializedPendingPathRequest[];
 }
 
@@ -386,8 +501,20 @@ interface SerializedPendingPathRequest {
   enqueuedTick: number;
   eligibleTick: number;
   retryCount: number;
+  snapshotRevision: number;
+  snapshotWaitCycles: number;
+  cycleNumber: number | null;
+  cyclePosition: number | null;
   intent: SerializedPathIntent;
   search: SerializedResumablePathSearch | null;
+}
+
+interface SerializedPathPlanningSnapshot {
+  requestSequence: number;
+  revision: number;
+  byteLength: number;
+  fingerprint: number;
+  canonicalBytes: number[];
 }
 ```
 
@@ -398,7 +525,13 @@ harvest-to-resource, harvest-to-dropoff, build, build-oil-platform,
 collision-recovery, and rally movement. Each variant stores the complete
 non-path order payload needed to commit the current `WorldOrder`, including
 target IDs/coordinates, phases, resource/build/spell metadata, and queued
-command provenance. It contains no `path: []` placeholder.
+command provenance. It contains no `path: []` placeholder. Every newly issued
+path-bearing command also receives its request sequence at input acceptance,
+including a shift-appended command that is not yet eligible. A queued command
+stores `reservedPathSequence` and exact provenance
+`{ issuedTick, issuingPlayer, append, selectionOrdinal, queueOrdinal }` in its
+existing saved queue entry. Activation materializes the request with that
+reserved sequence; it never allocates a replacement sequence.
 
 `SerializedResumablePathSearch` preserves the exact runtime machine without
 depending on JSON object identity: assign a numeric record ID to every node;
@@ -408,28 +541,55 @@ nearest record/range, expansion count, start/goal, blocker modes, and ordered
 attack candidate cursor. Load validates IDs and bounds, then rebuilds Maps,
 Sets, heap references, and parent links without performing a simulation
 expansion. A valid save therefore resumes at the exact next heap pop and exact
-next service member.
+next service member. Snapshot bytes are restored and fingerprint-checked
+before the frontier; the loader never rebuilds a frontier against live state.
 
 Keep `version: 1`, storage keys, and existing fields unchanged. The optional
 property exists only so legacy version-1 saves remain readable. New saves
 always write it. backward-compatible normalization is fixed:
 
-- missing `pathRequests` becomes
-  `{ nextSequence: 1, cycle: 0, cycleMembers: [], cycleCursor: 0, requests: [] }`;
+- missing `pathRequests` becomes an empty between-ticks scheduler with
+  `nextSequence: 1`, zero cycle/cursor/budgets,
+  null active member, no snapshots, and no requests; legacy queued commands
+  without reserved sequences keep their existing order and receive a sequence
+  only when activated;
 - accept only safe-integer positive request/node sequences, finite in-map
   coordinates, known intent discriminants, valid unit/target references,
-  bounded ticks, legal priority, and internally consistent frontier IDs;
-- keep the first valid serialized occurrence of a duplicate request sequence;
-  for multiple requests targeting one unit, retain the greatest sequence and
-  record lower sequences as normalized supersessions;
-- sort normalized requests by sequence, filter cycle members to surviving
-  eligible sequences without duplicates, and clamp the cursor to that list;
+  bounded ticks/budgets/wait cycles, legal priority, valid snapshot
+  identity/size/hash, and internally consistent frontier IDs;
+- require snapshots in strictly increasing `requestSequence` order. A request
+  with a search must have exactly one snapshot whose request/revision matches;
+  a waiting request has no search/snapshot; missing, extra, reordered, duplicate,
+  over-cap, or fingerprint-invalid snapshots reject the whole save;
+- preserve every valid new-format queued `reservedPathSequence` and its queue
+  position/provenance without sorting or renumbering. A malformed queued
+  sequence drops only that malformed queue entry under the existing
+  invalid-order rule; any duplicate across retained active requests and
+  retained queued entries rejects the whole save rather than choosing a
+  winner;
+- reconstruct the expected active-cycle array only from retained requests
+  whose `cycleNumber` equals the serialized cycle, sorted by their unique
+  `cyclePosition`. Require it to equal `cycleMembers` byte-for-byte. A
+  reordered, missing, duplicate, ineligible, or extra member rejects the whole
+  save; never sort/filter the serialized array or clamp/remap the cursor;
+- require `cycleCursor` in range and, for `inside-quantum`, require
+  `activeMemberSequence === cycleMembers[cycleCursor]`,
+  `1 <= activeQuantumRemaining <= 16`, and
+  `1 <= tickBudgetRemaining <= 512`. Between members requires a null active
+  member and zero active quantum; between ticks additionally requires zero
+  tick budget. An empty cycle requires cursor zero, a null active member, and
+  between-ticks phase. `schedulerTick` must equal the serialized
+  `world.tick`; an active-phase load resumes that same fixed tick before any
+  other simulation work, while a between-ticks load starts its next scheduler
+  tick with a fresh 512 budget. Invalid phase/cursor/budget combinations reject
+  the whole save;
 - restore `nextSequence` exactly when it is a safe integer greater than every
-  retained sequence; otherwise set it to `max(retained sequence) + 1`, or `1`
-  for an empty legacy queue; and
+  retained active or queued sequence; otherwise set it to their maximum plus
+  one, or one for a fully empty legacy scheduler; and
 - discard an invalid individual request with a counted normalizer reason.
-  Reject the whole save rather than silently alter behavior if a retained
-  frontier cannot be rebuilt exactly or the next sequence would exceed
+  Reject the whole save rather than silently alter behavior if that discard
+  would change active-cycle membership, a retained snapshot/frontier cannot
+  restore exactly, or the next sequence would exceed
   `Number.MAX_SAFE_INTEGER`.
 
 After normalizing units and references, restore the scheduler before
@@ -437,8 +597,11 @@ After normalizing units and references, restore the scheduler before
 pending intent owns that unit's deferred command; the unit has no fake live
 movement order with an empty path. Save/load during every frontier stage must
 produce byte-identical normalized path-request serialization, the same next
-service sequence, completion tick, route, order, and canonical hash as an
-uninterrupted control run from the save boundary.
+service sequence, remaining tick budget, active member, remaining quantum,
+completion tick, route, order, and canonical hash as an uninterrupted control
+run from the save boundary. Focused fixtures save after expansion attempts
+1–15 of a quantum, after the 16th attempt, between members, after attempts
+1–511 of a scheduler tick, and between ticks.
 
 ## Cancellation and supersession contract
 
@@ -447,7 +610,8 @@ one stable reason:
 
 | Event | Required action |
 |---|---|
-| New command for a unit | cancel every older pending intent for that unit as `superseded-new-command` before assigning the new sequence |
+| Replacing command for a unit (no Shift/append) | assign the new sequence at input acceptance, then cancel the active pending intent and remove exactly the current command semantics' replace-cleared queued entries as `superseded-new-command`; their reserved sequences are never reused |
+| Shift/append command | assign and retain a reserved sequence/provenance in the appended queue entry; do not cancel the active request or any earlier queued entry; materialize only when that entry becomes head/eligible |
 | Unit death or removal | cancel as `unit-gone` before/with accepted Plan 023 unregister |
 | Unit enters cargo/resource containment | cancel as `unit-contained`; unloading never resurrects the canceled request |
 | Transport/world handoff | cancel the transported unit; dispose the old world's scheduler on world replacement |
@@ -456,10 +620,16 @@ one stable reason:
 | Save load | restore only normalized requests; invalid entries use their normalizer reason and never become empty active orders |
 | Explicit command cancel/stop | cancel as `explicit-cancel` before applying the replacement idle/hold behavior |
 
-Coalescing is allowed only through the same-unit supersession rule above.
-Never merge different units, target candidates, retry kinds, or command
-sequences. A canceled sequence never re-enters a service cycle. Completion
-commits exactly once; a stale frontier cannot overwrite a newer command.
+Same-unit supersession applies only to replacing commands and to the exact
+queue entries the current replace behavior clears. It never applies to a
+Shift/append command. Explicit queue removal, unit death/containment, or world
+replacement cancels the removed entries' reserved sequences with the owning
+reason; removing one queued entry does not renumber or cancel its valid
+neighbors. Never merge different units, queue entries, target candidates,
+retry kinds, or command sequences. A canceled/reserved sequence is never
+reused or allowed back into a service cycle. Completion commits exactly once;
+a stale frontier cannot overwrite a newer replacing command or a queued
+predecessor.
 
 ## Steps
 
@@ -500,13 +670,25 @@ moving/static occupancy, improved open nodes, stale heap entries, map edges,
 multi-tile footprints, diagonal corners, duplicate IDs, and ordered attack
 candidate endpoints.
 
-Add a saved-frontier round trip at every stage. Restore Maps/Sets/heap/node
-identity from record IDs and assert the next pop, final status, path points,
-endpoint, node sequence, and serialized state are exact.
+Add the exact four-plane snapshot adapter before the state machine. At capture,
+compare every mode/anchor byte and occupancy-summary boolean with the live
+accepted-base functions. Then mutate terrain, stationary/mobile occupants,
+and unrelated world state between every possible quantum boundary: the search
+must continue reading only the frozen snapshot, while live commit revalidation
+must either accept or perform the specified full-frontier restart. Exercise all
+eight restarts, ninth-attempt `path-world-unstable` failure, the eight-slot
+wait order, 64th-wait failure, snapshot byte-cap failure, fingerprint
+corruption, and zero live reads.
 
-**Verify:** synchronous wrapper and interrupted/resumed results match exactly;
-the accepted Plan 023 candidate oracle remains authoritative; rejected
-multi-goal endpoint behavior has an explicit failing regression fixture.
+Add a saved-frontier round trip at every stage. Restore snapshot bytes,
+Maps/Sets/heap/node identity from record IDs and assert the next pop, final
+status, path points, endpoint, node sequence, and serialized state are exact.
+
+**Verify:** synchronous wrapper and uninterrupted snapshot results match the
+same capture-boundary live search exactly; no resumed frontier reads mutable
+world state; restart order/bounds, snapshot limits/hash, and saved restoration
+pass; the Plan 023 candidate oracle remains authoritative; rejected multi-goal
+endpoint behavior has an explicit failing regression fixture.
 
 ### Step 2: Add the mandatory scheduler and persistence atomically
 
@@ -518,13 +700,18 @@ one. Add no timing or diagnostic field to the payload.
 
 Before routing commands, use focused synthetic requests to prove active-cycle
 membership, priority/sequence/unit ordering, mid-cycle enqueue behavior,
-unused-quantum transfer, expansion cap, starvation bound, retry phasing,
-cancellation, supersession, sequence exhaustion rejection, malformed payload
-handling, and byte-stable save round trips.
+unused-quantum transfer, expansion cap, starvation bound, all four retry-hash
+golden vectors, cancellation, replacement versus Shift/append provenance,
+sequence exhaustion rejection, malformed payload handling, and byte-stable
+save round trips. Save after every expansion boundary in a quantum/tick and
+assert remaining global/member budgets and completion tick. Feed reordered,
+missing, duplicate, ineligible, and extra `cycleMembers` and assert strict
+rejection rather than repair.
 
 **Verify:** no tick exceeds 512 expansion attempts, no request exceeds one
-quantum per cycle, exact next-sequence/cursor/frontier restoration passes, and
-no pending request is lost or represented as an empty active movement order.
+quantum per cycle, exact next-sequence/cursor/active-quantum/snapshot/frontier
+restoration passes, invalid cycles reject, and no pending or valid queued
+request is lost or represented as an empty active movement order.
 
 ### Step 3: Remove duplicate work and migrate issued commands
 
@@ -532,22 +719,28 @@ Route validation and commit through one stored path result so an accepted
 route is never recomputed. Migrate player, AI, group, queued, rally, and other
 inventoried initial command paths one family at a time. Command input is
 acknowledged in its current tick; the authoritative request replaces the
-previous path-bearing order until success/failure. Preserve selection order,
-queued-command order, request sequence assignment order, endpoint candidate
-order, and command feedback.
+previous path-bearing order until success/failure. Assign every immediate,
+replacing, and Shift-appended path sequence at input acceptance. Preserve
+selection order, queued-command order and provenance, reserved sequence,
+endpoint candidate order, and command feedback. Replacement clears only the
+entries current non-Shift semantics clear; append retains the active request
+and all predecessors until normal activation/removal.
 
 Do not use a multi-goal search to reduce attack candidate work. The only
 allowed duplicate removal is reuse of the exact route/status already computed
 for the same unit, intent, and endpoint.
 
-**Verify:** mass commands enqueue in authoritative issuance order, input
-returns without synchronous A*, each accepted result commits once, duplicate
-validation/issue searches are zero, and route/order/feedback fixtures match.
+**Verify:** mass commands enqueue in authoritative issuance order; replacing
+and append fixtures retain exact cancellation/queue behavior and never reuse a
+reserved sequence; valid queued sequences survive save normalization; input
+returns without synchronous A*; each accepted result commits once; duplicate
+validation/issue searches are zero; and route/order/feedback fixtures match.
 
 ### Step 4: Migrate replans/retries and cancellation owners
 
 Route every accepted inventory retry/replan through priority 1 or 2 requests.
-Apply the exact modulo-8 retry phase after the existing base retry tick. Add
+Apply the exact FNV-1a modulo-8 retry phase after the existing base retry tick
+and assert its persisted eligibility is not recomputed on load. Add
 cancel/supersede calls at unit death/removal, new command, transport/resource
 containment, target loss, invalid point, stop/cancel, and world replacement.
 Preserve Plan 020 ID lookup and Plan 023 occupancy lifecycle call order.
@@ -574,10 +767,14 @@ fingerprint, and canonical hash with the accepted synchronous baseline. The
 result must preserve the ordered endpoint oracle; passing the watchdog alone
 is insufficient.
 
-Save and load at queue creation, middle of a quantum, between blocker stages,
-between ordered attack candidates, immediately before completion, and after
-cancellation. Compare uninterrupted and restored next service sequence,
-completion tick, route, orders, hash, and save serialization.
+Save and load at queue creation; after expansion attempts 1–15 and 16 of a
+quantum; after attempts 1–511 of a scheduler tick; between members, blocker
+stages, and ordered attack candidates; immediately before completion; after
+snapshot restart; and after cancellation. Compare uninterrupted and restored
+snapshot identity/bytes, next service sequence, cycle/cursor, active member,
+remaining quantum/global budget, completion tick, route, orders, hash, and save
+serialization. Corrupt cycle order and snapshot fingerprints in separate
+negative fixtures and require load rejection.
 
 **Verify:** X12 acceptance, version-1 backward compatibility, normalizer,
 frontier restoration, sequence restoration, source pathfinding, occupancy,
@@ -593,7 +790,10 @@ worst-trial rule. Do not pool samples.
 Record per trial: enqueue/completion/failure/cancellation counts; direct search
 duration and node-expansion distributions; expansions per processed tick;
 queue depth and oldest age; first-service and completion delay; retries,
-phasing, restarts, duplicate searches, synchronous fallbacks; simulation-step
+phasing, restarts/exhaustions, snapshot capture/wait/capacity/oversize/bytes/
+fingerprint,
+mid-quantum restores, cycle validation failures, duplicate searches,
+synchronous fallbacks; simulation-step
 statistics; command latency; scheduler backlog; frame/heap/long-task results;
 and X12 evidence.
 
@@ -611,6 +811,10 @@ evidence is durable and checksum-verified.
 
 ## Test plan
 
+- Four-plane immutable snapshot byte parity at the capture boundary, no live
+  search-loop reads, world mutation between quanta, full-frontier restart,
+  eight-restart failure, slot/byte/64-wait bounds, deterministic capacity/
+  oversize failure, and fingerprint corruption.
 - Expansion-by-expansion exact parity for all current A* statuses and stages.
 - Existing neighbor, comparator, node-sequence, nearest-node, path
   simplification, and accepted Plan 023 occupancy order.
@@ -619,17 +823,25 @@ evidence is durable and checksum-verified.
 - 512 expansion attempts per tick, 16 per member per cycle, unused work,
   priority/sequence/unit ordering, and mid-cycle enqueue.
 - Calculated starvation bounds under continuous issued, replan, and retry load.
-- Deterministic modulo-8 retry phases from stable unit ID and request kind.
+- Exact FNV-1a UTF-8/NUL-input golden vectors, unsigned overflow/coercion,
+  modulo-8 phase, persisted eligibility, and algorithm fingerprint.
+- Replacement versus Shift/append sequence assignment, queue provenance,
+  activation, selective cancellation, save normalization, and no sequence
+  reuse.
 - Every initial request, validation/commit pair, replan, retry, and cancel owner
   in the refreshed inventory.
 - New command, death/removal, transport/resource containment, target loss,
   invalid target, explicit stop, and world replacement cancellation.
-- Legacy absent field, empty new queue, malformed entries, duplicate
-  sequences, multiple same-unit requests, invalid references, sequence
-  exhaustion, and exact next-sequence normalization.
+- Legacy absent field, empty new queue, malformed active/queued entries,
+  duplicate active/queued sequences, valid queued-sequence preservation,
+  invalid references, sequence exhaustion, and exact next-sequence
+  normalization.
+- Reordered, missing, duplicate, ineligible, and extra cycle members reject;
+  valid phase/cursor/active-member/remaining-budget state restores exactly.
 - Heap/Map/Set/node identity reconstruction at every resumable search stage.
-- Save/load mid-cycle exact next service, completion tick, route/order/hash,
-  and byte-stable normalized save.
+- Save/load at every intra-quantum and intra-tick expansion boundary restores
+  snapshot bytes, next service, active member, remaining 16/512 budgets,
+  completion tick, route/order/hash, and byte-stable normalized save.
 - X12 first active tick cap plus eventual route/order/hash acceptance.
 - No active path-bearing order with an empty path; no silent request loss.
 - Namespaced diagnostic reset/bounds and zero synchronous fallback.
@@ -667,7 +879,10 @@ Include accepted Plan 018/019/020/023 artifact and checksum references,
 environment, profile-definition and initial entity/effect fingerprints, one
 JSON per trial, normalized summaries, the exact request/cancellation inventory,
 synchronous direct baseline, route/endpoint/order fingerprints, per-search and
-per-tick node/time distributions, cycle/fairness/queue-age results,
+per-tick node/time distributions, cycle/fairness/queue-age results, four
+hash golden vectors and algorithm fingerprint, replacement/append queue
+provenance, snapshot bytes/identity/hash/limits/restarts, intra-quantum/tick
+restoration, strict cycle rejection,
 save/normalizer/frontier/sequence fixtures, X12 raw result, terrain/ID/
 occupancy/pathfinding parity, controller/resource records,
 invalid/replacement records, and SHA-256 checksums. Independently recompute new
@@ -684,15 +899,22 @@ on `/tmp` as durable evidence.
 - [ ] Every inventoried initial/replan/retry path uses the authoritative
   request scheduler and no migrated path uses synchronous fallback.
 - [ ] Every tick obeys the 512 node-expansion-attempt budget from the first
-  scheduler implementation; resumable A* preserves exact comparator,
-  neighbor, blocker, route, and status semantics.
+  scheduler implementation; every frontier reads one immutable four-plane
+  snapshot; live mutation triggers only bounded full restart at commit; and A*
+  preserves exact comparator, neighbor, blocker, route, and status semantics.
 - [ ] Service cycles preserve priority/sequence/unit order and the calculated
-  starvation bound under continuous arrivals.
+  service-starvation bound under continuous arrivals; snapshot slots/bytes,
+  64-wait capacity/oversize failure, and eight-restart failure are exact with
+  zero acceptance exhaustion.
+- [ ] FNV-1a golden vectors/phase fingerprint pass; replacement and Shift/append
+  commands preserve reserved sequences, queue provenance, and cancellation.
+- [ ] Mid-quantum/tick saves restore the exact active member and remaining work;
+  malformed cycle membership is rejected rather than reordered/repaired.
 - [ ] Ordered attack endpoint selection is exact; commit `2fa96ce` remains
   rejected and its semantic change is absent.
-- [ ] New version-1 saves always contain pending request/cycle/frontier state;
-  legacy saves default compatibly; normalizer and exact sequence/frontier
-  restoration pass.
+- [ ] New version-1 saves always contain pending request/cycle/frontier,
+  immutable snapshot, active-member, and remaining-budget state; legacy saves
+  default compatibly; exact sequence/snapshot/frontier restoration passes.
 - [ ] Every death, new command, transport/containment, world replacement,
   target loss, invalid target, and explicit cancel has one exact owner.
 - [ ] X12 advances its first tick under the cap/watchdog and reaches the
@@ -716,14 +938,21 @@ on `/tmp` as durable evidence.
 - Any tick can exceed 512 expansion attempts, a migrated caller performs
   synchronous fallback, a request can starve beyond the calculated bound, or
   retries require randomness/wall clock.
-- Resumption changes neighbor order, comparator/tie sequence, blocker mode,
-  route/status, authoritative occupancy order, or first accepted endpoint.
+- A resumed frontier reads mutable world state, mixes snapshot revisions,
+  retains nodes across restart, exceeds snapshot slot/byte/wait/restart bounds,
+  falls back synchronously/live, or changes neighbor order, comparator/tie
+  sequence, blocker mode, route/status, authoritative occupancy order, or first
+  accepted endpoint.
 - An implementation recreates rejected commit `2fa96ce` semantics, uses a
   multi-goal search for ordered attack candidates, or accepts X12 solely from
   elapsed time without route/order/hash parity.
-- Pending state is optional in new saves, sequence/cycle/frontier state cannot
-  restore exactly, a malformed request becomes an empty active order, or valid
-  save/load differs from the uninterrupted control.
+- Pending/snapshot state is optional in new saves; sequence/cycle/frontier,
+  active-member, or remaining-budget state cannot restore exactly; malformed
+  cycle membership is reordered/repaired; a malformed request becomes an
+  empty active order; or valid save/load differs from uninterrupted control.
+- Replacement cancels an appended predecessor incorrectly, Shift/append
+  cancels active/queued work, a queued sequence is renumbered/reused/lost, or
+  retry phasing differs from the frozen FNV-1a vectors.
 - Cancellation is delayed past death/removal/containment/new-command/world
   replacement, a stale result can commit, or coalescing crosses units/intents.
 - Correctness requires Plan 025 visibility/fog files, changing Plan 019/020/023
@@ -746,9 +975,13 @@ version-1 `pathRequests` reader/normalizer until no deployed or test save can
 contain the additive field; never silently drop a pending intent or deserialize
 it into an empty live order.
 
-Rollback of the state machine restores the current `findPath`/
-`findPathResult`, ordered attack endpoint loop, and Plan 023 passability
-consumption together. Never retain a partially resumed search or
+Rollback never changes an in-flight frontier from snapshot reads to live reads.
+First stop new captures, deterministically drain or fail owned requests under
+the saved snapshot/restart contract, and retain the version-1 snapshot,
+active-quantum, queued-provenance, and strict-cycle reader while compatible
+saves exist. Only then may rollback of the state machine restore current
+`findPath`/`findPathResult`, the ordered attack endpoint loop, and Plan 023
+passability consumption together. Never retain a partially resumed search or
 `2fa96ce`-style endpoint optimization. Preserve accepted Plans 018–023,
 failed/invalid evidence, and compatibility fixtures. Revert only Plan
 024-owned and coordinator integration commits. Stop exact owned processes and
@@ -759,7 +992,9 @@ remove only exclusive artifacts.
 Every new path-bearing command or retry needs an explicit intent variant,
 priority, enqueue point, commit function, cancellation owner, save normalizer,
 focused interruption fixture, and direct timing row. Changing the 512/16/8
-constants, comparator, neighbor order, endpoint policy, retry phase, or save
-payload is a semantic plan amendment, not tuning during execution. Keep
+scheduler constants, 8/8,388,608/64/8 snapshot bounds,
+four-plane encoding, FNV-1a algorithm/vectors, comparator, neighbor order,
+endpoint policy, queue sequence semantics, retry phase, or save payload is a
+semantic plan amendment, not tuning during execution. Keep
 pending state mandatory, frontier restoration exact, Plan 023 order
 authoritative, diagnostics plan-local, and the synchronous rollback executable.

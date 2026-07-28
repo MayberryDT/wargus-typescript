@@ -256,7 +256,8 @@ summary fields:
 - `plan025.visibility`: `updates`, `updateDurationMs`, `sourcesVisited`,
   `sourcesChanged`, `contributionTilesAdded`, `contributionTilesRemoved`,
   `dirtyTiles`, `dirtyBoundsArea`, `fullRebuilds`, `fullRebuildDurationMs`,
-  `parityChecks`, `parityFailures`, `entryHighWater`, and `overflowFallbacks`;
+  `parityChecks`, `parityFailures`, `entryHighWater`, `overflowFallbacks`,
+  `underflowDetections`, `underflowRebuilds`, and `persistentCorruptions`;
 - `plan025.fog`: `decisionDurationMs`, `chunkBuildDurationMs`,
   `chunksCreated`, `chunksReused`, `chunksRebuilt`, `chunksDetached`,
   `chunksEvicted`, `chunksDestroyed`, `activeHighWater`, `dormantHighWater`,
@@ -327,10 +328,28 @@ overflows, publish the exact full-rebuild result for that tick, record
 until a later explicit rebuild fits. Any overflow in an assigned acceptance
 profile is a STOP, not an accepted fallback.
 
+Each sorted source record contributes at most once to each tile, so subtraction
+must decrement exactly one. Before every decrement, read the `Uint32` count and
+require it to be at least one. If it is zero, do not subtract and do not allow
+unsigned wrap. Abort the incremental transaction before publishing any partial
+grid/revision result, increment `underflowDetections`, and immediately run
+`rebuildVisibilityReference` from current authoritative sources. Compare the
+full result with a freshly rebuilt contribution cache, replace all
+counts/records atomically, derive dirty tiles against the last published grid,
+publish that exact reference result, and increment `underflowRebuilds`.
+
+The first recovered underflow forces reference mode until the next explicit
+world/load rebuild. An immediate rebuild mismatch, or any second underflow in
+the same `WorldState` lifetime after a clean rebuild, increments
+`persistentCorruptions`, locks that world in reference mode, and is a STOP for
+Plan 025 acceptance. There is no saturating decrement, silent zero, wrapped
+`0xffffffff`, partial publication, or accepted repeated fallback.
+
 On each local fixed-tick update:
 
 1. discover sources and compare signatures in authoritative order;
-2. subtract removed/changed old records in prior authoritative-rank order;
+2. validate then subtract removed/changed old records in prior
+   authoritative-rank order, using the underflow recovery contract above;
 3. compute and add changed/new records in current authoritative order;
 4. collect every touched tile, sort ascending, and compare final contribution
    positivity with the prior published bit; do not dirty a tile for an
@@ -463,11 +482,18 @@ a shadow and publish the existing reference result.
 
 Exercise overlapping units, duplicate IDs, holy vision, reveals, shared
 vision, revelation, map edges, footprints, elevation, terrain opacity, source
-removal, and record corruption. Compare exact grids after each operation.
+removal, and record corruption. Inject a zero count before removing a recorded
+source and assert no decrement/wrap or partial publication occurs, the exact
+reference grid and a clean contribution cache replace the transaction, and
+reference mode is selected. After an explicit clean rebuild, inject a second
+underflow and assert `persistentCorruptions`, permanent reference mode, and
+acceptance STOP. Compare exact grids/revisions after each operation.
 
 **Verify:** shadow output equals the reference byte-for-byte; records respect
-per-source and aggregate bounds; source identity/order is deterministic; no
-cache/revision/diagnostic enters `WorldState`, save output, or hashes.
+per-source/aggregate bounds; first underflow recovers atomically without
+`0xffffffff`; repeated/persistent corruption is explicit and cannot be
+accepted; source identity/order is deterministic; no cache/revision/diagnostic
+enters `WorldState`, save output, or hashes.
 
 ### Step 2: Publish incremental local visibility every fixed tick
 
@@ -544,7 +570,8 @@ duration, fingerprints, statistics, and worst-trial rule. Do not pool samples.
 
 Record per trial: visibility update and full-rebuild distributions; source and
 tile visits; contribution add/remove counts; dirty tiles/bounds/revisions;
-entry/byte high-water and fallback/parity counts; fog decision/build duration;
+entry/byte high-water, overflow fallback, underflow detection/rebuild, and
+persistent-corruption counts; fog decision/build duration;
 chunk create/reuse/rebuild/detach/evict/destroy and active/dormant high-water;
 full viewport hash scans; tracked object totals; frame/heap/long-task,
 scheduler, and resource results.
@@ -573,6 +600,9 @@ and evidence is durable and checksum-verified.
   resource containment, holy-vision/reveal lifetime, opacity, and world change.
 - Sorted unique per-source indices, clipped FOV bound, 8,388,608 aggregate cap,
   count overflow, exact reference fallback, and zero accepted-profile overflow.
+- Zero-before-decrement detection, no Uint32 wrap/partial publish, exact
+  full-rebuild replacement, first-recovery reference mode, and second-underflow
+  persistent-corruption STOP.
 - Local every-fixed-tick visibility/targeting and independent existing AI
   exploration cadence with due/not-due next-tick assertions.
 - Dirty final transitions, inclusive bounds, tile revisions, unchanged tick,
@@ -619,9 +649,12 @@ Include accepted Plan 018/019/022/023 artifact/checksum references,
 environment, profile-definition and initial entity/effect fingerprints, one
 JSON per trial, normalized summaries, exact source/global/fog lifecycle
 inventories, legacy and incremental direct timing, golden grids and visual
-references, dirty revisions/bounds, contribution and memory high-water, chunk
-actions/bounds/disposal, Plan 018 tracked counters, parity/cadence/load/rollback
-results, controller/resource records, invalid/replacement records, and SHA-256
+references, dirty revisions/bounds, contribution and memory high-water,
+raw underflow fixture counts/indices, no-wrap assertion, rebuilt grid/cache
+fingerprints,
+first-recovery and repeated-corruption outcomes, chunk actions/bounds/disposal,
+Plan 018 tracked counters, parity/cadence/load/rollback results,
+controller/resource records, invalid/replacement records, and SHA-256
 checksums. Independently recompute new checksums and verify every baseline.
 
 Commit only concise normalized results to the single evidence file
@@ -636,7 +669,8 @@ on `/tmp` as durable evidence.
   rebuild grid parity oracle on every accepted scenario.
 - [ ] Simulation contributions use bounded per-source sorted records and the
   aggregate memory cap with zero accepted-profile overflow/fallback/parity
-  failure.
+  failure; decrement validates before mutation, never wraps, and no repeated or
+  persistent underflow is accepted.
 - [ ] Local visibility updates every required fixed tick; the existing AI
   exploration cadence remains exact and independent from local rendering.
 - [ ] Dirty tile indices, bounds, and revisions represent only final published
@@ -670,6 +704,9 @@ on `/tmp` as durable evidence.
 - A per-source/aggregate/chunk bound is exceeded in an accepted profile,
   revision/identity validation fails, stale fog renders, or parity/fallback is
   unexplained.
+- A contribution decrement observes zero and still mutates/publishes, wraps to
+  `0xffffffff`, fails to rebuild exact authoritative grids/cache immediately,
+  or any second/persistent underflow occurs after a clean rebuild.
 - Any contribution, revision, dirty, fog chunk, LRU, or diagnostic field enters
   `WorldState`, save JSON/schema, command/replay state, or canonical hashes.
 - Correctness requires Plan 024 path/order/save files, changing Plan 019/022/
@@ -687,9 +724,12 @@ on `/tmp` as durable evidence.
 
 ## Rollback
 
-Simulation rollback is independent: switch publication back to
-`rebuildVisibilityReference` on every required local/AI cadence, discard the
-transient contribution cache, and continue emitting exact changed-tile
+Simulation rollback is independent: a detected underflow aborts the current
+incremental transaction before publication and immediately switches to
+`rebuildVisibilityReference`; repeated/persistent corruption locks that world
+there for its lifetime. Manual rollback likewise switches publication back to
+`rebuildVisibilityReference` on every required local/AI cadence and discards
+the transient contribution cache while continuing to emit exact changed-tile
 revisions by diffing the correct published grids. The fog chunk renderer may
 remain active. Do not change saves, FOV rules, cadence, or accepted terrain/
 occupancy work.
@@ -709,5 +749,6 @@ ordered identity, bounded contribution fixture, invalidation/full-rebuild
 reason, cadence proof, dirty transition, save exclusion, and parity case. Every
 new fog dependency or view lifecycle requires an exact dependency radius,
 chunk invalidation/disposal case, pixel oracle, bound, and renderer rollback.
-Keep published grids authoritative, caches transient, local/AI cadence
-separate, Plan 022 ownership intact, and both rollback paths executable.
+Keep published grids authoritative, validate every decrement before mutation,
+never accept repeated underflow, keep caches transient and local/AI cadence
+separate, preserve Plan 022 ownership, and keep both rollback paths executable.
