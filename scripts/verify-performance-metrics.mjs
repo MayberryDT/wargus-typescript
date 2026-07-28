@@ -75,6 +75,18 @@ try {
     trackedCreated: 0, trackedDestroyed: 2, windowLiveDelta: -2
   }, "A capture window must count the tracked preexisting object tree it destroys.");
 
+  displayObjects.setDisplayObjectPerformanceCapture(false);
+  const registeredTree = displayObjects.createTrackedContainer();
+  registeredTree.addChild(displayObjects.createTrackedGraphics());
+  displayObjects.resetDisplayObjectPerformance();
+  displayObjects.setDisplayObjectPerformanceCapture(true);
+  displayObjects.recordTrackedCreation(registeredTree);
+  assert.equal(displayObjects.snapshotDisplayObjectPerformance().trackedCreated, 2,
+    "Generic bitmap-style registration must count its complete returned scene tree.");
+  displayObjects.destroyTrackedDisplayObject(registeredTree, { children: true });
+  assert.equal(displayObjects.snapshotDisplayObjectPerformance().windowLiveDelta, 0,
+    "Registered returned scene trees must balance recursive destruction.");
+
   displayObjects.resetDisplayObjectPerformance();
   const trackedRoot = displayObjects.createTrackedContainer();
   trackedRoot.addChild(displayObjects.createTrackedGraphics());

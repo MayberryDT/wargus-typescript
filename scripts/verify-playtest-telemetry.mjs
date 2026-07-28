@@ -32,7 +32,7 @@ expect(main, "entry.startTime >= performanceCaptureStartedAt", "Long-task captur
 expect(main, "world.aiStates = []", "Performance profiles should neutralize ambient AI.");
 expect(main, "world.victoryRequirements = []", "Performance profiles should neutralize ambient victory triggers.");
 expect(displayObjectPerformance, "instrumented-pixi-scene-objects-textures-excluded", "Summaries should label tracked display-object counter scope honestly.");
-expect(displayObjectPerformance, "if (captureActive) created += 1", "Display creation instrumentation should be one capture-gated counter check, not a per-object closure.");
+expect(displayObjectPerformance, "if (captureActive) created += displayObjectTreeSize(object)", "Display creation instrumentation should be one capture-gated counter check, not a per-object closure.");
 if (/new (?:Container|Graphics|Sprite|Text)\(/.test(renderSources)) throw new Error("Scoped render paths must use capture-gated tracked constructors.");
 if ((renderSources.match(/createWargusBitmapText\(/g) ?? []).length !== 2 || (renderSources.match(/recordTrackedCreation\(createWargusBitmapText\(/g) ?? []).length !== 2) throw new Error("Both bitmap-text scene-object factories must be tracked.");
 expect(main, "executeHudCommand(\"attack-move\", { shiftKey: true })", "The deterministic action hook must include queued attack-move through the HUD seam.");

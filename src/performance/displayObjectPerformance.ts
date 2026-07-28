@@ -12,8 +12,8 @@ let captureActive = false;
 let created = 0;
 let destroyed = 0;
 
-function recordCreated(): void {
-  if (captureActive) created += 1;
+function recordCreated(object: Container): void {
+  if (captureActive) created += displayObjectTreeSize(object);
 }
 
 function displayObjectTreeSize(object: Container): number {
@@ -27,7 +27,7 @@ export function setDisplayObjectPerformanceCapture(active: boolean): void {
 }
 
 export function recordTrackedCreation<T extends Container | null>(object: T): T {
-  if (object) recordCreated();
+  if (object) recordCreated(object);
   return object;
 }
 
