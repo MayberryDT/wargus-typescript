@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 
 const root = process.cwd();
 const output = mkdtempSync(join(tmpdir(), "wargus-simulation-scheduler-"));
+const fast16Only = process.argv.includes("--fast16-only");
 
 try {
   const compiler = spawnSync(process.execPath, [
@@ -117,6 +118,45 @@ try {
   await uiWork;
   const uiLatencyMs = uiRanAt - queuedAt;
 
+  const scheduledBuilder = world.units.find((unit) => unit.id === "unit-peon-17");
+  assert.deepEqual({ id: scheduledBuilder?.id, order: scheduledBuilder?.order }, {
+    id: "unit-peon-17",
+    order: {
+      kind: "build",
+      phase: "to-site",
+      buildingTypeId: "unit-great-hall",
+      tileX: 11,
+      tileY: 12,
+      targetId: null,
+      targetX: 416,
+      targetY: 448,
+      buildCycle: 0,
+      path: [
+        { x: 432, y: 176 },
+        { x: 400, y: 176 },
+        { x: 368, y: 144 },
+        { x: 208, y: 144 },
+        { x: 176, y: 176 },
+        { x: 144, y: 176 },
+        { x: 144, y: 208 },
+        { x: 112, y: 240 },
+        { x: 112, y: 400 },
+        { x: 176, y: 464 },
+        { x: 176, y: 496 },
+        { x: 240, y: 496 },
+        { x: 272, y: 528 },
+        { x: 496, y: 528 },
+        { x: 496, y: 400 }
+      ],
+      pathIndex: 1
+    }
+  }, "Fast16 AI construction must preserve the exact builder, placement, target, and ordered path.");
+  const ordersSource = readFileSync(resolve(root, "src/simulation/orders.ts"), "utf8");
+  assert.match(ordersSource, /planBuilding\(world, builder, buildingDefinition, placement\.x, placement\.y, \{ approach: placement\.approach \}\)/,
+    "Automatic placement must reuse its accepted approach when committing the build order.");
+  assert.match(ordersSource, /const path = findPath\(world, unit, candidate\.x, candidate\.y\);\s+if \(path\.length > 0\) \{\s+return path;/,
+    "Interaction target selection must return the already-computed candidate path.");
+
   assert.ok(processedTicks > 0 && processedTicks <= maximumSteps,
     `Fast16 must process at most ${maximumSteps} ticks in one animation turn; processed ${processedTicks}/${expectedRequestedTicks}.`);
   assert.ok(backlogTicks > 0,
@@ -132,6 +172,9 @@ try {
   assert.ok(uiLatencyMs <= 75,
     `Queued UI/Pause work must run promptly after the bounded turn; latency=${uiLatencyMs.toFixed(3)}ms.`);
 
+  if (fast16Only) {
+    console.log(`Fast16 scheduler verified (requested=${expectedRequestedTicks} ticks, processed=${processedTicks}, backlog=${backlogTicks}, turn=${turnElapsedMs.toFixed(3)}ms, UI=${uiLatencyMs.toFixed(3)}ms).`);
+  } else {
   const backlogSave = saveGame.exportSavedGame(world, { x: 0, y: 0, zoom: 1 });
   const loadedBacklog = saveGame.loadSavedGameJson(manifest, backlogSave)?.world;
   assert.ok(loadedBacklog, "Budgeted simulation backlog save must load.");
@@ -203,6 +246,7 @@ try {
     "The production scheduler must use the existing monotonic performance clock.");
 
   console.log(`Simulation scheduler verified (Fast16 requested=${expectedRequestedTicks} ticks, processed=${processedTicks}, backlog=${backlogTicks}, catch-up=${catchupTurns} turns, default=${normalWorld.tick - normalTickBefore} ticks, deterministic=${deterministicTicks} ticks, turn=${turnElapsedMs.toFixed(3)}ms, UI=${uiLatencyMs.toFixed(3)}ms).`);
+  }
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

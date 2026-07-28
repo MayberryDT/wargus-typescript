@@ -194,7 +194,8 @@
     "verify:browser-harvest-session": "node scripts/verify-browser-harvest-session.mjs",
     "verify:browser-combat-session": "node scripts/verify-browser-combat-session.mjs",
     "verify:browser-spell-session": "node scripts/verify-browser-spell-session.mjs",
-    "verify:browser-train-session": "node scripts/verify-browser-train-session.mjs"
+    "verify:browser-train-session": "node scripts/verify-browser-train-session.mjs",
+    "verify:simulation-scheduler-fast16": "node scripts/verify-simulation-scheduler.mjs --fast16-only"
   },
   "dependencies": {
     "@types/node": "^24.10.1",
