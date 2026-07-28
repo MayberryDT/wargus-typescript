@@ -106,7 +106,9 @@ try {
     },
     maxMilliseconds: maximumTurnMilliseconds,
     maxSteps: maximumSteps,
-    maxBacklogSeconds: maximumBacklogSeconds
+    maxBacklogSeconds: maximumBacklogSeconds,
+    diagnosticNow: () => performance.now(),
+    captureStepTiming: () => true
   };
 
   let uiRanAt = null;
@@ -119,7 +121,7 @@ try {
   });
   const tickBefore = world.tick;
   const turnStartedAt = performance.now();
-  orders.simulateWorld(world, fast16LongFrameSeconds, turnBudget);
+  const fastTurnResult = orders.simulateWorld(world, fast16LongFrameSeconds, turnBudget);
   const turnElapsedMs = performance.now() - turnStartedAt;
   const processedTicks = world.tick - tickBefore;
   const backlogTicks = Math.floor((world.accumulator + Number.EPSILON) / tickSeconds);
@@ -168,6 +170,14 @@ try {
     "Fast16 AI construction must compute its accepted interaction path once and reuse it through build-order commit and stepping.");
   assert.deepEqual(acceptedApproachSearches[0]?.path, scheduledBuilder.order.path,
     "The single accepted interaction search must supply the exact committed build path.");
+
+  assert.ok(Math.abs(fastTurnResult.acceptedDeltaSeconds + fastTurnResult.droppedDeltaSeconds - fast16LongFrameSeconds) <= Number.EPSILON,
+    "Scheduler diagnostics must account for accepted and dropped delta exactly.");
+  assert.equal(fastTurnResult.processedSteps, processedTicks, "Scheduler diagnostics must report the exact processed-step count.");
+  assert.ok(Math.abs(fastTurnResult.remainingBacklogSeconds - world.accumulator) <= Number.EPSILON,
+    "Scheduler diagnostics must report the exact remaining backlog.");
+  assert.ok(fastTurnResult.turnMilliseconds >= fastTurnResult.maxStepMilliseconds && fastTurnResult.maxStepMilliseconds >= 0,
+    "Scheduler timing diagnostics must bound the slowest captured step.");
 
   assert.ok(processedTicks > 0 && processedTicks <= maximumSteps,
     `Fast16 must process at most ${maximumSteps} ticks in one animation turn; processed ${processedTicks}/${expectedRequestedTicks}.`);
@@ -249,6 +259,58 @@ try {
       JSON.parse(saveGame.exportSavedGame(referenceWorld, { x: 0, y: 0, zoom: 1 })).world,
       "Equal ordered tick sequences must produce identical simulation state."
     );
+
+    const diagnosticsOffWorld = loadPristineWorld();
+    const diagnosticsOnWorld = loadPristineWorld();
+    let offBudgetClock = 0;
+    let onBudgetClock = 0;
+    let diagnosticClock = 1000;
+    const diagnosticParityDelta = 8 * tickSeconds;
+    const diagnosticsOffResult = orders.simulateWorld(diagnosticsOffWorld, diagnosticParityDelta, {
+      now: () => { const value = offBudgetClock; offBudgetClock += 2; return value; },
+      maxMilliseconds: 8,
+      maxSteps: 8,
+      maxBacklogSeconds: maximumBacklogSeconds
+    });
+    const diagnosticsOnResult = orders.simulateWorld(diagnosticsOnWorld, diagnosticParityDelta, {
+      now: () => { const value = onBudgetClock; onBudgetClock += 2; return value; },
+      maxMilliseconds: 8,
+      maxSteps: 8,
+      maxBacklogSeconds: maximumBacklogSeconds,
+      diagnosticNow: () => { const value = diagnosticClock; diagnosticClock += 100; return value; },
+      captureStepTiming: () => true
+    });
+    assert.equal(diagnosticsOnWorld.tick, diagnosticsOffWorld.tick,
+      "Diagnostic clock magnitude must not affect budget slicing or processed ticks.");
+    assert.equal(diagnosticsOnResult.processedSteps, diagnosticsOffResult.processedSteps,
+      "Enabling per-step diagnostics must preserve the scheduler work count.");
+    assert.deepEqual(
+      JSON.parse(saveGame.exportSavedGame(diagnosticsOnWorld, { x: 0, y: 0, zoom: 1 })).world,
+      JSON.parse(saveGame.exportSavedGame(diagnosticsOffWorld, { x: 0, y: 0, zoom: 1 })).world,
+      "Capture on and off must produce identical deterministic state."
+    );
+    assert.equal(diagnosticsOffResult.turnMilliseconds, 0,
+      "Capture-off turns must not invoke the optional diagnostic clock.");
+    assert.ok(diagnosticsOnResult.turnMilliseconds > 0 && diagnosticsOnResult.maxStepMilliseconds > 0,
+      "Capture-on turns must expose diagnostic timing from the separate clock.");
+
+    const endedWorld = loadPristineWorld();
+    endedWorld.matchState = { status: "draw", winner: null, endedTick: endedWorld.tick };
+    const endedTick = endedWorld.tick;
+    const endedResult = orders.simulateWorld(endedWorld, tickSeconds, {
+      ...steadyBudget,
+      diagnosticNow: () => { throw new Error("Non-playing worlds must not read diagnostic clocks."); },
+      captureStepTiming: () => true
+    });
+    assert.deepEqual(endedResult, {
+      acceptedDeltaSeconds: 0,
+      droppedDeltaSeconds: tickSeconds,
+      processedSteps: 0,
+      remainingBacklogSeconds: endedWorld.accumulator,
+      turnMilliseconds: 0,
+      maxStepMilliseconds: 0
+    }, "Non-playing worlds must return an explicit zero-work result.");
+    assert.equal(endedWorld.tick, endedTick, "Non-playing diagnostics must not mutate world state.");
 
     const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
     assert.match(mainSource,

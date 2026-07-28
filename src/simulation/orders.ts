@@ -5451,37 +5451,72 @@ export type SimulationTurnBudget = {
   maxMilliseconds: number;
   maxSteps: number;
   maxBacklogSeconds: number;
+  diagnosticNow?: () => number;
+  captureStepTiming?: () => boolean;
 };
 
-export function simulateWorld(world: WorldState, deltaSeconds: number, turnBudget?: SimulationTurnBudget): void {
+export type SimulationTurnResult = {
+  acceptedDeltaSeconds: number;
+  droppedDeltaSeconds: number;
+  processedSteps: number;
+  remainingBacklogSeconds: number;
+  turnMilliseconds: number;
+  maxStepMilliseconds: number;
+};
+
+export function simulateWorld(world: WorldState, deltaSeconds: number, turnBudget?: SimulationTurnBudget): SimulationTurnResult {
   if (world.matchState.status !== "playing") {
-    return;
+    return {
+      acceptedDeltaSeconds: 0,
+      droppedDeltaSeconds: Math.max(0, deltaSeconds),
+      processedSteps: 0,
+      remainingBacklogSeconds: world.accumulator,
+      turnMilliseconds: 0,
+      maxStepMilliseconds: 0
+    };
   }
   const tickSeconds = sourceFrameSeconds(world);
   const maximumBacklogSeconds = turnBudget
     ? Math.max(tickSeconds, turnBudget.maxBacklogSeconds)
     : Number.POSITIVE_INFINITY;
   const acceptedDeltaSeconds = Math.min(deltaSeconds, Math.max(0, maximumBacklogSeconds - world.accumulator));
+  const droppedDeltaSeconds = Math.max(0, deltaSeconds - acceptedDeltaSeconds);
   world.elapsed += acceptedDeltaSeconds;
   world.accumulator += acceptedDeltaSeconds;
 
   const maximumSteps = turnBudget ? Math.max(1, Math.floor(turnBudget.maxSteps)) : Number.POSITIVE_INFINITY;
   const maximumMilliseconds = turnBudget ? Math.max(0, turnBudget.maxMilliseconds) : Number.POSITIVE_INFINITY;
-  const turnStartedAt = turnBudget?.now() ?? 0;
+  const budgetStartedAt = turnBudget?.now() ?? 0;
+  const captureStepTiming = turnBudget?.captureStepTiming?.() ?? false;
+  const diagnosticNow = captureStepTiming ? turnBudget?.diagnosticNow : undefined;
+  const diagnosticTurnStartedAt = diagnosticNow?.() ?? 0;
+  let maxStepMilliseconds = 0;
   let processedSteps = 0;
   while (world.accumulator >= tickSeconds) {
     if (processedSteps >= maximumSteps) {
       break;
     }
-    if (turnBudget && processedSteps > 0 && turnBudget.now() - turnStartedAt >= maximumMilliseconds) {
+    if (turnBudget && processedSteps > 0 && turnBudget.now() - budgetStartedAt >= maximumMilliseconds) {
       break;
     }
+    const stepStartedAt = diagnosticNow?.() ?? 0;
     stepWorld(world, tickSeconds);
     updateVisibility(world);
     world.tick += 1;
     world.accumulator -= tickSeconds;
     processedSteps += 1;
+    if (diagnosticNow) {
+      maxStepMilliseconds = Math.max(maxStepMilliseconds, diagnosticNow() - stepStartedAt);
+    }
   }
+  return {
+    acceptedDeltaSeconds,
+    droppedDeltaSeconds,
+    processedSteps,
+    remainingBacklogSeconds: world.accumulator,
+    turnMilliseconds: diagnosticNow ? diagnosticNow() - diagnosticTurnStartedAt : 0,
+    maxStepMilliseconds
+  };
 }
 
 function sourceFrameSeconds(world: WorldState): number {
