@@ -1,141 +1,479 @@
-# Plan 023: Add a Deterministic Spatial Occupancy Index
+# Plan 023: Add A Deterministic Spatial Occupancy Index
 
-**Priority:** P1
-**Effort:** L
-**Risk:** High
-**Depends on:** 018, 019, 020
-**Planned against:** `8ac0006` on 2026-07-27
+> **Executor instructions:** Execute this Wave 3 plan in an isolated Halla
+> worktree only after Plans 018, 019, and 020 are accepted and integrated.
+> Follow [the Halla execution policy](HALLA-EXECUTION-POLICY.md) and
+> [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) unchanged.
+> Preserve `world.units` as the authoritative ordered collection and preserve
+> every first-match, iteration, passability, placement, collision, and path
+> tie-breaking result. Stop on every STOP condition.
 
-## Problem
+## Status
 
-Collision, placement, pathfinding, and de-stacking repeatedly scan `world.units`. `src/simulation/passability.ts` lines 123–141 check the full unit list for each queried tile. `resolveStackedMovableUnit` in `src/simulation/orders.ts` around line 10776 performs another world-wide scan, and pathfinding calls footprint passability for many A* neighbors.
+- **Status:** TODO
+- **Wave:** 3 — Structural optimization
+- **Priority:** P1
+- **Effort:** L
+- **Risk:** HIGH — simulation mutation coverage and deterministic ordering
+- **Depends on:** accepted and integrated Plans 018, 019, and 020
+- **Category:** performance, simulation
+- **Original planning base:** `8ac0006`, 2026-07-27
+- **Roadmap rewrite base:** `d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae`
+  (`git rev-parse HEAD` printed the same SHA)
 
-The combined cost grows approximately with queried tiles multiplied by total units. Crowded maps therefore spend progressively more simulation time proving that mostly unrelated units do not occupy a location.
+Plans 019/020's documentation rewrites are not dependencies. The Wave
+coordinator must accept and integrate their implementations on top of accepted
+Plan 018, then replace the concrete drift SHA and refresh the exact
+passability/query/mutation inventory below if an integrated seam changed.
+Never use a symbolic commit token. Until those integrated commits, durable
+baseline handoffs, and concrete refresh exist, STOP.
 
-## Goal
+## Why this matters
 
-Provide one deterministic, transient spatial occupancy index so tile and footprint queries inspect only nearby candidates while preserving every existing blocking and movement rule.
+Tile passability, footprint planning, overlap/placement checks, and stacked-unit
+recovery repeatedly scan all of `world.units` to discover a small local
+candidate set. A transient ordered occupancy index can bound candidate visits
+by covered tiles while leaving authoritative unit state and every semantic
+predicate unchanged.
 
-## Non-goals
+## Current state and drift checks
 
-- Changing collision, stacking, movement-layer, building-placement, or path selection semantics.
-- Persisting the index in saves or including it in deterministic hashes.
-- Broadly rewriting order execution.
-- Introducing a third-party spatial library or nondeterministic collection iteration.
+At the concrete rewrite base, occupancy blocking iterates the authoritative
+array and returns on the first blocking unit:
 
-## Preconditions and Drift Checks
-
-1. Confirm the Halla host, isolated checkout, branch, and HEAD.
-2. Read Plans 018–020 completely and verify their relevant checks pass.
-3. Map every runtime mutation of `world.units`, unit position, footprint, movement layer, hidden/transport state, alive state, spawn, removal, load, unload, teleport, construction transition, and save restoration.
-4. Exclude test-fixture builders from the production mutation inventory, but cover their resulting runtime states in tests.
-5. Record Plan 018 `army-100`, `army-200`, `command-18`, and `combat-100` baselines plus counts and duration of occupancy queries.
-
-**STOP:** If production code can mutate occupancy-relevant unit fields without a discoverable central seam, first add explicit mutation helpers with parity tests. Do not ship an index that can silently become stale.
-
-## Design
-
-Add `src/simulation/occupancyIndex.ts`:
-
-- The authoritative state remains `world.units`; the index is derived, transient, and rebuildable.
-- Store deterministic tile buckets partitioned by movement/blocking layer. Each solid unit is indexed over the exact tiles covered by its footprint.
-- Bucket results follow the existing authoritative unit order. Use stable ordered arrays or explicitly sort candidates by that order; never depend on `Set`/`Map` insertion order created by incidental mutation timing.
-- Maintain a unit-to-covered-tiles record for removal and movement updates.
-- Expose focused queries for tile occupants, footprint occupants, nearby units, and overlap candidates. Callers still apply their existing semantic predicates.
-
-Lifecycle:
-
-1. Rebuild at world creation/load and at the start of a fixed step if identity or revision validation fails.
-2. Update incrementally for every spawn, removal, position/footprint/layer transition, hide/unhide, transport load/unload, teleport, construction state change, and death state that changes blocking.
-3. In development/test builds, sample-query the old full scan and assert identical ordered IDs. Provide an explicit full parity mode for fixtures.
-4. Invalidate or rebuild rather than attempting recovery from an unknown mutation.
-
-The index must not alter save schema, world equality, replay hashes, or command ordering.
-
-## Implementation Steps
-
-### Checkpoint A — Read-only index with full-scan parity
-
-1. Implement index construction from `world.units`.
-2. Implement deterministic tile, footprint, and nearby-candidate queries.
-3. Add revision/identity validation and development parity instrumentation.
-4. Add exhaustive fixtures for overlapping footprints, multiple movement layers, hidden units, transported units, buildings, resources, corpses/non-blockers, and map edges.
-
-**Verify:**
-
-- Indexed and legacy queries return identical ordered unit IDs in every fixture.
-- Rebuilding the same world produces byte-for-byte identical query evidence.
-- The index is absent from saves and deterministic world serialization.
-
-### Checkpoint B — Migrate read paths
-
-1. Replace the full-list blocker scan in `passability.ts` with local index candidates while preserving its predicates and exclusions.
-2. Migrate building placement, collision/overlap, de-stacking, and other nearby-unit searches identified in the mutation/query inventory.
-3. Make pathfinding reuse the indexed footprint query without changing A* tie-breaking.
-4. Keep a development parity assertion available at every migrated boundary.
-
-**Verify:**
-
-- Existing passability, placement, movement, combat, and determinism tests pass.
-- Query counters show candidate visits scale with local occupancy rather than `world.units.length`.
-- Results remain identical under reversed fixture construction followed by authoritative-order normalization.
-
-### Checkpoint C — Centralize incremental updates
-
-1. Add explicit register, unregister, and occupancy-transition helpers.
-2. Route every inventoried production mutation through those helpers.
-3. Cover save restore, unit creation, building placement/completion, death/removal, transport, movement, de-stacking, teleport, and world replacement.
-4. Add a fixed-step invariant check that compares indexed membership with authoritative unit state in test/debug mode.
-5. Add `scripts/verify-occupancy-index.mjs` and its package script to exercise semantic parity and mutation coverage.
-
-**Verify:**
-
-- A scripted scenario hits every registered transition with no stale or duplicate bucket membership.
-- Removing or moving a multi-tile unit clears all former tiles.
-- A forced invalidation performs one safe rebuild and resumes incremental operation.
-
-## Tests
-
-- Property-style parity tests over deterministic generated maps and unit layouts.
-- Layer, footprint, edge, overlap, exclusion-ID, and ordering tests.
-- Mutation-transition tests for spawn/remove/move/teleport/hide/unhide/load/unload/death/revive/build.
-- Save/load and world-replacement rebuild tests.
-- Pathfinding and building-placement regression tests.
-- Deterministic replay/hash checks proving the transient cache does not affect authoritative state.
-
-## Performance Acceptance
-
-Using Plan 018's exact profiles:
-
-- `army-100`, `army-200`, `command-18`, and `combat-100` meet the frozen frame, input, scheduler, and heap budgets.
-- For indexed queries, visited candidate count is bounded by occupants of covered/local tiles rather than the complete unit count.
-- `army-200` reduces p95 simulation-step occupancy time relative to its recorded baseline without regressing command latency.
-- Index maintenance does not introduce long-frame spikes during mass movement, teleport, spawn, or death.
-
-Report query count, candidates visited, rebuild count/duration, incremental update count/duration, and full-scan parity failures alongside Plan 018 metrics.
-
-## Verification Commands
-
-```bash
-./node_modules/.bin/tsc --noEmit
-npm run verify:wargus-assets
-npm run build
-npm run verify
-npm run verify:occupancy-index
-npm run verify:browser-playable-session
-npm run verify:browser-demo-session
+```ts
+// src/simulation/passability.ts:123-141
+function blockerCrossingCost(world: WorldState, tileX: number, tileY: number, movement: MovementKind, movingUnitId: string | undefined, blockers: Exclude<PassabilityBlockers, "none">): number {
+  let crossesMovingOccupant = false;
+  for (const unit of world.units) {
+    if (
+      !isRelevantSolidOccupant(unit, movingUnitId, movement)
+      || !unitFootprintContainsTile(world, unit, tileX, tileY)
+    ) {
+      continue;
+    }
+    if (
+      blockers === "all"
+      || (blockers === "path-planning" && !isActivelyMovingOccupant(unit))
+      || (blockers === "static" && isPermanentlyStationaryOccupant(unit))
+    ) {
+      return Number.POSITIVE_INFINITY;
+    }
+    crossesMovingOccupant = true;
+  }
+  return crossesMovingOccupant ? 5 : 1;
+}
 ```
 
-Use the Codex in-app Browser with the `iab` backend for browser captures.
+Stack recovery uses legacy `.find(...)` first-match semantics:
 
-## Completion Criteria
+```ts
+// src/simulation/orders.ts:10821-10836
+const unitTile = worldToTile(world, unit.x, unit.y);
+const blocker = world.units.find((candidate) => {
+  if (
+    candidate.id === unit.id
+    || candidate.hitPoints <= 0
+    || candidate.construction
+    || candidate.kind === "fly"
+    || candidate.nonSolid
+    || isUnitHiddenInConstruction(candidate)
+    || isUnitInsideResourceSource(candidate)
+  ) {
+    return false;
+  }
+  const candidateTile = worldToTile(world, candidate.x, candidate.y);
+  return candidateTile.x === unitTile.x && candidateTile.y === unitTile.y;
+});
+```
 
-- Occupancy queries use the deterministic spatial index at all inventoried hot paths.
-- All occupancy-relevant mutations maintain or explicitly invalidate the index.
-- Full-scan parity, transition, save/load, deterministic, and browser checks pass.
-- Performance evidence in `plans/evidence/023/` demonstrates lower candidate work and passing Plan 018 budgets.
-- No gameplay rule or save format changed.
+At this base, the production mutation inventory before fixture exports begins
+contains:
+
+| Occupancy mutation family | Rewrite-base seams |
+|---|---|
+| Membership/order | `world.units` filters/pushes at `orders.ts:3875`, `4069`, `4967`, `4983`, `5231-5232`, `5435`, `9602`, `9719`, `13699`, `14051`, `14406`, `14604`, `14701`, `15008`, `16221`, `16263`, `16475`; temporary array replace/restore at `18654/18658` and `18686/18693` |
+| Position/teleport/movement | unload `4059-4060`; builder release `5060-5061`; anchor snap `5850-5851`; teleport `6290-6291`, `14587-14588`, `14632-14633`; path movement `10746-10747`, `10778-10779`; stack escape `10844-10845`; death revealer placement `16469-16470` |
+| Footprint-shape transform | unit conversion writes `tileWidth`/`tileHeight` at `15706-15707` |
+| Predicate-only blocking state | `kind` at `15678`, `nonSolid` at `15749`, hit points, construction, hidden-in-construction, order/path activity, speed, and resource containment mutate at runtime seams; they are read live by existing predicates and do not change bucket membership |
+
+Projectile/effect coordinates are not unit occupancy. Cargo-unit coordinates
+while absent from `world.units` are not indexed. The executor must regenerate,
+classify, and commit the complete accepted-base inventory rather than relying
+only on this rewrite-base table.
+
+Run before editing:
+
+```bash
+test "$(hostname)" = halla
+git merge-base --is-ancestor d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae HEAD
+git diff --stat d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
+  src/simulation/passability.ts src/simulation/orders.ts \
+  src/simulation/worldSelectors.ts src/simulation/occupancyIndex.ts \
+  scripts/verify-terrain-metadata-cache.mjs scripts/verify-unit-index.mjs \
+  scripts/verify-occupancy-index.mjs plans/evidence/019.md \
+  plans/evidence/020.md plans/evidence/023.md \
+  plans/023-add-deterministic-spatial-occupancy-index.md
+rg -n "blockerCrossingCost|hasPathPlanningOccupancy|hasMobilePathPlanningOccupancy|resolveStackedMovableUnit|world\.units\.(find|filter|some)|for \(const .* of world\.units\)" \
+  src/simulation/passability.ts src/simulation/orders.ts
+rg -n "world\.units\s*=|world\.units\.(push|splice|pop|shift|unshift|sort|reverse|copyWithin|fill)|\.x\s*(\+|-|\*|/)?=|\.y\s*(\+|-|\*|/)?=|\.tileWidth\s*=|\.tileHeight\s*=|\.kind\s*=|\.nonSolid\s*=" \
+  src/simulation/orders.ts
+```
+
+Expected: the rewrite base is an ancestor; later changes are accepted Plans
+018/019/020 or explained coordinator integration; Plan 019's terrain-only
+passability seam and Plan 020's unit-ID/invalidation seam are intact; and every
+production occupancy query and mutation is classified. If accepted upstream
+work changes a cited seam, the Wave coordinator must amend this plan with the
+accepted concrete SHA, exact excerpts, and refreshed inventory before Plan 023
+begins.
+
+## Commands you will need
+
+| Purpose | Command | Expected result |
+|---|---|---|
+| Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
+| Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
+| Occupancy parity | `node scripts/verify-occupancy-index.mjs` | order, first-match, query, mutation, rebuild, diagnostics, save/load, and fallback cases pass |
+| Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | accepted Plan 019 terrain/passability semantics remain exact |
+| Unit-ID parity | `node scripts/verify-unit-index.mjs` | accepted Plan 020 first-match lookup/invalidation semantics remain exact |
+| Pathfinding | `npm run verify:source-pathfinding` | path results and tie-breaking unchanged |
+| Save schema | `npm run verify:save-schema` | exact save schema unchanged |
+| Runtime determinism | `npm run verify:runtime-determinism` | fixed-tick state/order/hash/save output unchanged |
+| Browser playable | `npm run verify:browser-playable-session` | movement, placement, transport, and combat pass |
+| Browser demo | `npm run verify:browser-demo-session` | deterministic demo behavior passes |
+| Asset gate | `npm run verify:wargus-assets` | exit 0 |
+| Build | `npm run build` | exit 0 |
+| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; every unchanged shared budget passes |
+
+Run baseline commands before implementation. Performance captures run serially
+under the shared contracts and never overlap another executor's capture.
+
+## Scope
+
+**Plan 023 owns:**
+
+- `src/simulation/occupancyIndex.ts` (new), including ordered buckets,
+  membership snapshots, invalidation/rebuild, queries, diagnostics, and parity
+  oracle;
+- `src/simulation/passability.ts`, occupancy-candidate consumption only,
+  leaving accepted Plan 019 terrain metadata and all blocker predicates intact;
+- `src/simulation/orders.ts`, only inventoried spatial query migrations and
+  occupancy register/unregister/transition/invalidation calls, leaving accepted
+  Plan 020 ID lookup and invalidation intact;
+- `scripts/verify-occupancy-index.mjs` (new); and
+- `plans/evidence/023.md`.
+
+**Out of scope:**
+
+- replacing, reordering, or serializing `world.units`; changing identity,
+  movement, collision, blocking, placement, stacking, A* ordering, target
+  selection, or save behavior;
+- Plan 019 terrain cache/flags and Plan 020 unit-ID index/lookup semantics;
+- renderer, Pixi, UI, visibility/fog, path request cadence/budgeting, or Plan
+  024 scheduling;
+- adding occupancy fields to `WorldState`, save data, canonical hashes,
+  replays, commands, or renderer APIs;
+- independently editing `src/main.ts`, a shared performance schema,
+  `package.json`, `plans/README.md`, or an existing shared verifier; and
+- weakening a budget, validity rule, fingerprint, trial count, determinism,
+  first-match assertion, or evidence requirement.
+
+The Wave coordinator owns shared `main`, performance-schema, package-script,
+and roadmap integration. Plan 023 emits plan-local namespaced diagnostics from
+its owned module; shared capture export is coordinator integration.
+
+## Git workflow
+
+- Branch from the accepted Wave 3 start into an isolated `plan-023` worktree.
+- Commit read-only construction/query parity before mutation maintenance, then
+  commit query migrations only after full mutation coverage is green.
+- Do not merge Plan 022, edit renderer/cache files, absorb Plan 024 scheduling,
+  resolve shared package/index conflicts, push, deploy, or open a PR unless
+  instructed.
+
+## Shared interfaces and ownership
+
+- The accepted Plan 018 handoff supplies the normalized matrix,
+  profile-definition hash, initial entity/effect fingerprint, environment
+  identity, raw baseline directory, checksums, and worst-trial row results.
+  These artifacts and all shared budgets are read-only.
+- The accepted Plan 019 handoff supplies terrain metadata and terrain-only
+  passability behavior. Plan 023 may replace only unit candidate enumeration;
+  it may not alter terrain classification or fallback semantics.
+- The accepted Plan 020 handoff supplies first-match stable-ID lookup,
+  `world.units` mutation inventory, and unit-index invalidation. Plan 023 adds
+  occupancy lifecycle calls at accepted mutation owners without changing Plan
+  020's API, invalidation timing, or duplicate-ID behavior.
+- `HALLA-EXECUTION-POLICY.md` governs host/browser execution, exact-owned
+  process cleanup, serial captures, and durable artifacts.
+- `PERFORMANCE-ACCEPTANCE.md` governs trial qualification, fingerprints,
+  determinism, statistics, invalid/replacement rules, and budgets.
+- Plan 023 exclusively owns simulation occupancy/passability/order mutation
+  surfaces. Plan 022 exclusively owns renderer files and caches. Neither plan
+  imports the other's APIs or evidence.
+- Existing terrain, ID-index, pathfinding, save, determinism, and browser
+  verifiers are read-only gates. Shared integration belongs to the coordinator.
+
+## Deterministic index contract
+
+`world.units` remains the sole authoritative ordered collection. The index is a
+transient `WeakMap<WorldState, OccupancyCache>` and stores candidate membership
+only; every caller applies existing live predicates in existing order. The
+index is never serialized, hashed, cloned into a save, or exposed to rendering.
+
+Each covered map tile owns an ordered array of unit object references. A unit
+is indexed over the exact tile rectangle derived from current `x`, `y`,
+`tileWidth`, and `tileHeight`, including non-solid, dead, hidden, constructing,
+and resource-contained units. Keeping predicate-only states in the bucket means
+changes to hit points, construction, hidden/resource state, `kind`, `nonSolid`,
+speed, or order/path activity require no structural update and are observed
+live by legacy predicates.
+
+Bucket order and merged footprint-query order must equal current object order
+in `world.units`; never rely on incidental `Map`/`Set` insertion order or
+mutation timing. Assign/rebuild authoritative order ranks from `world.units`,
+insert transitioned units by rank, merge multi-tile results in rank order, and
+deduplicate by object identity. Duplicate unit IDs do not collapse records.
+Every query returns the exact reference sequence that filtering the
+authoritative array would have produced.
+
+Lifecycle ownership is exact:
+
+| Operation | Owner and timing |
+|---|---|
+| Build/rebuild | `ensureWorldOccupancyIndex(world)` before a query; rebuild on first use, world identity, explicit invalidation, array reference/order mismatch, or membership validation failure |
+| Register | owning `world.units.push`/append seam calls `registerWorldOccupant` immediately after the authoritative append |
+| Unregister | owning filter/removal seam calls `unregisterWorldOccupant` for each removed object before replacing the authoritative array |
+| Transition | owning mutation snapshots old covered tiles, performs the complete atomic position/footprint change, then calls `transitionWorldOccupant` before any later occupancy query |
+| Batch/temporary replacement | owning seam calls `invalidateWorldOccupancyIndex`; first query rebuilds from that temporary array, and restoration invalidates again |
+| Load/world replacement | no cache transfer; new `WorldState` builds independently on first query |
+| Unknown or failed validation | mark invalid and use authoritative full scan for that query; rebuild before the next indexed query |
+
+The fallback is correctness, not acceptance: every unexpected invalidation or
+fallback increments diagnostics, development parity must explain it, and an
+unowned production mutation is a STOP.
+
+Add resettable plan-local diagnostics with these exact namespaces:
+
+- `plan023.occupancy.queries`
+- `plan023.occupancy.candidatesVisited`
+- `plan023.occupancy.registers`
+- `plan023.occupancy.unregisters`
+- `plan023.occupancy.transitions`
+- `plan023.occupancy.invalidations`
+- `plan023.occupancy.rebuilds`
+- `plan023.occupancy.rebuildDuration`
+- `plan023.occupancy.fullScanFallbacks`
+- `plan023.occupancy.parityFailures`
+
+Diagnostics remain outside `WorldState`, saves, gameplay decisions, and Plan
+018's shared summary schema. Focused verification/evidence may read them; any
+shared capture wiring is coordinator-owned and namespaced.
+
+## Steps
+
+### Step 0: Prove the entry gate and freeze the baseline
+
+Confirm Plans 018, 019, and 020 are `DONE-VERIFIED`, their acceptance commits
+are integrated, and durable assigned baseline artifacts/checksums resolve on
+Halla. Record the accepted environment, profile-definition hash, initial
+entity/effect fingerprint, per-trial/worst-trial results, Plan 019 terrain
+parity, Plan 020 first-match/index behavior, and exact integrated mutation
+inventory. Run refreshed drift checks and all non-browser baseline commands.
+
+**Verify:** dependencies, ancestry, inventory, checksums/fingerprints, host
+policy, upstream parity, save schema, determinism, and baseline gates are green.
+
+### Step 1: Build a read-only ordered occupancy index
+
+Implement construction from authoritative `world.units`, exact covered-tile
+calculation, deterministic tile/footprint candidate queries, object-identity
+deduplication, identity/revision validation, and forced rebuild. Return ordered
+candidate references only; do not embed blocking, visibility, placement,
+movement-layer, or gameplay decisions in the index.
+
+Create a reference oracle that runs the legacy full-array filter with the exact
+caller predicate and compares object reference, ID, order, first match, final
+boolean/cost, and chosen downstream result. Full parity mode runs every query;
+development sampling uses a deterministic query-count schedule, never runtime
+randomness.
+
+**Verify:** empty/edge/multi-tile/overlap/duplicate-ID/mixed-state fixtures and
+repeated rebuilds produce exact authoritative sequences. Index construction
+does not mutate the array or enter save/canonical state.
+
+### Step 2: Freeze and route the complete mutation lifecycle
+
+Regenerate the full production inventory after Plans 019/020 integrate.
+Classify every statement as membership/order, position/footprint, or
+predicate-only. Route membership through register/unregister, position and
+footprint writes through one post-atomic-change transition, and temporary or
+batch replacements through invalidation/rebuild. Preserve statement order,
+events, Plan 020 invalidation, and intermediate query behavior.
+
+Explicitly cover spawn/training/summon/revealer/raise-dead, removal/death/cancel/
+capture, building/oil-platform replacement, transport load/unload, normal
+movement/waypoint snap, stack escape, teleport/portal, builder hide/release,
+unit conversion, temporary build probes, world replacement, and save load.
+Predicate-only mutations remain live-read fixtures and must not reindex.
+
+**Verify:** a deterministic scenario hits every inventory row; former tiles
+clear, new tiles contain the unit in authoritative order, no duplicate object
+membership exists, and forced invalidation performs one explained rebuild.
+Any uncovered production mutation is a STOP.
+
+### Step 3: Migrate occupancy read paths with exact semantic parity
+
+Migrate `blockerCrossingCost` first, replacing only full-array candidate
+enumeration. Preserve `isRelevantSolidOccupant`, footprint containment,
+blocker modes, moving-unit exclusion, active/stationary classification, early
+return, and cost values. Then migrate same-tile stack recovery and only the
+placement/collision/overlap/spatial searches named by the accepted inventory.
+
+For legacy `.find`, use the first passing indexed candidate. For
+`for`/`.filter`/`.some`, preserve authoritative order, early exit, stable ties,
+and downstream sort behavior. Do not migrate global target selection or a
+query whose local bound cannot include every legacy candidate. Pathfinding may
+consume indexed footprint candidates but A* neighbor/tie order stays unchanged.
+
+**Verify:** the oracle compares ordered references and final outcomes at every
+migrated boundary. Reversed mutation timing and duplicate-ID fixtures still
+select the same object as authoritative iteration.
+
+### Step 4: Prove rebuild, save/load, and determinism behavior
+
+Invalidate and safely fall back when identity, membership, order rank, or
+covered-tile validation fails. Development/test full parity makes stale or
+duplicate membership fatal. Production may use authoritative full scan for the
+current query, then rebuild once; it never returns a partially trusted bucket.
+
+Review save serialization/deserialization only after accepted Plans 019/020
+integrate. Add no save serialization. Prove a loaded world builds an independent
+cache, the old cache is unreachable, and no cache/diagnostic/revision enters
+saves, replay hashes, commands, or canonical state.
+
+**Verify:** save text/schema and fixed-tick state/order/hash are exact; forced
+corruption chooses full-scan result, increments fallback once, rebuilds, and
+resumes parity.
+
+### Step 5: Revalidate behavior and measure
+
+Run every command in the table. Capture three independent valid trials per
+assigned row using exact accepted Plan 018 environment, profile, viewport,
+warmup, duration, fingerprints, per-trial statistics, and worst-trial rule. Do
+not pool samples. Record query/candidate/update/rebuild/fallback/parity
+diagnostics outside deterministic state.
+
+Every shared budget must pass. A greater-than-5% worsening of worst-trial frame
+p95 is also a regression. `army-200` must reduce p95 occupancy-query candidate
+work from the full-scan baseline without command-latency regression or
+mass-mutation spikes.
+
+**Verify:** upstream parity, pathfinding, save, browser, and determinism gates
+pass; no unexplained fallback/parity failure occurs; budgets pass; evidence is
+durable and checksum-verified.
+
+## Test plan
+
+- Exact ordered tile/footprint candidates across edges, overlaps, duplicate IDs.
+- First-match, early exits, filter order, stable ties, blocker cost, exclusion,
+  and stack-recovery selection.
+- Every accepted-base membership/order and position/footprint mutation,
+  including temporary replacement/restoration.
+- Live predicate-only hit point, construction, hidden/resource, `kind`,
+  `nonSolid`, speed, and path changes without stale decisions/reindexing.
+- Multi-tile move/teleport/convert clears former tiles and registers new once.
+- Plan 020 invalidation remains independent; duplicate IDs stay distinct.
+- Invalid revision/order/membership full-scans, records fallback, rebuilds once.
+- Save/load/world isolation and exact save/hash exclusion.
+- Deterministic full/sampled oracle; zero unexplained `parityFailures`.
+- Namespaced diagnostic reset/count behavior and local-candidate scaling.
+
+## Performance acceptance
+
+Accepted Plan 018 assigned rows are the before baseline. Each row needs three
+independent valid trials under unchanged lifecycle, nearest-rank statistics,
+and worst-trial rule. Never discard a valid budget, parity, or fallback failure.
+Plan 023 cannot close while a budget fails, frame p95 regresses over 5%, command
+latency regresses, environment/fingerprints differ, unexplained production
+fallback/parity occurs, or evidence is incomplete.
+
+## Evidence contract
+
+Store raw artifacts outside Git at:
+
+```text
+.artifacts/performance/023/<commit>/<UTC-stamp>/
+```
+
+Include accepted Plan 018/019/020 artifact/checksum references, environment,
+profile-definition and initial entity/effect fingerprints, one JSON per trial,
+normalized summaries, exact mutation inventory, ordered/first-match parity,
+save/load and determinism, all plan diagnostics, controller/resource records,
+invalid/replacement records, and SHA-256 checksums. Independently recompute new
+checksums and verify every baseline reference.
+
+Commit only concise normalized results to the single evidence file
+`plans/evidence/023.md`; do not create `plans/evidence/023/`, and do not rely
+on `/tmp` as durable evidence.
+
+## Done criteria
+
+- [ ] Accepted Plans 018/019/020 and durable handoffs are integrated/verified.
+- [ ] `world.units` remains authoritative and candidates match exact reference
+  order and first-match behavior.
+- [ ] Complete mutation inventory has a register, unregister, transition,
+  invalidation/rebuild, or live-predicate owner.
+- [ ] Passability, stack recovery, and migrated queries preserve predicates,
+  early exits, costs, iteration order, ties, and outcomes.
+- [ ] Save/load review proves no serialization and independent loaded cache.
+- [ ] Full/sampled parity, fallback, mutation, terrain, unit-ID, pathfinding,
+  save, browser, determinism, asset, and build gates pass.
+- [ ] Diagnostics show bounded local work with zero unexplained fallback/parity.
+- [ ] Assigned rows pass unchanged budgets with durable,
+  checksum-verified evidence in `plans/evidence/023.md`.
+- [ ] The branch contains only Plan 023-owned files; coordinator
+  `main`/performance-schema/package/README integration is separate.
+
+## STOP conditions
+
+- Plans 018/019/020 are not accepted/integrated, or baselines, checksums,
+  fingerprints, terrain parity, ID-index semantics, and mutation handoff fail.
+- Drift, passability/stack excerpts, or inventory differ without refresh.
+- A membership/order/position/footprint mutation has no exact owner or permits
+  same-tick stale membership.
+- Bucket results differ from authoritative object order, duplicate IDs collapse,
+  or first-match/early-exit behavior changes.
+- Correctness requires terrain/ID-index/array/path/placement/gameplay,
+  `WorldState`, save, or renderer changes.
+- Index enters save/hash/replay/command state, deterministic sampling needs
+  randomness, or a loaded world reuses another cache.
+- Production uses a partially trusted bucket, has unexplained fallback,
+  rebuilds per stable query, or reports parity failure.
+- An owned edit reaches renderer/cache, `main`, performance schema,
+  `package.json`, `plans/README.md`, or shared verifier before integration.
+- Any occupancy, upstream, type, pathfinding, save, browser, determinism,
+  asset, or build gate fails twice.
+- Halla/browser qualification fails, capture overlaps, replacement exhausts,
+  budget/command latency fails, or frame p95 regresses over 5%.
+- Durable single-file evidence or checksums cannot be verified.
 
 ## Rollback
 
-Each migrated read path can temporarily return to the authoritative full scan while preserving the verified index implementation and diagnostics. If mutation coverage is incomplete, disable indexed reads and rebuild validation first; never leave a partially trusted index active.
+Rollback query consumers in reverse migration order to authoritative full scans
+with exact predicates, iteration, exits, and sorting. Roll back occupancy calls
+only with the slice that no longer consumes them; never remove Plan 020
+invalidation or Plan 019 terrain metadata. If mutation coverage is incomplete,
+disable all indexed reads, use full scans, and revert unaccepted Plan 023
+commits. Never leave a partial index active or silently accept recurring
+fallback. Preserve failed/invalid evidence and upstream work. Stop only exact
+owned processes; remove only exclusive artifacts.
+
+## Maintenance notes
+
+Every new `world.units` membership/order mutation or unit position/footprint
+write requires an inventory row, exact lifecycle call, transition fixture, and
+parity proof. Predicate-only state stays live-read unless amended. Keep
+authoritative order, first-match behavior, save exclusion, deterministic
+validation, and full-scan rollback executable.

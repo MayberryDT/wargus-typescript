@@ -53,6 +53,21 @@ Parallel ownership is frozen as follows:
 The Wave coordinator owns shared `package.json`, `plans/README.md`, and any
 cross-plan verifier integration.
 
+Wave 3 begins only after its specific Wave 2 dependencies are accepted and
+integrated. Plan 022 requires accepted Plan 021 and owns renderer-only retained
+objects and per-view caches. Plan 023 requires accepted Plans 019 and 020 and
+owns deterministic simulation occupancy plus its passability/order mutation
+seams. They then execute independently in isolated worktrees:
+
+| Plan | Exclusive implementation slice | Exclusive focused verifier/evidence |
+|---|---|---|
+| 022 | renderer-only object retention, per-view cache lifecycle, and renderer call-site counter tags | `verify-world-render-cache`, evidence 022 |
+| 023 | simulation occupancy index, occupancy-only `passability.ts` consumers, and occupancy mutation calls in `orders.ts` | `verify-occupancy-index`, evidence 023 |
+
+The Wave coordinator owns shared `src/main.ts`, performance-schema,
+`package.json`, and `plans/README.md` integration. Plan-local diagnostics and
+counter extensions must use the plan namespaces frozen in the detailed plans.
+
 ## Plan status and dependencies
 
 | Plan | Title | Wave | Priority | Dependencies | Status | Implementation / acceptance commit | Evidence | Last revalidated | Successor |
