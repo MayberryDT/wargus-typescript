@@ -28,6 +28,7 @@
     "verify:fixed-demo-random-ai": "node scripts/verify-fixed-demo-random-ai.mjs",
     "verify:resource-return-black-fog": "node scripts/verify-resource-return-and-black-fog.mjs",
     "verify:playtest-telemetry": "node scripts/verify-playtest-telemetry.mjs",
+    "verify:performance-metrics": "node scripts/verify-performance-metrics.mjs",
     "verify:fixed-demo-unit-portrait": "node scripts/verify-fixed-demo-unit-portrait-panel.mjs",
     "verify:browser-command-card-session": "node scripts/verify-browser-command-card-session.mjs",
     "verify:browser-construction-lifecycle": "WARGUS_CONSTRUCTION_LIFECYCLE_ONLY=1 node scripts/verify-browser-command-card-session.mjs",
