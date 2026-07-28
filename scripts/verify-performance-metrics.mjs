@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -54,6 +54,14 @@ try {
   assert.deepEqual(firstProfiles.map((profile) => profile.id), ["idle-25", "army-100", "army-200", "command-18", "combat-100"]);
   assert.equal(profiles.getPerformanceProfile("command-18").mobileUnitCount, 18);
   for (const profile of firstProfiles) assert.equal(profile.playerUnitCounts[0] + profile.playerUnitCounts[1], profile.mobileUnitCount, `${profile.id} owner counts must equal its mobile unit count.`);
+  const manifest = JSON.parse(readFileSync(resolve(root, "public/wargus/manifest.json"), "utf8"));
+  const manifestUnitIds = new Set(manifest.units.map((unit) => unit.id));
+  for (const profile of firstProfiles) {
+    for (const buildingTypeId of profile.buildingTypeIds) {
+      assert.ok(manifestUnitIds.has(buildingTypeId),
+        `Performance profile ${profile.id} declares a building unavailable in the Wargus manifest: ${buildingTypeId}.`);
+    }
+  }
   assert.throws(() => profiles.getPerformanceProfile("unknown"), /Unknown performance profile/);
   displayObjects.resetDisplayObjectPerformance();
   displayObjects.setDisplayObjectPerformanceCapture(false);

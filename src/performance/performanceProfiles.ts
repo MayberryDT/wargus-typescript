@@ -11,8 +11,8 @@ export type PerformanceProfileDefinition = {
 
 const DEFINITIONS: readonly PerformanceProfileDefinition[] = [
   { id: "idle-25", mobileUnitCount: 25, buildingTypeIds: [], playerUnitCounts: [25, 0], commandSequence: [], projectileCount: 0, effectCount: 0 },
-  { id: "army-100", mobileUnitCount: 100, buildingTypeIds: ["unit-town-hall", "unit-farm", "unit-barracks"], playerUnitCounts: [100, 0], commandSequence: [], projectileCount: 0, effectCount: 0 },
-  { id: "army-200", mobileUnitCount: 200, buildingTypeIds: ["unit-town-hall", "unit-farm", "unit-barracks", "unit-great-hall"], playerUnitCounts: [200, 0], commandSequence: [], projectileCount: 0, effectCount: 0 },
+  { id: "army-100", mobileUnitCount: 100, buildingTypeIds: ["unit-town-hall", "unit-farm", "unit-human-barracks"], playerUnitCounts: [100, 0], commandSequence: [], projectileCount: 0, effectCount: 0 },
+  { id: "army-200", mobileUnitCount: 200, buildingTypeIds: ["unit-town-hall", "unit-farm", "unit-human-barracks", "unit-great-hall"], playerUnitCounts: [200, 0], commandSequence: [], projectileCount: 0, effectCount: 0 },
   { id: "command-18", mobileUnitCount: 18, buildingTypeIds: [], playerUnitCounts: [18, 0], commandSequence: ["move", "attack-move"], projectileCount: 0, effectCount: 0 },
   { id: "combat-100", mobileUnitCount: 100, buildingTypeIds: [], playerUnitCounts: [50, 50], commandSequence: ["attack-target"], projectileCount: 8, effectCount: 8 }
 ];
