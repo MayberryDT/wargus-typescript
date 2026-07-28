@@ -4153,7 +4153,7 @@ export function issueBuildOrder(world: WorldState, builderId: string, buildingTy
     return false;
   }
 
-  return planBuilding(world, builder, buildingDefinition, placement.x, placement.y);
+  return planBuilding(world, builder, buildingDefinition, placement.x, placement.y, { approach: placement.approach });
 }
 
 export function issueBuildAtOrder(world: WorldState, builderId: string, buildingTypeId: string, x: number, y: number, unitDefinitions: WargusUnit[]): boolean {
@@ -4931,8 +4931,8 @@ export function buildingTypeForHudCommand(world: WorldState, command: string, un
   return buildingTypeId && canStartBuildingPlacementByType(world, worker, buildingTypeId) ? buildingTypeId : null;
 }
 
-function planBuilding(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number, options: { clearQueue?: boolean } = {}): boolean {
-  const approach = inspectBuildSiteApproach(world, builder, buildingDefinition, tileX, tileY);
+function planBuilding(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number, options: { clearQueue?: boolean; approach?: BuildSiteApproach } = {}): boolean {
+  const approach = options.approach ?? inspectBuildSiteApproach(world, builder, buildingDefinition, tileX, tileY);
   if (approach.path.length === 0 && !approach.inTouchRange) {
     return false;
   }
@@ -9271,9 +9271,10 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
       failPendingConstructionAtArrival(world, unit);
       return;
     }
-    const approach = inspectBuildSiteApproach(world, unit, buildingDefinition, order.tileX, order.tileY);
-    if (!approach.inTouchRange) {
+    const inTouchRange = isBuildSiteInTouchRange(world, unit, buildingDefinition, order.tileX, order.tileY);
+    if (!inTouchRange) {
       if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
+        const approach = inspectBuildSiteApproach(world, unit, buildingDefinition, order.tileX, order.tileY);
         unit.order.path = approach.path;
         unit.order.pathIndex = approach.path.length > 1 ? 1 : 0;
       }
@@ -9284,7 +9285,7 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
       stepMoveOrder(world, unit, tickSeconds);
       return;
     }
-    if (!canStartBuildingPlacement(world, unit, buildingDefinition) || !canPlaceReachableBuilding(world, unit, buildingDefinition, order.tileX, order.tileY)) {
+    if (!canStartBuildingPlacement(world, unit, buildingDefinition) || !canPlaceBuilding(world, buildingDefinition, order.tileX, order.tileY, unit.id)) {
       failPendingConstructionAtArrival(world, unit);
       return;
     }
@@ -11398,7 +11399,7 @@ function sourceResourceSourceRange(world: WorldState, unit: WorldUnit): number {
   return unit.radius + world.tileSize * 0.55;
 }
 
-function sourceUnitInteractionTargetPoint(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): { x: number; y: number } | null {
+function sourceUnitInteractionCandidatePath(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): WorldPathPoint[] {
   const bounds = unitFootprintBounds(world, target);
   const movement = movementKindForUnit(unit);
   const rangeTiles = Math.max(1, Math.ceil(rangePixels / world.tileSize));
@@ -11419,19 +11420,19 @@ function sourceUnitInteractionTargetPoint(world: WorldState, unit: WorldUnit, ta
   }
   candidates.sort((left, right) => left.distance - right.distance || left.edgeDistance - right.edgeDistance);
   for (const candidate of candidates) {
-    if (findPath(world, unit, candidate.x, candidate.y).length > 0) {
-      return { x: candidate.x, y: candidate.y };
+    const path = findPath(world, unit, candidate.x, candidate.y);
+    if (path.length > 0) {
+      return path;
     }
   }
-  return null;
+  return [];
 }
 
 function sourceUnitInteractionPath(world: WorldState, unit: WorldUnit, target: WorldUnit, rangePixels: number): Array<{ x: number; y: number }> {
   if (isInUnitFootprintRange(world, unit, target, rangePixels)) {
     return [];
   }
-  const point = sourceUnitInteractionTargetPoint(world, unit, target, rangePixels);
-  return point ? findPath(world, unit, point.x, point.y) : [];
+  return sourceUnitInteractionCandidatePath(world, unit, target, rangePixels);
 }
 
 interface AttackTargetPathResult {
@@ -17205,17 +17206,23 @@ function isCircleObjectiveUnit(unit: WorldUnit, requiredTypes: string[] | null =
   return true;
 }
 
-function findBuildPlacement(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit): { x: number; y: number } | null {
+type BuildSiteApproach = { path: WorldPathPoint[]; inTouchRange: boolean };
+
+function findBuildPlacement(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit): { x: number; y: number; approach: BuildSiteApproach } | null {
   const builderTileX = Math.floor(builder.x / world.tileSize);
   const builderTileY = Math.floor(builder.y / world.tileSize);
   for (let radius = 2; radius <= 14; radius += 1) {
     for (let y = builderTileY - radius; y <= builderTileY + radius; y += 1) {
       for (let x = builderTileX - radius; x <= builderTileX + radius; x += 1) {
         const onRing = x === builderTileX - radius || x === builderTileX + radius || y === builderTileY - radius || y === builderTileY + radius;
-        if (!onRing || !canPlaceReachableBuilding(world, builder, buildingDefinition, x, y)) {
+        if (!onRing || !canPlaceBuilding(world, buildingDefinition, x, y, builder.id)) {
           continue;
         }
-        return { x, y };
+        const approach = inspectBuildSiteApproach(world, builder, buildingDefinition, x, y);
+        if (approach.path.length === 0 && !approach.inTouchRange) {
+          continue;
+        }
+        return { x, y, approach };
       }
     }
   }
@@ -18624,7 +18631,7 @@ function buildSiteWorldPoint(world: WorldState, buildingDefinition: WargusUnit, 
   return { x: probe.x, y: probe.y };
 }
 
-function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): { path: WorldPathPoint[]; inTouchRange: boolean } {
+function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): BuildSiteApproach {
   const replacedUnits = sourceReplaceOnBuildTargets(world, buildingDefinition, tileX, tileY);
   const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
   const originalUnits = world.units;
@@ -18645,6 +18652,18 @@ function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildin
   } finally {
     world.units = originalUnits;
   }
+}
+
+function isBuildSiteInTouchRange(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): boolean {
+  const probe = createWorldUnit({
+    unit: buildingDefinition,
+    id: "build-site-touch-probe",
+    player: builder.player,
+    tileX,
+    tileY,
+    tileset: world.map.setup?.tileset ?? null
+  });
+  return isInTouchRange(builder, probe, world);
 }
 
 function sourceBuildSitePath(world: WorldState, builder: WorldUnit, buildingDefinition: WargusUnit, tileX: number, tileY: number): WorldPathPoint[] {
