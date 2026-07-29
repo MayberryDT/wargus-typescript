@@ -51,12 +51,15 @@ try {
   const first = unit("duplicate", "first");
   const second = unit("second", "second");
   const stableWorld = world([first, second]);
+  const serializedStableWorld = JSON.stringify(stableWorld);
   assert.equal(findWorldUnitById(stableWorld, "duplicate"), first,
     "Exact-ID lookup must return the matching authoritative array entry.");
   assert.equal(findWorldUnitById(stableWorld, "duplicate"), first,
     "Stable repeated lookup must preserve the matching object identity.");
   assert.equal(findWorldUnitById(stableWorld, "missing"), undefined,
     "Missing exact IDs must preserve legacy undefined behavior.");
+  assert.equal(JSON.stringify(stableWorld), serializedStableWorld,
+    "Lookup cache and diagnostics must remain absent from serialized world state.");
   assert.deepEqual(readWorldUnitIndexDiagnostics(), {
     "plan020.unitIdIndex.lookups": 3,
     "plan020.unitIdIndex.rebuilds": 1,
