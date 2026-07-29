@@ -20,7 +20,7 @@ const ALL_ROWS = [
 ].map(([profile, width, height], index) => ({ row: index + 1, profile, viewport: { width, height } }));
 const ROW_IDS = parseAssignedRows(PLAN_ID, process.env.WARGUS_MATRIX_ROWS);
 const ROWS = ROW_IDS.map((row) => ALL_ROWS[row - 1]);
-const OFFSETS_MS = [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250];
+const OFFSETS_MS = [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
 const ATTACK_COMMAND_OFFSET_MS = 250;
 const COMMAND_PAIR_DEADLINE_MS = 1000;

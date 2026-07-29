@@ -7,6 +7,9 @@ import vm from "node:vm";
 import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/checksummed-summary-publisher.mjs";
 
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
+const measuredPairStarts = loadLiteral(source, "OFFSETS_MS");
+assert.equal(JSON.stringify(measuredPairStarts), JSON.stringify([500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500]),
+  "The runner must schedule ten uniform pair starts from 500 through 9500 ms.");
 const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "realPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
@@ -166,24 +169,31 @@ assert.equal(diagnostics.scheduleInvalid, false);
 assert.equal(JSON.stringify(diagnostics.outcomes), JSON.stringify(outcomes), "Per-outcome sample deltas must be retained unchanged.");
 
 const lateFirstPair = await exerciseRealPair({
-  pairIndex: 0, pairOffsetMs: 250, moveIssueOffsetMs: 341.16, movePairingCompletedAtMs: 608.41
+  pairIndex: 0, pairOffsetMs: 500, moveIssueOffsetMs: 500.739034, movePairingCompletedAtMs: 767.378952
 });
-assert.equal(lateFirstPair.outcomes[0].scheduledIssueOffsetMs, 250);
-assert.equal(lateFirstPair.outcomes[1].scheduledIssueOffsetMs, 500, "Attack-move must have its own pair-offset-plus-250 target.");
-assert.equal(lateFirstPair.outcomes[1].actualIssueOffsetMs, 608.41);
+assert.equal(lateFirstPair.outcomes[0].scheduledIssueOffsetMs, 500);
+assert.equal(lateFirstPair.outcomes[1].scheduledIssueOffsetMs, 750, "Attack-move must have its own pair-offset-plus-250 target.");
+assert.equal(lateFirstPair.outcomes[1].actualIssueOffsetMs, 767.378952);
 assert.equal(helpers.commandTrialDiagnostics(lateFirstPair.outcomes, {
   inputToCommandSamples: Array(40), inputToNextRenderSamples: Array(40)
-}).scheduleInvalid, false, "The enriched 341.16/608.41 ms evidence must be valid against 250/500 ms targets.");
+}).scheduleInvalid, false, "The immutable attempt-1 500.739034/767.378952 ms evidence must be valid against 500/750 ms targets.");
+
+const replacementFirstPair = await exerciseRealPair({
+  pairIndex: 0, pairOffsetMs: 500, moveIssueOffsetMs: 515.549633, movePairingCompletedAtMs: 839.276768
+});
+assert.equal(helpers.commandTrialDiagnostics(replacementFirstPair.outcomes, {
+  inputToCommandSamples: Array(40), inputToNextRenderSamples: Array(40)
+}).scheduleInvalid, false, "The immutable replacement 515.549633/839.276768 ms evidence must be valid against 500/750 ms targets.");
 
 const earlyCompletedPair = await exerciseRealPair({
-  pairIndex: 1, pairOffsetMs: 1250, moveIssueOffsetMs: 1366.06, movePairingCompletedAtMs: 1452.10
+  pairIndex: 1, pairOffsetMs: 1500, moveIssueOffsetMs: 1616.06, movePairingCompletedAtMs: 1702.10
 });
-assert.equal(earlyCompletedPair.outcomes[0].actualIssueOffsetMs, 1366.06);
-assert.equal(earlyCompletedPair.outcomes[1].scheduledIssueOffsetMs, 1500);
-assert.equal(earlyCompletedPair.outcomes[1].actualIssueOffsetMs, 1500, "Attack-move must wait until its own target when move pairing completes early.");
+assert.equal(earlyCompletedPair.outcomes[0].actualIssueOffsetMs, 1616.06);
+assert.equal(earlyCompletedPair.outcomes[1].scheduledIssueOffsetMs, 1750);
+assert.equal(earlyCompletedPair.outcomes[1].actualIssueOffsetMs, 1750, "Attack-move must wait until its own target when move pairing completes early.");
 
 const allIssueTargets = [];
-for (const pairOffsetMs of [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250]) {
+for (const pairOffsetMs of [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500]) {
   const pair = await exerciseRealPair({
     pairIndex: allIssueTargets.length / 2, pairOffsetMs,
     moveIssueOffsetMs: pairOffsetMs, movePairingCompletedAtMs: pairOffsetMs + 250
@@ -191,19 +201,19 @@ for (const pairOffsetMs of [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250,
   allIssueTargets.push(...pair.outcomes.map((outcome) => outcome.scheduledIssueOffsetMs));
 }
 assert.equal(JSON.stringify(allIssueTargets), JSON.stringify([
-  250, 500, 1250, 1500, 2250, 2500, 3250, 3500, 4250, 4500,
-  5250, 5500, 6250, 6500, 7250, 7500, 8250, 8500, 9250, 9500
+  500, 750, 1500, 1750, 2500, 2750, 3500, 3750, 4500, 4750,
+  5500, 5750, 6500, 6750, 7500, 7750, 8500, 8750, 9500, 9750
 ]), "The measured command profile must derive exactly 20 issue targets within its first 10 seconds.");
 
-for (const [actualIssueOffsetMs, expectedInvalid] of [[499.99, true], [500, false], [750, false], [750.01, true]]) {
+for (const [actualIssueOffsetMs, expectedInvalid] of [[9749.99, true], [9750, false], [10000, false], [10000.01, true]]) {
   const boundary = helpers.commandTrialDiagnostics([
-    { success: true, scheduledIssueOffsetMs: 500, actualIssueOffsetMs }
+    { success: true, scheduledIssueOffsetMs: 9750, actualIssueOffsetMs }
   ], { inputToCommandSamples: [], inputToNextRenderSamples: [] });
   assert.equal(boundary.scheduleInvalid, expectedInvalid, `One-sided target lateness classification failed for ${actualIssueOffsetMs} ms.`);
 }
 assert.equal(helpers.commandTrialDiagnostics([
-  { success: true, scheduledIssueOffsetMs: 250, actualIssueOffsetMs: 400 },
-  { success: true, scheduledIssueOffsetMs: 250, actualIssueOffsetMs: 300 }
+  { success: true, scheduledIssueOffsetMs: 500, actualIssueOffsetMs: 760 },
+  { success: true, scheduledIssueOffsetMs: 750, actualIssueOffsetMs: 755 }
 ], { inputToCommandSamples: [], inputToNextRenderSamples: [] }).scheduleInvalid, true, "Issue timestamps must remain ordered.");
 
 const disposablePair = await exerciseRealPair({
@@ -475,4 +485,10 @@ function extractFunction(moduleSource, name) {
     if (depth === 0) return moduleSource.slice(start, index + 1);
   }
   assert.fail(`Unterminated function body for ${name}.`);
+}
+
+function loadLiteral(moduleSource, name) {
+  const match = moduleSource.match(new RegExp(`const ${name} = (\\[[^;]+\\]);`));
+  assert.notEqual(match, null, `Could not locate literal ${name}.`);
+  return vm.runInNewContext(match[1]);
 }
