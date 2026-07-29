@@ -11,7 +11,7 @@ const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
   "targetedVerifierPaths", "acceptedBaselineIdentity", "validateCaptureAttribution",
-  "successorAcceptance"
+  "successorAcceptance", "errorRecord"
 ]);
 
 assert.equal(helpers.commandPairReady({
@@ -62,9 +62,9 @@ const missingSamples = await helpers.awaitCommandPair({
   readSummary: async () => ({ inputToCommandSamples: [1, 2], inputToNextRenderSamples: [1] }),
   nowMs: () => fakeNow,
   delay: async (milliseconds) => { fakeNow += milliseconds; },
-  deadlineMs: 10,
-  rafTimeoutMs: 5,
-  intervalMs: 2
+  deadlineMs: 1000,
+  rafTimeoutMs: 100,
+  intervalMs: 250
 });
 assert.equal(missingSamples.ready, false, "Ever-changing RAF progress must not extend the absolute command deadline.");
 assert.equal(missingSamples.after.inputToNextRenderSamples.length, 1, "Deadline evidence must retain the last incomplete sample counts.");
@@ -79,6 +79,46 @@ const paired = await helpers.awaitCommandPair({
   intervalMs: 1
 });
 assert.equal(paired.ready, true, "Two paired samples and advancing RAF must finish inside the absolute deadline.");
+
+const stalledSummary = await helpers.awaitCommandPair({
+  before: { inputToCommandSamples: [], inputToNextRenderSamples: [] },
+  previousRaf: 100,
+  readRaf: async () => ({ timestamp: 101 }),
+  readSummary: () => new Promise(() => {}),
+  deadlineMs: 40,
+  rafTimeoutMs: 10,
+  intervalMs: 1
+});
+assert.equal(stalledSummary.ready, false, "A stalled performance summary must deterministically produce an invalid pair result.");
+
+const retainedRafFailure = retainedQualificationFailure(stalledRaf, { inputToCommandSamples: [], inputToNextRenderSamples: [] }, 100);
+assert.equal(retainedRafFailure.pairingFailureKind, "raf-timeout", "RAF timeout evidence must be explicitly distinguished.");
+assert.match(retainedRafFailure.cause.message, /^RAF timed out after 10 ms\.$/);
+assert.equal(JSON.stringify(retainedRafFailure.commandOutcome), JSON.stringify({
+  actualIssueOffsetMs: 250, success: false, inputToCommandDelta: 0, inputToNextRenderDelta: 0,
+  rawInputToCommandSliceMs: [], rawInputToNextRenderSliceMs: [], rafTimestamp: 100
+}), "RAF timeout terminal outcome must retain every delta and raw slice across the VM boundary.");
+
+const retainedSummaryFailure = retainedQualificationFailure(stalledSummary, { inputToCommandSamples: [], inputToNextRenderSamples: [] }, 100);
+assert.equal(retainedSummaryFailure.pairingFailureKind, "summary-timeout", "Performance-summary timeout evidence must be explicitly distinguished.");
+assert.match(retainedSummaryFailure.cause.message, /^performance summary timed out after [0-9.]+ ms\.$/);
+assert.equal(retainedSummaryFailure.commandOutcome.success, false);
+assert.equal(retainedSummaryFailure.commandOutcome.inputToCommandDelta, 0);
+assert.equal(retainedSummaryFailure.commandOutcome.inputToNextRenderDelta, 0);
+
+const retainedDeadlineFailure = retainedQualificationFailure(missingSamples, { inputToCommandSamples: [], inputToNextRenderSamples: [] }, 100);
+assert.equal(retainedDeadlineFailure.pairingFailureKind, "absolute-deadline", "The 1000 ms absolute command deadline must be distinguished from per-operation timeouts.");
+assert.equal(retainedDeadlineFailure.cause.message, "Real command pairing exceeded its absolute 1000 ms deadline.");
+assert.equal(retainedDeadlineFailure.commandOutcome.success, false);
+assert.equal(retainedDeadlineFailure.commandOutcome.inputToCommandDelta, 2);
+assert.equal(retainedDeadlineFailure.commandOutcome.inputToNextRenderDelta, 1);
+
+function retainedQualificationFailure(pair, before, previousRaf) {
+  const error = new Error("Missing required real-input outcome or next-render sample pairing.", { cause: pair.error });
+  error.name = "InvalidTrialError";
+  error.commandOutcome = helpers.commandOutcomeRecord({ actualIssueOffsetMs: 250, before, after: pair.after, rafTimestamp: pair.rafTimestamp, previousRaf });
+  return helpers.errorRecord(error);
+}
 
 const incompleteOutcome = helpers.commandOutcomeRecord({
   actualIssueOffsetMs: 250.5,

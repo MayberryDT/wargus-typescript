@@ -728,7 +728,24 @@ function stableJson(value) { return JSON.stringify(sort(value)); }
 function sort(value) { if (Array.isArray(value)) return value.map(sort); if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sort(value[key])])); return value; }
 function sha(value) { return createHash("sha256").update(value).digest("hex"); }
 function shaText(value) { return sha(Buffer.from(value)); }
-function errorRecord(error) { return { name: error?.name ?? "Error", message: String(error?.message ?? error), stack: error?.stack ?? null }; }
+function errorRecord(error) {
+  const cause = error?.cause !== undefined ? errorRecord(error.cause) : null;
+  const causeMessage = cause?.message ?? "";
+  let pairingFailureKind = null;
+  if (causeMessage.startsWith("RAF timed out after ") && causeMessage.endsWith(" ms.")) pairingFailureKind = "raf-timeout";
+  else if (causeMessage.startsWith("performance summary timed out after ") && causeMessage.endsWith(" ms.")) pairingFailureKind = "summary-timeout";
+  else if (causeMessage.startsWith("Real command pairing exceeded its absolute ") && causeMessage.endsWith(" ms deadline.")) pairingFailureKind = "absolute-deadline";
+  return {
+    name: error?.name ?? "Error",
+    message: String(error?.message ?? error),
+    stack: error?.stack ?? null,
+    ...(cause ? { cause } : {}),
+    ...(pairingFailureKind ? { pairingFailureKind } : {}),
+    ...(error?.commandOutcome !== undefined ? { commandOutcome: error.commandOutcome } : {}),
+    ...(error?.commandOutcomes !== undefined ? { commandOutcomes: error.commandOutcomes } : {}),
+    ...(error?.diagnostics !== undefined && error.diagnostics !== null ? { diagnostics: error.diagnostics } : {})
+  };
+}
 function writeJson(directory, name, value) { writeFileSync(path.join(directory, name), `${JSON.stringify(value, null, 2)}\n`, "utf8"); }
 function writeChecksums(directory) { writeJson(directory, "sha256.json", readdirSync(directory).filter((name) => name !== "sha256.json").sort().map((name) => ({ name, sha256: sha(readFileSync(path.join(directory, name))) }))); }
 function verifyChecksums(directory) {
