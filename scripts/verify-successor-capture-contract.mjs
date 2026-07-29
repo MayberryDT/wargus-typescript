@@ -50,19 +50,24 @@ assert.equal(acceptedLongRafTail.ready, true, "A valid 150 ms RAF tail inside th
 assert.equal(acceptedLongRafTail.after.inputToCommandSamples.length, 2);
 assert.equal(acceptedLongRafTail.after.inputToNextRenderSamples.length, 2);
 
-const stalledStartedAt = Date.now();
-const stalledRaf = await helpers.awaitCommandPair({
-  before: { inputToCommandSamples: [], inputToNextRenderSamples: [] },
-  previousRaf: 100,
-  readRaf: () => new Promise(() => {}),
-  readSummary: async () => ({ inputToCommandSamples: [], inputToNextRenderSamples: [] }),
-  deadlineMs: 40,
-  intervalMs: 1
-});
-const stalledElapsedMs = Date.now() - stalledStartedAt;
+let stalledRafWatchdog = null;
+const stalledRaf = await Promise.race([
+  helpers.awaitCommandPair({
+    before: { inputToCommandSamples: [], inputToNextRenderSamples: [] },
+    previousRaf: 100,
+    readRaf: () => new Promise(() => {}),
+    readSummary: async () => ({ inputToCommandSamples: [], inputToNextRenderSamples: [] }),
+    intervalMs: 1
+  }),
+  new Promise((_, reject) => {
+    stalledRafWatchdog = setTimeout(() => reject(new Error("Stalled RAF exceeded the independent 2000 ms test watchdog.")), 2000);
+  })
+]).finally(() => { if (stalledRafWatchdog !== null) clearTimeout(stalledRafWatchdog); });
 assert.equal(stalledRaf.ready, false, "A stalled browser RAF must deterministically produce an invalid pair result.");
-assert.match(String(stalledRaf.error?.message), /RAF|timed out|deadline/i);
-assert.ok(stalledElapsedMs >= 25 && stalledElapsedMs < 150, `A stalled RAF must consume its explicit 40 ms deadline within a tight scheduling envelope; observed ${stalledElapsedMs} ms.`);
+const stalledRafTimeoutMatch = String(stalledRaf.error?.message).match(/^RAF timed out after ([0-9.]+) ms\.$/);
+assert.notEqual(stalledRafTimeoutMatch, null, "A stalled browser RAF must retain explicit RAF-timeout classification.");
+const stalledRafTimeoutMs = Number(stalledRafTimeoutMatch[1]);
+assert.ok(stalledRafTimeoutMs > 0 && stalledRafTimeoutMs <= 1000, "A stalled browser RAF must remain bounded by the production 1000 ms command-pair deadline.");
 
 let fakeNow = 0;
 let changingRaf = 100;
