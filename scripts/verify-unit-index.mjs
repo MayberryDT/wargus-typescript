@@ -127,6 +127,13 @@ try {
   const deadWorld = world([dead], 3);
   assert.equal(findWorldUnitById(deadWorld, "dead"), dead,
     "Exact-ID lookup must retain dead units while they remain in the authoritative array.");
+  const lifecycleDiagnostics = readWorldUnitIndexDiagnostics();
+  assert.deepEqual(lifecycleDiagnostics, {
+    "plan020.unitIdIndex.lookups": 14,
+    "plan020.unitIdIndex.rebuilds": 11,
+    "plan020.unitIdIndex.invalidations": 1,
+    "plan020.unitIdIndex.duplicateIds": 0
+  }, "Lifecycle diagnostics must count lookups, rebuild causes, and explicit invalidation exactly.");
 
   resetWorldUnitIndexDiagnostics();
   const duplicateFirst = unit("same-id", "first duplicate");
@@ -139,7 +146,8 @@ try {
     /Duplicate world unit IDs: same-id/,
     "Development verification must surface duplicate IDs as a contract failure."
   );
-  assert.deepEqual(readWorldUnitIndexDiagnostics(), {
+  const duplicateDiagnostics = readWorldUnitIndexDiagnostics();
+  assert.deepEqual(duplicateDiagnostics, {
     "plan020.unitIdIndex.lookups": 1,
     "plan020.unitIdIndex.rebuilds": 1,
     "plan020.unitIdIndex.invalidations": 0,
@@ -147,7 +155,8 @@ try {
   }, "Duplicate diagnostics must record the duplicate while preserving first-match lookup.");
 
   resetWorldUnitIndexDiagnostics();
-  assert.deepEqual(readWorldUnitIndexDiagnostics(), {
+  const resetDiagnostics = readWorldUnitIndexDiagnostics();
+  assert.deepEqual(resetDiagnostics, {
     "plan020.unitIdIndex.lookups": 0,
     "plan020.unitIdIndex.rebuilds": 0,
     "plan020.unitIdIndex.invalidations": 0,
@@ -158,7 +167,8 @@ try {
   const commandWorld = { ...world([commandUnit], 9), buttonDefinitions: [] };
   assert.equal(orders.selectionHasSpecialHotkeyMeaning(commandWorld, ["command-unit"], "KeyS", 1), false);
   assert.equal(orders.selectionHasSpecialHotkeyMeaning(commandWorld, ["command-unit"], "KeyS", 1), false);
-  assert.deepEqual(readWorldUnitIndexDiagnostics(), {
+  const commandDiagnostics = readWorldUnitIndexDiagnostics();
+  assert.deepEqual(commandDiagnostics, {
     "plan020.unitIdIndex.lookups": 2,
     "plan020.unitIdIndex.rebuilds": 1,
     "plan020.unitIdIndex.invalidations": 0,
@@ -181,6 +191,20 @@ try {
   assert.deepEqual(undetectableMutations, [],
     "Every same-reference, same-length runtime mutation requires an owned explicit invalidation case.");
 
+  console.log(JSON.stringify({
+    diagnostics: {
+      lifecycle: lifecycleDiagnostics,
+      duplicate: duplicateDiagnostics,
+      reset: resetDiagnostics,
+      commandPath: commandDiagnostics
+    },
+    mutationInventory: {
+      assignments: assignments.length,
+      pushes: pushes.length,
+      sameReferenceSameLength: undetectableMutations.length,
+      total: assignments.length + pushes.length
+    }
+  }));
   console.log("Unit ID index verified (first-match parity, lifecycle rebuilds, explicit invalidation, independent worlds, load identity, dead units, duplicates, diagnostics, and 22 runtime mutations).");
 } finally {
   rmSync(output, { recursive: true, force: true });
