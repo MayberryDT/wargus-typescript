@@ -52,14 +52,14 @@ export function rawTerrainMaskForSlot(tileset: WargusTilesetTerrain | null | und
 }
 
 export function rawTerrainMaskForTile(tileset: WargusTilesetTerrain | null | undefined, tile: number): number | null {
-  return rawTerrainMaskForSlot(tileset, terrainSlotForTile(tile));
+  return rawTerrainMaskForSlot(tileset, rawTerrainSlotForTile(tile));
 }
 
 export function passabilityTerrainMaskForTile(tileset: WargusTilesetTerrain | null | undefined, tile: number): number | null {
   if (tile === 126) {
     return TERRAIN_FLAG_BITS.land;
   }
-  return rawTerrainMaskForTile(tileset, tile);
+  return rawTerrainMaskForSlot(tileset, passabilityTerrainSlotForTile(tile));
 }
 
 export function terrainMaskHasFlag(mask: number, flag: string): boolean {
@@ -88,6 +88,10 @@ function terrainMaskForFlags(flags: readonly string[]): number {
   return mask;
 }
 
-function terrainSlotForTile(tile: number): number {
+function passabilityTerrainSlotForTile(tile: number): number {
   return Math.floor(Math.max(0, tile) / 0x10) * 0x10;
+}
+
+function rawTerrainSlotForTile(tile: number): number {
+  return tile & 0xfff0;
 }

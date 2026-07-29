@@ -51,7 +51,9 @@ try {
       const tile = entry.slot + 5;
       const rawMask = metadata.rawTerrainMaskForTile(tileset, tile);
       assert.equal(rawMask, legacyMask(entry.flags),
-        `${tileset.name} slot ${entry.slot} raw mask must match legacy source flags.`);
+        ` slot  raw mask must match legacy source flags.`);
+      assert.equal(metadata.rawTerrainMaskForSlot(tileset, entry.slot), rawMask,
+        ` slot  raw slot and tile lookups must agree.`);
       for (const flag of consumedFlags) {
         assert.equal(metadata.terrainMaskHasFlag(rawMask, flag), entry.flags.includes(flag),
           `${tileset.name} slot ${entry.slot} must preserve ${flag}.`);
@@ -65,6 +67,11 @@ try {
   assert.equal(metadata.rawTerrainMaskForTile(manifest.tilesets[0], 0x7fff), null, "Unknown raw slots retain the legacy null fallback.");
   assert.equal(metadata.passabilityTerrainMaskForTile(manifest.tilesets[0], 0x7fff), null,
     "Unknown passability slots retain the legacy null fallback.");
+  assert.equal(metadata.rawTerrainMaskForTile(manifest.tilesets[0], -1), null,
+    "Raw tile normalization must preserve the world consumer legacy bitwise slot fallback.");
+  assert.equal(metadata.passabilityTerrainMaskForTile(manifest.tilesets[0], -1),
+    metadata.rawTerrainMaskForTile(manifest.tilesets[0], 0),
+    "Passability tile normalization must preserve its legacy negative-tile clamp.");
 
   for (const tileset of manifest.tilesets) {
     const raw126 = metadata.rawTerrainMaskForTile(tileset, 126);
@@ -148,6 +155,62 @@ try {
     assert.equal(worldModule.initialForestResourcesForWorld(removedTreeWorld).length, 1,
       `${tileset.name} forest initialization must read raw tile-126 metadata.`);
   }
+
+  const map = manifest.maps.find((candidate) => candidate.path === "maps/ladder/Garden of war BNE.pud.smp.gz");
+  assert.ok(map?.setupJson, "The opacity fixture requires the accepted Garden of War setup.");
+  const setup = JSON.parse(readFileSync(resolve(root, "public/wargus", map.setupJson), "utf8"));
+  const visibilityWorld = worldModule.createInitialWorld(
+    map,
+    manifest.units,
+    setup,
+    manifest.upgrades,
+    manifest.missiles,
+    manifest.spells,
+    manifest.allowRules,
+    manifest.dependencies,
+    manifest.buttons,
+    manifest.engineSettings,
+    manifest.aiDefinitions,
+    manifest.unitDatabase,
+    manifest.tilesets,
+    manifest.animations
+  );
+  const sightUnit = visibilityWorld.units.find((unit) => unit.player === visibilityWorld.visibilityPlayer && unit.hitPoints > 0);
+  assert.ok(sightUnit, "The opacity fixture requires one live local unit.");
+  visibilityWorld.units = [sightUnit];
+  visibilityWorld.tiles.fill(0);
+  sightUnit.x = 10 * visibilityWorld.tileSize + visibilityWorld.tileSize / 2;
+  sightUnit.y = 10 * visibilityWorld.tileSize + visibilityWorld.tileSize / 2;
+  sightUnit.tileWidth = 1;
+  sightUnit.tileHeight = 1;
+  sightUnit.sightRangeTiles = 4;
+  sightUnit.elevated = false;
+  visibilityWorld.tiles[10 * visibilityWorld.map.width + 11] = 126;
+  visibilityWorld.engineSettings.fogOfWarEnabled = true;
+  visibilityWorld.engineSettings.fieldOfViewType = "shadow-casting";
+  visibilityWorld.engineSettings.opaqueTerrainTypes = ["forest"];
+  visibilityWorld.engineSettings.insideDefault = false;
+  visibilityWorld.engineSettings.revelationType = "no-revelation";
+  worldModule.updateVisibility(visibilityWorld);
+  const occludedTileIndex = 10 * visibilityWorld.map.width + 12;
+  const opaqueTileIndex = 10 * visibilityWorld.map.width + 11;
+  assert.equal(visibilityWorld.visibleTiles[occludedTileIndex], 0,
+    "Opacity/FOV must read raw forest metadata for tile 126 instead of the passability land-only override.");
+
+  visibilityWorld.tiles[opaqueTileIndex] = 0x7fff;
+  worldModule.updateVisibility(visibilityWorld);
+  assert.equal(visibilityWorld.visibleTiles[occludedTileIndex], 1,
+    "Unknown raw slots must retain the legacy transparent opacity fallback.");
+
+  visibilityWorld.tiles[opaqueTileIndex] = 128;
+  visibilityWorld.engineSettings.opaqueTerrainTypes = ["rock"];
+  worldModule.updateVisibility(visibilityWorld);
+  assert.equal(visibilityWorld.visibleTiles[occludedTileIndex], 0,
+    "Raw rock terrain must remain opaque outside the inside-default exception.");
+  visibilityWorld.engineSettings.insideDefault = true;
+  worldModule.updateVisibility(visibilityWorld);
+  assert.equal(visibilityWorld.visibleTiles[occludedTileIndex], 1,
+    "Inside-default FOV must preserve the legacy rock-transparency exception.");
 
   const source = readFileSync(resolve(root, "src/simulation/terrainMetadata.ts"), "utf8");
   const passabilitySource = readFileSync(resolve(root, "src/simulation/passability.ts"), "utf8");

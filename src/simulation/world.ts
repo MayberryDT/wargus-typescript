@@ -1,5 +1,6 @@
 import type { WargusAiDefinition, WargusAllowRule, WargusAnimation, WargusButton, WargusDependencyRule, WargusEngineSettings, WargusMap, WargusMapSetup, WargusMissile, WargusSpeedFactors, WargusSpell, WargusTilesetTerrain, WargusUnit, WargusUnitDatabaseEntry, WargusUpgrade } from "../wargus/types";
 import { sourceRaceScoreForUnitDefinition } from "../wargus/sourceRace";
+import { rawTerrainMaskForTile, terrainMaskHasFlag } from "./terrainMetadata";
 
 const WARGUS_SPEED_TO_PIXELS_PER_SECOND = 8.4;
 
@@ -1251,9 +1252,9 @@ export function initialForestResourcesForWorld(world: Pick<WorldState, "map" | "
 }
 
 function isSourceForestTile(world: Pick<WorldState, "tilesetTerrain">, tile: number): boolean {
-  const flags = world.tilesetTerrain?.slots.find((entry) => entry.slot === tileSlot(tile))?.flags;
-  if (flags) {
-    return flags.includes("forest");
+  const rawMask = rawTerrainMaskForTile(world.tilesetTerrain, tile);
+  if (rawMask !== null) {
+    return terrainMaskHasFlag(rawMask, "forest");
   }
   const slot = tileSlot(tile);
   return slot === 0x070 || (slot >= 0x700 && slot <= 0x7df);
@@ -2026,12 +2027,12 @@ function isSourceOpaqueTerrainTile(world: WorldState, tileX: number, tileY: numb
   if (tileX < 0 || tileY < 0 || tileX >= world.map.width || tileY >= world.map.height) {
     return false;
   }
-  const flags = world.tilesetTerrain?.slots.find((entry) => entry.slot === tileSlot(world.tiles[tileY * world.map.width + tileX] ?? 0))?.flags ?? [];
+  const rawMask = rawTerrainMaskForTile(world.tilesetTerrain, world.tiles[tileY * world.map.width + tileX] ?? 0) ?? 0;
   return world.engineSettings.opaqueTerrainTypes.some((type) => {
     if (world.engineSettings.insideDefault && type === "rock") {
       return false;
     }
-    return flags.includes(type);
+    return terrainMaskHasFlag(rawMask, type);
   });
 }
 

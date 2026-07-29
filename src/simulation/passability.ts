@@ -1,4 +1,5 @@
 import { isUnitHiddenInConstruction, isUnitInsideResourceSource, type WorldState, type WorldUnit } from "./world";
+import { passabilityTerrainMaskForTile, terrainMaskHasFlag } from "./terrainMetadata";
 
 export type MovementKind = "land" | "naval" | "fly";
 type PassabilityBlockers = "all" | "path-planning" | "static" | "none";
@@ -22,19 +23,19 @@ function tilePassabilityCost(world: WorldState, x: number, y: number, movement: 
     return Number.POSITIVE_INFINITY;
   }
   const tile = world.tiles[y * world.map.width + x] ?? 0;
-  const sourceFlags = sourceTileFlags(world, tile);
+  const sourceMask = passabilityTerrainMaskForTile(world.tilesetTerrain, tile);
   let terrainPassable: boolean;
   if (movement === "fly") {
     terrainPassable = true;
-  } else if (sourceFlags) {
+  } else if (sourceMask !== null) {
     if (movement === "naval") {
       terrainPassable = (
-        (sourceFlags.has("water") || sourceFlags.has("coast"))
-        && !sourceFlags.has("land")
-        && !sourceFlags.has("unpassable")
+        (terrainMaskHasFlag(sourceMask, "water") || terrainMaskHasFlag(sourceMask, "coast"))
+        && !terrainMaskHasFlag(sourceMask, "land")
+        && !terrainMaskHasFlag(sourceMask, "unpassable")
       );
     } else {
-      terrainPassable = sourceFlags.has("land") && !sourceFlags.has("unpassable") && !sourceFlags.has("forest") && !sourceFlags.has("rock") && !sourceFlags.has("wall");
+      terrainPassable = terrainMaskHasFlag(sourceMask, "land") && !terrainMaskHasFlag(sourceMask, "unpassable") && !terrainMaskHasFlag(sourceMask, "forest") && !terrainMaskHasFlag(sourceMask, "rock") && !terrainMaskHasFlag(sourceMask, "wall");
     }
   } else {
     terrainPassable = movement === "naval" ? isWaterTile(tile) : isLandTile(tile);
@@ -117,7 +118,8 @@ export function isSourceHarvestableWoodTile(world: WorldState, tile: number): bo
   if (isSourceRemovedTreeTile(tile)) {
     return false;
   }
-  return sourceTileFlags(world, tile)?.has("forest") ?? isHarvestableWoodTile(tile);
+  const sourceMask = passabilityTerrainMaskForTile(world.tilesetTerrain, tile);
+  return sourceMask !== null ? terrainMaskHasFlag(sourceMask, "forest") : isHarvestableWoodTile(tile);
 }
 
 function blockerCrossingCost(world: WorldState, tileX: number, tileY: number, movement: MovementKind, movingUnitId: string | undefined, blockers: Exclude<PassabilityBlockers, "none">): number {
@@ -173,8 +175,10 @@ export function isWaterTile(tile: number): boolean {
 }
 
 export function isSourceWaterTile(world: WorldState, tile: number): boolean {
-  const flags = sourceTileFlags(world, tile);
-  return flags ? (flags.has("water") || flags.has("coast")) && !flags.has("land") : isWaterTile(tile);
+  const sourceMask = passabilityTerrainMaskForTile(world.tilesetTerrain, tile);
+  return sourceMask !== null
+    ? (terrainMaskHasFlag(sourceMask, "water") || terrainMaskHasFlag(sourceMask, "coast")) && !terrainMaskHasFlag(sourceMask, "land")
+    : isWaterTile(tile);
 }
 
 export function isLandTile(tile: number): boolean {
@@ -186,17 +190,10 @@ export function isBuildableTerrainTile(tile: number): boolean {
 }
 
 export function isSourceBuildableTerrainTile(world: WorldState, tile: number): boolean {
-  const flags = sourceTileFlags(world, tile);
-  return flags ? flags.has("land") && !flags.has("no-building") && !flags.has("unpassable") && !flags.has("forest") && !flags.has("rock") && !flags.has("wall") : isBuildableTerrainTile(tile);
-}
-
-function sourceTileFlags(world: WorldState, tile: number): Set<string> | null {
-  if (isSourceRemovedTreeTile(tile)) {
-    return new Set(["land"]);
-  }
-  const slot = tileSlot(tile);
-  const flags = world.tilesetTerrain?.slots.find((entry) => entry.slot === slot)?.flags;
-  return flags ? new Set(flags) : null;
+  const sourceMask = passabilityTerrainMaskForTile(world.tilesetTerrain, tile);
+  return sourceMask !== null
+    ? terrainMaskHasFlag(sourceMask, "land") && !terrainMaskHasFlag(sourceMask, "no-building") && !terrainMaskHasFlag(sourceMask, "unpassable") && !terrainMaskHasFlag(sourceMask, "forest") && !terrainMaskHasFlag(sourceMask, "rock") && !terrainMaskHasFlag(sourceMask, "wall")
+    : isBuildableTerrainTile(tile);
 }
 
 function isSourceRemovedTreeTile(tile: number): boolean {
