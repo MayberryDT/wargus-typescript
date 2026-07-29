@@ -110,10 +110,12 @@ expectIncludes("browser minimap fog", hudSource, [
   "function minimapTileTouchesVisibleTile"
 ]);
 expectIncludes("save FOV/fog", saveSource, [
+  "exploredTilesByPlayer: world.exploredTilesByPlayer.map",
   "exploredTiles: [...world.exploredTiles]",
   "visibilityReveals: world.visibilityReveals",
   "revealedPlayers: world.revealedPlayers",
-  "world.exploredTiles = Uint8Array.from",
+  "world.exploredTilesByPlayer = normalizeExploredTilesByPlayer",
+  "world.exploredTiles = world.exploredTilesByPlayer[world.visibilityPlayer]",
   "world.visibilityReveals = normalizeVisibilityReveals",
   "world.revealedPlayers = normalizePlayerIdArray"
 ]);
