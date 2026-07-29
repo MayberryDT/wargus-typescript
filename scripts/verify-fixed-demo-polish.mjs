@@ -80,7 +80,11 @@ expect(!files.orders.includes("unit.x = latestDropoff.x;"), "Workers should not 
 expect(!files.orders.includes("unit.y = latestDropoff.y;"), "Workers should not physically move to the center of the dropoff and get trapped.");
 expect(!files.orders.includes("resolveMobileUnitSeparation"), "Mobile units should not push other mobile units out of the way.");
 expect(!files.orders.includes("tryDisplaceMobileUnit"), "Mobile collision handling should not displace idle units as a separation pass.");
-expect(files.orders, "isTilePassable(world, nextTile.x, nextTile.y, movementKindForUnit(unit), unit.id)", "Movement should continue to consult passability before entering a tile.");
+const liveMoveStep = files.orders.match(/function stepMoveOrder[\s\S]*?\n}\n\nfunction isUsableReplacementPath/)?.[0] ?? "";
+expect(
+  (liveMoveStep.match(/isUnitFootprintPassable\(/g) ?? []).length === 2 && !liveMoveStep.includes("isTilePassable("),
+  "Movement should consult whole-unit footprint passability at both live movement gates."
+);
 expect(files.orders, "function isUsableReplacementPath", "Blocked movement should reject empty or current-tile replacement paths.");
 expect(files.orders, "function stopUnusablePathOrder", "Blocked movement should stop instead of walking in place when no usable path exists.");
 expect(!files.passability.includes("unit.speed > 0"), "Mobile units should block movement instead of being ignored as blockers.");
@@ -92,7 +96,15 @@ expect(files.world, "export function isUnitInsideResourceSource", "World helpers
 expect(files.world, "unit.order.phase === \"to-dropoff\" && unit.order.returnSeconds > 0", "Dropoff return wait should hide workers inside the depot.");
 expect(files.main, "__WARGUS_TS_PLAY_AUDIO_FIXTURE__", "Browser smoke should verify multiple real sound-effect ids and music startup.");
 expect(files.main, "type LoadingScreenState", "Browser startup should use a structured loading screen state instead of a single developer text string.");
-expect(files.main, "const loadingLayer = new Container();", "Browser startup should render a full-screen loading layer.");
+expect(
+  files.main.includes("type LoadingScreenState")
+    && files.main.includes("const loadingLayer = createTrackedContainer();")
+    && files.main.includes("loadingLayer.visible = loadingState.visible;")
+    && files.main.includes("loadingProgress.rect")
+    && files.main.includes("First load may take a moment while the browser prepares the battlefield.")
+    && files.main.includes("showLoadingError"),
+  "Browser startup should render a structured, tracked, visible loading layer."
+);
 expect(files.main, "loadingProgress.rect", "Browser startup loading screen should include a visible progress bar.");
 expect(files.main, "First load may take a moment while the browser prepares the battlefield.", "Browser startup loading screen should explain long first loads in user-facing language.");
 expect(files.main, "Loading battlefield art", "Browser startup should show a user-facing asset preparation phase.");
