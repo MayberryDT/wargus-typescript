@@ -21,6 +21,7 @@ try {
     resolve(root, "node_modules/typescript/bin/tsc"),
     "--ignoreConfig",
     "src/simulation/worldSelectors.ts",
+    "src/simulation/orders.ts",
     "--outDir", output,
     "--target", "ES2022",
     "--module", "CommonJS",
@@ -37,6 +38,7 @@ try {
 
   const require = createRequire(import.meta.url);
   const selectors = require(join(output, "simulation/worldSelectors.js"));
+  const orders = require(join(output, "simulation/orders.js"));
   const {
     assertWorldUnitIndexIntegrity,
     findWorldUnitById,
@@ -148,6 +150,17 @@ try {
     "plan020.unitIdIndex.invalidations": 0,
     "plan020.unitIdIndex.duplicateIds": 0
   }, "Plan-local diagnostics must reset without entering world state.");
+
+  const commandUnit = { ...unit("command-unit", "command unit"), player: 1, typeId: "unit-footman" };
+  const commandWorld = { ...world([commandUnit], 9), buttonDefinitions: [] };
+  assert.equal(orders.selectionHasSpecialHotkeyMeaning(commandWorld, ["command-unit"], "KeyS", 1), false);
+  assert.equal(orders.selectionHasSpecialHotkeyMeaning(commandWorld, ["command-unit"], "KeyS", 1), false);
+  assert.deepEqual(readWorldUnitIndexDiagnostics(), {
+    "plan020.unitIdIndex.lookups": 2,
+    "plan020.unitIdIndex.rebuilds": 1,
+    "plan020.unitIdIndex.invalidations": 0,
+    "plan020.unitIdIndex.duplicateIds": 0
+  }, "Repeated command-path exact-ID resolution must use the transient index through the private hot wrapper.");
 
   const ordersSource = readFileSync(resolve(root, "src/simulation/orders.ts"), "utf8");
   const fixtureBoundary = ordersSource.indexOf("export function runPlan014AiScoutEligibilityFixture");

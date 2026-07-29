@@ -6,6 +6,7 @@ import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getP
 import { findPath, findPathResult } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
+import { findWorldUnitById } from "./worldSelectors";
 
 export { sourceDefaultGameSpeed } from "./world";
 export { findNextIdleWorker, isGoldOrWoodWorkerUnit, isIdleWorkerForPlayer } from "./workerSelection";
@@ -11336,7 +11337,7 @@ function queuedPathOrigin(unit: WorldUnit): { x: number; y: number } | null {
 }
 
 function findUnit(world: WorldState, unitId: string): WorldUnit | undefined {
-  return world.units.find((unit) => unit.id === unitId);
+  return findWorldUnitById(world, unitId);
 }
 
 export function canReceiveMoveOrders(unit: WorldUnit): boolean {
