@@ -28,7 +28,8 @@ expect(main, "__WARGUS_TS_PERF_SUMMARY__", "Performance capture should expose a 
 expect(main, "__WARGUS_TS_PERF_RESET__", "Performance capture should expose a reset hook.");
 expect(main, "__WARGUS_TS_PERF_ACTION__", "Command profile capture should expose a strict smoke-only production action hook.");
 expect(main, "runtimePerformanceCollector.completeRenderPreparation(performance.now())", "Input-to-next-render timing must settle only after render preparation completes.");
-expect(main, "const selectionHotkeyInputToken = runtimePerformanceCollector.beginInput(performance.now())", "Real selection hotkeys must begin an input-to-command and next-render sample.");
+expect(main, "const selectionHotkeyStartedAt = performance.now()", "Real selection hotkeys must retain their pre-dispatch start time.");
+expect(main, "const selectionHotkeyInputToken = runtimePerformanceCollector.beginInput(selectionHotkeyStartedAt)", "Handled real selection hotkeys must begin an input-to-command and next-render sample.");
 expect(main, "runtimePerformanceCollector.finishInput(selectionHotkeyInputToken, performance.now())", "Real selection hotkeys must finish their input-to-command sample.");
 expect(main, "entry.startTime >= performanceCaptureStartedAt", "Long-task capture must reject stale observer entries.");
 expect(main, "world.aiStates = []", "Performance profiles should neutralize ambient AI.");

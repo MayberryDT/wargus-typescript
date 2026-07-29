@@ -3858,10 +3858,11 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (world && manifest && selectedUnitIds.length > 0) {
-    const selectionHotkeyInputToken = runtimePerformanceCollector.beginInput(performance.now());
+    const selectionHotkeyStartedAt = performance.now();
     const result = executeSelectionHotkey(world, manifest, event.code, selectedUnitIds, commandPage, pendingWorldCommand, { shiftKey: event.shiftKey });
-    runtimePerformanceCollector.finishInput(selectionHotkeyInputToken, performance.now());
     if (result.handled) {
+      const selectionHotkeyInputToken = runtimePerformanceCollector.beginInput(selectionHotkeyStartedAt);
+      runtimePerformanceCollector.finishInput(selectionHotkeyInputToken, performance.now());
       event.preventDefault();
       commandPage = result.commandPage;
       pendingWorldCommand = result.pendingWorldCommand;
