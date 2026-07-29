@@ -51,9 +51,9 @@ try {
       const tile = entry.slot + 5;
       const rawMask = metadata.rawTerrainMaskForTile(tileset, tile);
       assert.equal(rawMask, legacyMask(entry.flags),
-        ` slot  raw mask must match legacy source flags.`);
+        `${tileset.name} slot ${entry.slot} raw mask must match legacy source flags.`);
       assert.equal(metadata.rawTerrainMaskForSlot(tileset, entry.slot), rawMask,
-        ` slot  raw slot and tile lookups must agree.`);
+        `${tileset.name} slot ${entry.slot} raw slot and tile lookups must agree.`);
       for (const flag of consumedFlags) {
         assert.equal(metadata.terrainMaskHasFlag(rawMask, flag), entry.flags.includes(flag),
           `${tileset.name} slot ${entry.slot} must preserve ${flag}.`);
@@ -233,7 +233,7 @@ try {
     "plan019.terrainMetadata.slotLookups": 0
   }, "Diagnostics must reset independently of gameplay state.");
 
-  console.log(`Terrain metadata cache verified (${manifest.tilesets.length} tilesets, ${checkedSlots} slots, raw/passability tile-126 separation, cache reuse, passability/forest parity).`);
+  console.log(`Terrain metadata cache verified (${manifest.tilesets.length} tilesets, ${checkedSlots} slots, raw/passability tile-126 separation, cache reuse, passability/forest/opacity parity).`);
 } finally {
   rmSync(output, { recursive: true, force: true });
 }
