@@ -13,7 +13,7 @@
 
 ## Status
 
-- **Status:** IN PROGRESS
+- **Status:** DONE-VERIFIED
 - **Wave:** 1 — Measurement foundation
 - **Priority:** P1
 - **Effort:** M remaining acceptance work
@@ -24,11 +24,7 @@
 - **Implementation checkpoint:** `e80215e`
 - **Roadmap rewrite base:** `6049a986b0e5b51459f29a24e3543c5e36b792a3`
 
-Plan 018 is unfinished. It may not proceed to capture or become
-`DONE-VERIFIED` until Wave 0 is complete and the fixed-tick determinism proof
-plus the full hardware-qualified seven-row matrix, with three valid trials per
-row, are accepted. Partial, software-rendered, single-trial, or `/tmp`-only
-evidence cannot satisfy this gate.
+Plan 018 is accepted at capture commit `033629474959122749f6acb013ed6c2a0c0d2556`. The fixed-tick proof and full hardware-qualified seven-row matrix contain 21/21 qualified trials with zero invalid attempts. Failed baseline budgets are recorded in `plans/evidence/018.md` and remain work for Plans 019–025.
 
 ## Why this matters
 
@@ -370,18 +366,18 @@ budget fails.
 - [x] Smoke-only deterministic profiles and capture hooks exist.
 - [x] Input-to-command and input-to-next-render-callback are distinct.
 - [x] Display-object instrumentation covers the recorded renderer surfaces.
-- [ ] Wave 0 is complete and accepted.
-- [ ] Required non-browser gates, assets, and build pass at the capture commit.
-- [ ] Fixed-tick determinism proof is accepted.
-- [ ] The hardware renderer and environment are qualified.
-- [ ] All seven matrix rows have three independent valid trials.
-- [ ] Real command inputs satisfy every required outcome and sample count.
-- [ ] Per-trial statistics and worst-trial row results are recorded.
-- [ ] Heap growth uses the canonical `t15`/`t30` formula.
-- [ ] Durable raw artifacts, resource summary, environment metadata, and
+- [x] Wave 0 is complete and accepted.
+- [x] Required non-browser gates, assets, and build pass at the capture commit.
+- [x] Fixed-tick determinism proof is accepted.
+- [x] The hardware renderer and environment are qualified.
+- [x] All seven matrix rows have three independent valid trials.
+- [x] Real command inputs satisfy every required outcome and sample count.
+- [x] Per-trial statistics and worst-trial row results are recorded.
+- [x] Heap growth uses the canonical `t15`/`t30` formula.
+- [x] Durable raw artifacts, resource summary, environment metadata, and
   SHA-256 checksums are verified.
-- [ ] Normalized committed evidence is accepted without overclaiming failures.
-- [ ] `plans/README.md` records the final acceptance commit and date.
+- [x] Normalized committed evidence is accepted without overclaiming failures.
+- [x] `plans/README.md` records the final acceptance commit and date.
 
 ## STOP conditions
 
