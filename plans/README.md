@@ -151,9 +151,9 @@ individual exit packets or integration alone.
 | 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | `65bfd1a` / user acceptance `8655330` | [016](evidence/016.md) | 2026-07-24 | — |
 | 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | `a17bfa7` / user acceptance `8655330` | [017](evidence/017.md) | 2026-07-24 | — |
 | 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | DONE-VERIFIED | implementation `fc41c95`–`e80215e`; input timing `1304149`, `0336294`; acceptance capture `0336294` | [018](evidence/018.md) | 2026-07-29 | Plans 019–025 |
-| 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
-| 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
-| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
+| 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | BLOCKED | implementation `177a41f`; blocker `5935a17` | [019](evidence/019.md) | 2026-07-29 | — |
+| 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | BLOCKED | implementation `c397841`; blocker `1995e6b` | [020](evidence/020.md) | 2026-07-29 | — |
+| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | BLOCKED | implementation `786b7ea`; blocker `84a12df` | [021](evidence/021.md) | 2026-07-29 | — |
 | 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | TODO | — | — | — | — |
 | 023 | Add a deterministic spatial occupancy index | 3 — Structural optimization | P1 | 018, 019, 020 | TODO | — | — | — | — |
 | 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |
