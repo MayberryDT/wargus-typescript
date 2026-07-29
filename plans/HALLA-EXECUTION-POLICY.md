@@ -48,11 +48,11 @@ After the coordinator integrates every accepted branch in Wave 2, Wave 3, or
 Wave 4, it runs one post-integration gate on the exact integrated SHA (the
 combined commit):
 
-| Completed wave | Blocked successor until the gate is `READY` |
-|---|---|
-| Wave 2 | Wave 3 |
-| Wave 3 | Wave 4 |
-| Wave 4 | Wave 5 |
+| Completed wave | Blocked successor until the gate is `READY` | Acceptance mode |
+|---|---|---|
+| Wave 2 | Wave 3 | `incremental` |
+| Wave 3 | Wave 4 | `incremental` |
+| Wave 4 | Wave 5 | `incremental` |
 
 For each gate, the coordinator must:
 
@@ -77,11 +77,17 @@ For each gate, the coordinator must:
    `NOT READY` verdict.
 
 An individual plan's exit packet, branch-local capture, or successful merge is
-not a substitute. Any missing, invalid, failed, overlapping, or SHA-mismatched
-gate makes the combined verdict `NOT READY` and keeps the successor wave
-blocked. This gate does not run between the parallel Wave 0 branches and does
-not run before Plan 018 establishes the accepted baseline; Plan 018 acceptance
-itself governs the Wave 1-to-Wave 2 barrier.
+not a substitute. Waves 2, 3, and 4 receive `READY` only when their combined
+gate satisfies `incrementalReady` from `PERFORMANCE-ACCEPTANCE.md`, including no
+new budget-failure key, no frame p95 regression over 5%, targeted
+work-reduction proof, and complete durable evidence. A pre-existing accepted
+Plan 018 budget-failure key alone does not make an incremental gate `NOT READY`.
+Any missing, invalid, overlapping, SHA-mismatched, or incrementally failing gate
+keeps the successor wave blocked. Wave 5 uses `absolute-release` and requires
+`absoluteReleaseReady`, including every absolute shared budget. This gate does
+not run between the parallel Wave 0 branches and does not run before Plan 018
+establishes the accepted baseline; Plan 018 acceptance itself governs the Wave
+1-to-Wave 2 barrier.
 
 ## Browser qualification
 

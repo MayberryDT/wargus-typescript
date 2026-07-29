@@ -27,6 +27,8 @@ it does not authorize Wave 0, an early preview, or an early deployment.
 - `TODO`: planned but not started; an unopened approval, dependency, or wave gate
   is expected and does not by itself change this status.
 - `IN PROGRESS`: eligible implementation or acceptance work is active.
+- `IN PROGRESS — RECOVERY AUTHORIZED`: the named recovery amendment reopens a
+  previously blocked plan under its amended acceptance contract.
 - `BLOCKED`: work has started or landed, but an explicit STOP or exceptional
   condition prevents its next required step.
 - `DONE-VERIFIED`: implementation and required acceptance evidence passed.
@@ -39,14 +41,14 @@ it does not authorize Wave 0, an early preview, or an early deployment.
 
 ## Wave order
 
-| Wave | Plans |
-|---|---|
-| 0 — Foundation repair | 026, 027 |
-| 1 — Measurement foundation | 018 |
-| 2 — Independent hot paths | 019, 020, 021 |
-| 3 — Structural optimization | 022, 023 |
-| 4 — High-risk scheduling | 024, 025 |
-| 5 — Release | combined verification, review, preview, production |
+| Wave | Plans | Performance acceptance mode |
+|---|---|---|
+| 0 — Foundation repair | 026, 027 | n/a |
+| 1 — Measurement foundation | 018 | baseline establishment |
+| 2 — Independent hot paths | 019, 020, 021 | `incremental` |
+| 3 — Structural optimization | 022, 023 | `incremental` |
+| 4 — High-risk scheduling | 024, 025 | `incremental` |
+| 5 — Release | combined verification, review, preview, production | `absolute-release` |
 
 The Plan 026 branch and Plan 027's two implementation checkpoints may execute
 in parallel in isolated worktrees under the frozen Wave 0 ownership below.
@@ -60,8 +62,9 @@ wave starts only after every predecessor exit gate is accepted and integrated.
 | 027 | exactly `scripts/verify-source-resource-ui.mjs` and the two named assertions in `scripts/verify-fixed-demo-polish.mjs` | owns branch-local red/green proof and evidence 027; source-pathfinding and all browser verifiers are read-only gates |
 | Wave coordinator | no plan-local implementation | after Plan 026 checkpoint approval, integrates `.gitignore`/`package.json`, runs Plan 026 final verification, records acceptance, then runs Plan 027 browser/historical revalidation; alone closes `plans/README.md` rows |
 
-Wave 2 begins only after Plan 018 is accepted and integrated, not after its
-documentation rewrite alone. Plans 019, 020, and 021 then execute independently;
+Wave 2 uses `incremental` acceptance and begins only after Plan 018 is
+accepted and integrated, not after its documentation rewrite alone. Plans 019, 020, and 021 use `incremental` acceptance under
+`PERFORMANCE-ACCEPTANCE.md` and then execute independently;
 Plan 021 does not depend on Plan 020 and does not consume its simulation index.
 Parallel ownership is frozen as follows:
 
@@ -74,7 +77,8 @@ Parallel ownership is frozen as follows:
 The Wave coordinator owns shared `package.json`, `plans/README.md`, and any
 cross-plan verifier integration.
 
-Wave 3 has a strict coordinator start barrier: Plans 019, 020, and 021 must all
+Wave 3 uses `incremental` acceptance. Wave 3 has a strict coordinator start
+barrier: Plans 019, 020, and 021 must all
 pass their Wave 2 exit gates and integrate, then the coordinator must run the
 Wave 2 post-integration gate from `HALLA-EXECUTION-POLICY.md` against the exact
 combined SHA and commit `plans/evidence/WAVE-2-INTEGRATION.md` with a combined
@@ -95,7 +99,8 @@ The Wave coordinator owns shared `src/main.ts`, performance-schema,
 `package.json`, and `plans/README.md` integration. Plan-local diagnostics and
 counter extensions must use the plan namespaces frozen in the detailed plans.
 
-Wave 4 has a strict coordinator start barrier: Plans 022 and 023 must both pass
+Wave 4 uses `incremental` acceptance. Wave 4 has a strict coordinator start
+barrier: Plans 022 and 023 must both pass
 every Wave 3 exit gate and integrate, then the coordinator must run the Wave 3
 post-integration gate against the exact combined SHA and commit
 `plans/evidence/WAVE-3-INTEGRATION.md` with a combined `READY` verdict before
@@ -122,7 +127,8 @@ The Wave coordinator owns shared `src/main.ts`, performance-schema,
 the namespaces frozen in the detailed plans. Performance captures stay serial
 even when implementation and focused checks run in parallel.
 
-Wave 5 has a strict coordinator start barrier: Plans 024 and 025 must pass
+Wave 5 uses `absolute-release` acceptance. Wave 5 has a strict coordinator
+start barrier: Plans 024 and 025 must pass
 every Wave 4 exit gate and integrate, then the coordinator must run the Wave 4
 post-integration gate against the exact combined SHA and commit
 `plans/evidence/WAVE-4-INTEGRATION.md` with a combined `READY` verdict. Combined
@@ -151,9 +157,9 @@ individual exit packets or integration alone.
 | 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | `65bfd1a` / user acceptance `8655330` | [016](evidence/016.md) | 2026-07-24 | — |
 | 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | `a17bfa7` / user acceptance `8655330` | [017](evidence/017.md) | 2026-07-24 | — |
 | 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | DONE-VERIFIED | implementation `fc41c95`–`e80215e`; input timing `1304149`, `0336294`; acceptance capture `0336294` | [018](evidence/018.md) | 2026-07-29 | Plans 019–025 |
-| 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | BLOCKED | implementation `177a41f`; blocker `5935a17` | [019](evidence/019.md) | 2026-07-29 | — |
-| 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | BLOCKED | implementation `c397841`; blocker `1995e6b` | [020](evidence/020.md) | 2026-07-29 | — |
-| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | BLOCKED | implementation `786b7ea`; blocker `84a12df` | [021](evidence/021.md) | 2026-07-29 | — |
+| 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | IN PROGRESS — RECOVERY AUTHORIZED | implementation `177a41f`; blocker `5935a17`; authority `WAVE-2-RECOVERY-AMENDMENT Task 1` | [019](evidence/019.md) | 2026-07-29 | — |
+| 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | IN PROGRESS — RECOVERY AUTHORIZED | implementation `c397841`; blocker `1995e6b`; authority `WAVE-2-RECOVERY-AMENDMENT Task 1` | [020](evidence/020.md) | 2026-07-29 | — |
+| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | IN PROGRESS — RECOVERY AUTHORIZED | implementation `786b7ea`; blocker `84a12df`; authority `WAVE-2-RECOVERY-AMENDMENT Task 1` | [021](evidence/021.md) | 2026-07-29 | — |
 | 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | TODO | — | — | — | — |
 | 023 | Add a deterministic spatial occupancy index | 3 — Structural optimization | P1 | 018, 019, 020 | TODO | — | — | — | — |
 | 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |

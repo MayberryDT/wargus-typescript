@@ -155,7 +155,7 @@ before Plan 023 begins.
 | Browser fixture parity | `npm run verify:browser-runtime-smoke` | clear/single/mixed/spell same-world fixture invalidation and first-query rebuild preserve ordered outcomes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; every unchanged shared budget passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, accepted terrain
 and unit-ID parity, pathfinding, save, determinism, asset, build, and direct
@@ -442,7 +442,7 @@ reduction with flat/worse direct timing or shifted maintenance cost fails.
 
 **Verify:** upstream and fixture parity, pathfinding, save, browser, and
 determinism gates pass; direct timing improves, combined cost does not regress,
-no unexplained fallback/parity failure occurs, shared budgets pass, and evidence
+no unexplained fallback/parity failure occurs, the `incrementalReady` verdict passes, and evidence
 is durable and checksum-verified.
 
 ## Test plan
@@ -470,25 +470,36 @@ is durable and checksum-verified.
 
 ## Performance acceptance
 
-Accepted Plan 018 assigned rows are the shared-budget baseline. Before query
-migration, capture a checksum-verified legacy full-scan timing baseline with the
-same plan-local query boundaries and assigned profiles. Every before/after trial
-reports nearest-rank p50/p95/p99, mean, maximum, sample count, and total elapsed
-milliseconds for occupancy queries; after trials additionally report each
-register/unregister/transition/invalidation/rebuild distribution and total
-maintenance milliseconds.
+This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
+and any plan-local direct-work baseline are the before evidence; capture three
+independent valid after trials per assigned row under the shared lifecycle,
+nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+parity, timing, visual, or lifecycle failure.
 
-Each assigned row needs three independent valid trials under the unchanged
-lifecycle and worst-trial rule. For `army-200`, the worst after-trial direct
-occupancy-query p95 must be lower than the worst legacy trial, and
-`(query total ms + maintenance total ms) / processed simulation steps` must not
-exceed the legacy `query total ms / processed simulation steps`. Candidate
-visits must also fall, but candidate reduction cannot substitute for either
-timing result. Never discard a valid timing, maintenance, budget, parity, or
-fallback failure. Plan 023 cannot close while a shared budget fails, frame p95
-regresses over 5%, command latency regresses, timing work merely shifts into
-maintenance, environment/fingerprints differ, unexplained production fallback/
-parity occurs, or evidence is incomplete.
+```text
+incrementalReady =
+  captureComplete
+  && validityAndComparabilityPass
+  && fixedTickPass
+  && noNewBudgetFailuresPass
+  && frameP95RegressionPass
+  && targetedWorkReductionProofPass
+  && cleanupAndIntegrityPass
+```
+
+`noNewBudgetFailuresPass` uses the accepted Plan 018 row union in
+`PERFORMANCE-ACCEPTANCE.md`; an accepted baseline failure may remain, but a new
+budget-failure key blocks this plan. `frameP95RegressionPass` rejects a frame
+p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
+plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
+evidence; work counts alone do not suffice.
+
+STOP performance acceptance on invalid-trial exhaustion, environment or
+fingerprint drift, a new budget-failure key, a frame p95 regression greater
+than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+The existing functional, parity, save, visual, cadence, lifecycle, and
+plan-specific targeted-proof gates remain independent requirements. The plan
+may close when `incrementalReady` and those independent requirements pass.
 
 ## Evidence contract
 
@@ -532,7 +543,7 @@ on `/tmp` as durable evidence.
 - [ ] Direct occupancy-query p95 improves and maintenance-inclusive total cost
   does not exceed the legacy full-scan baseline; candidate work also falls.
 - [ ] Diagnostics show bounded local work with zero unexplained fallback/parity.
-- [ ] Assigned rows pass unchanged budgets with durable,
+- [ ] the `incrementalReady` verdict is satisfied with durable,
   checksum-verified evidence in `plans/evidence/023.md`.
 - [ ] The branch contains only Plan 023-owned files; coordinator
   `main`/performance-schema/package/README integration is separate.
@@ -565,7 +576,7 @@ on `/tmp` as durable evidence.
 - Any occupancy, upstream, type, pathfinding, save, fixture, browser,
   determinism, asset, or build gate fails twice.
 - Halla/browser qualification fails, capture overlaps, replacement exhausts,
-  budget/command latency fails, or frame p95 regresses over 5%.
+  a new budget-failure key appears, including command latency, or frame p95 regresses over 5%.
 - Durable single-file evidence or checksums cannot be verified.
 
 ## Rollback

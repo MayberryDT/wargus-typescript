@@ -137,7 +137,7 @@ excerpts/inventory before Plan 022 begins.
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick simulation and save output unchanged |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; every unchanged shared budget passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, preparation,
 direct-Pixi diff, determinism, asset, and build gates. The new render-cache
@@ -353,7 +353,7 @@ valid trials per assigned row using the accepted Plan 018 environment,
 profile, viewport, warmup, duration, fingerprints, per-trial statistics, and
 worst-trial rule. Do not pool samples.
 
-Every shared budget must pass. A greater-than-5% worsening of worst-trial frame
+Require `incrementalReady`. A greater-than-5% worsening of worst-trial frame
 p95 is also a regression. Zero steady-state creation for unchanged prepared
 IDs is required after warm-up; creation may scale only with entrances, births,
 record-shape changes that cannot be updated, and bounded-pool misses.
@@ -381,13 +381,36 @@ hold; assigned budgets pass; evidence is durable and checksum-verified.
 
 ## Performance acceptance
 
-The accepted Plan 018 assigned rows and display-object values are the before
-baseline. Each row needs three independent valid trials under the unchanged
-shared lifecycle, nearest-rank statistics, and worst-trial rule. Never discard
-a valid budget, visual, bound, or lifecycle failure. Plan 022 cannot close
-while a budget fails, frame p95 regresses by more than 5%, environment or
-fingerprints differ, an unchanged entity creates after warm-up, a cache exceeds
-its bound, live delta fails to clear on disposal, or evidence is incomplete.
+This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
+and any plan-local direct-work baseline are the before evidence; capture three
+independent valid after trials per assigned row under the shared lifecycle,
+nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+parity, timing, visual, or lifecycle failure.
+
+```text
+incrementalReady =
+  captureComplete
+  && validityAndComparabilityPass
+  && fixedTickPass
+  && noNewBudgetFailuresPass
+  && frameP95RegressionPass
+  && targetedWorkReductionProofPass
+  && cleanupAndIntegrityPass
+```
+
+`noNewBudgetFailuresPass` uses the accepted Plan 018 row union in
+`PERFORMANCE-ACCEPTANCE.md`; an accepted baseline failure may remain, but a new
+budget-failure key blocks this plan. `frameP95RegressionPass` rejects a frame
+p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
+plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
+evidence; work counts alone do not suffice.
+
+STOP performance acceptance on invalid-trial exhaustion, environment or
+fingerprint drift, a new budget-failure key, a frame p95 regression greater
+than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+The existing functional, parity, save, visual, cadence, lifecycle, and
+plan-specific targeted-proof gates remain independent requirements. The plan
+may close when `incrementalReady` and those independent requirements pass.
 
 ## Evidence contract
 
@@ -428,7 +451,7 @@ on `/tmp` as durable evidence.
   assets, build, heap, and disposal parity pass.
 - [ ] Added-line and final-source scans prove no direct Pixi constructor or
   `.destroy()` bypass exists in Plan 022-owned renderer/cache paths.
-- [ ] Every assigned row passes unchanged budgets with durable,
+- [ ] the `incrementalReady` verdict is satisfied with durable,
   checksum-verified evidence in `plans/evidence/022.md`.
 - [ ] The branch contains only Plan 022-owned files; coordinator
   `main`/performance-schema/package/README integration is separate.

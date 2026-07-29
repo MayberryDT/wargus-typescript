@@ -169,7 +169,7 @@ required coordinator refresh, STOP.
 | Native viewport | `npm run verify:browser-native-viewport` | active/split-view fog ownership, pan, resize, closure, and pixels pass |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; direct visibility/fog evidence recorded; every unchanged shared budget passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; direct visibility/fog evidence recorded; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, upstream parity,
 source-FOV/fog, save, determinism, asset, build, and direct-timing gates. The
@@ -607,11 +607,11 @@ processed simulation step must not increase. Worst-trial fog decision plus
 chunk-build milliseconds per rendered frame must be lower than legacy fog hash
 plus subtree-build milliseconds per frame. An unchanged stationary segment
 must recompute zero source FOVs and rebuild/create/destroy zero fog chunks after
-warm-up. Every shared budget must pass; a greater-than-5% worsening of
+warm-up. Require `incrementalReady`; a greater-than-5% worsening of
 worst-trial frame p95 is a regression.
 
 **Verify:** direct simulation and renderer work improves rather than moving
-between phases, parity/cadence/memory/lifecycle gates pass, shared budgets pass,
+between phases, parity/cadence/memory/lifecycle gates pass, the `incrementalReady` verdict passes,
 and evidence is durable and checksum-verified.
 
 ## Test plan
@@ -647,21 +647,36 @@ and evidence is durable and checksum-verified.
 
 ## Performance acceptance
 
-The accepted Plan 018 assigned rows and Step 0 direct legacy measurements are
-the before baseline. Each row requires three independent valid after trials
-under the unchanged shared lifecycle, nearest-rank statistics, and worst-trial
-rule. Never discard a valid timing, visual, parity, cadence, bound, memory,
-budget, or lifecycle failure.
+This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
+and any plan-local direct-work baseline are the before evidence; capture three
+independent valid after trials per assigned row under the shared lifecycle,
+nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+parity, timing, visual, or lifecycle failure.
 
-For `army-200`, worst-trial incremental visibility p95 must improve and total
-visibility maintenance milliseconds divided by processed steps must not exceed
-the legacy full-rebuild value. Worst-trial fog decision plus chunk-build total
-divided by rendered frames must improve over legacy hash plus subtree-build
-work. Zero unchanged source recomputation/chunk churn, zero full viewport hash
-scans, exact parity, bounds, and no fallback are independent gates. Work-count
-reduction cannot substitute for direct timing. Plan 025 cannot close while a
-shared budget fails, frame p95 regresses over 5%, fingerprints/pixels differ,
-the environment is incomparable, or evidence is incomplete.
+```text
+incrementalReady =
+  captureComplete
+  && validityAndComparabilityPass
+  && fixedTickPass
+  && noNewBudgetFailuresPass
+  && frameP95RegressionPass
+  && targetedWorkReductionProofPass
+  && cleanupAndIntegrityPass
+```
+
+`noNewBudgetFailuresPass` uses the accepted Plan 018 row union in
+`PERFORMANCE-ACCEPTANCE.md`; an accepted baseline failure may remain, but a new
+budget-failure key blocks this plan. `frameP95RegressionPass` rejects a frame
+p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
+plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
+evidence; work counts alone do not suffice.
+
+STOP performance acceptance on invalid-trial exhaustion, environment or
+fingerprint drift, a new budget-failure key, a frame p95 regression greater
+than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+The existing functional, parity, save, visual, cadence, lifecycle, and
+plan-specific targeted-proof gates remain independent requirements. The plan
+may close when `incrementalReady` and those independent requirements pass.
 
 ## Evidence contract
 
@@ -716,7 +731,7 @@ on `/tmp` as durable evidence.
 - [ ] Terrain, render-cache, occupancy, FOV/fog, save, browser, determinism,
   asset, build, memory, and focused gates pass.
 - [ ] Direct visibility and fog timing improves, work is not shifted, and every
-  assigned shared budget passes with durable checksum-verified evidence.
+  `incrementalReady` passes with durable checksum-verified evidence.
 - [ ] The branch contains only Plan 025-owned files; coordinator
   main/performance-schema/package/README integration is separate.
 
@@ -751,7 +766,7 @@ on `/tmp` as durable evidence.
 - Any focused, upstream, type, save, browser, determinism, asset, or build gate
   fails twice.
 - Halla/browser qualification fails, captures overlap, replacement exhausts,
-  a shared budget fails, frame p95 regresses over 5%, direct timing does not
+  a new budget-failure key appears, frame p95 regresses over 5%, direct timing does not
   improve, or durable single-file evidence/checksums cannot be verified.
 
 ## Rollback

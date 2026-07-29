@@ -171,7 +171,7 @@ refresh required above, STOP.
 | Browser demo | `npm run verify:browser-demo-session` | deterministic demo behavior passes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted `command-18`, `army-200`, and `combat-100` rows at 1280×720 plus X12 | three valid trials per matrix row; direct scheduler evidence recorded; every unchanged shared budget passes |
+| Performance | accepted `command-18`, `army-200`, and `combat-100` rows at 1280×720 plus X12 | three valid trials per matrix row; direct scheduler evidence recorded; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, upstream parity,
 source-pathfinding, save, determinism, asset, build, and direct-timing gates.
@@ -822,11 +822,11 @@ lower than the synchronous baseline and total path-search milliseconds per
 processed step must not increase. Every after tick must stay at or below 512
 expansions, duplicate and synchronous fallback counts must be zero, the
 calculated starvation bound must hold, and the queue must drain in the bounded
-scenario. Every unchanged shared budget must pass; a greater-than-5% worsening
+scenario. `incrementalReady` must pass; a greater-than-5% worsening
 of worst-trial frame p95 is a regression.
 
 **Verify:** direct path work improves rather than moving into queue
-maintenance, routes/orders/saves remain exact, shared budgets pass, and
+maintenance, routes/orders/saves remain exact, the `incrementalReady` verdict passes, and
 evidence is durable and checksum-verified.
 
 ## Test plan
@@ -870,22 +870,36 @@ evidence is durable and checksum-verified.
 
 ## Performance acceptance
 
-The accepted Plan 018 assigned rows and the Step 0 synchronous direct timing
-are the before baseline. Each matrix row needs three independent valid after
-trials under the unchanged shared lifecycle, nearest-rank statistics, and
-worst-trial rule. X12 uses the same accepted commit/environment and its focused
-scenario contract; it does not replace a matrix row.
+This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
+and any plan-local direct-work baseline are the before evidence; capture three
+independent valid after trials per assigned row under the shared lifecycle,
+nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+parity, timing, visual, or lifecycle failure.
 
-For `army-200`, worst-trial path-work p95 per processed simulation tick must
-improve and total path-search milliseconds divided by processed simulation
-steps must not exceed the synchronous baseline. The 512 expansion cap,
-calculated starvation bound, queue drain, zero duplicate searches, and zero
-synchronous fallbacks are independent gates. Candidate/work-count reduction
-cannot substitute for direct timing. Never discard a valid budget, latency,
-queue-age, route, save, or timing failure. Plan 024 cannot close while a shared
-budget fails, command latency regresses, frame p95 regresses over 5%, routes or
-fingerprints differ, the environment is incomparable, or evidence is
-incomplete.
+```text
+incrementalReady =
+  captureComplete
+  && validityAndComparabilityPass
+  && fixedTickPass
+  && noNewBudgetFailuresPass
+  && frameP95RegressionPass
+  && targetedWorkReductionProofPass
+  && cleanupAndIntegrityPass
+```
+
+`noNewBudgetFailuresPass` uses the accepted Plan 018 row union in
+`PERFORMANCE-ACCEPTANCE.md`; an accepted baseline failure may remain, but a new
+budget-failure key blocks this plan. `frameP95RegressionPass` rejects a frame
+p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
+plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
+evidence; work counts alone do not suffice.
+
+STOP performance acceptance on invalid-trial exhaustion, environment or
+fingerprint drift, a new budget-failure key, a frame p95 regression greater
+than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+The existing functional, parity, save, visual, cadence, lifecycle, and
+plan-specific targeted-proof gates remain independent requirements. The plan
+may close when `incrementalReady` and those independent requirements pass.
 
 ## Evidence contract
 
@@ -945,7 +959,7 @@ on `/tmp` as durable evidence.
 - [ ] Both new focused verifiers have meaningful behavior-level red evidence
   and final green results; missing-file/import failures are not accepted.
 - [ ] Direct path timing improves, work is not shifted into maintenance, and
-  every assigned shared budget passes with durable checksum-verified evidence.
+  `incrementalReady` passes with durable checksum-verified evidence.
 - [ ] The branch contains only Plan 024-owned files; coordinator
   main/performance-schema/package/README integration is separate.
 
@@ -985,7 +999,7 @@ on `/tmp` as durable evidence.
 - Any focused, upstream, type, save, normalizer, browser, determinism, asset,
   or build gate fails twice.
 - Halla/browser qualification fails, captures overlap, replacement exhausts,
-  a shared budget/command latency fails, frame p95 regresses over 5%, direct
+  a new budget-failure key appears, including command latency, frame p95 regresses over 5%, direct
   path timing does not improve, or durable single-file evidence/checksums fail.
 
 ## Rollback

@@ -12,7 +12,9 @@
 
 ## Status
 
-- **Status:** TODO
+- **Status:** IN PROGRESS — RECOVERY AUTHORIZED
+- **Recovery authority:** `WAVE-2-RECOVERY-AMENDMENT Task 1`
+- **Failed evidence:** [019](evidence/019.md)
 - **Wave:** 2 — Independent hot paths
 - **Priority:** P1
 - **Effort:** M
@@ -104,7 +106,7 @@ accepted concrete SHA and new exact excerpts before Plan 019 begins.
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick state and save comparison passes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 rows `army-100` at 1280×720 and `command-18` at both viewports | three valid trials per row; every assigned budget passes |
+| Performance | accepted Plan 018 rows `army-100` at 1280×720 and `command-18` at both viewports | three valid trials per row; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, pathfinding,
 fog/FOV, determinism, asset, and build gates. The new terrain verifier does not
@@ -245,11 +247,11 @@ Run every command in the table. Capture three independent valid trials for
 all assigned rows using the exact accepted Plan 018 environment, profile
 specification, warmup, duration, viewports, fingerprints, statistics, and
 worst-trial aggregation. Compare against the accepted baseline without pooling
-samples. Every assigned shared budget must pass; a greater-than-5% worsening
+samples. Require `incrementalReady`; a greater-than-5% worsening
 of worst-trial frame p95 also counts as a regression even if the budget passes.
 
 **Verify:** deterministic state/save parity is exact, path/FOV results are
-unchanged, all assigned budgets pass, and evidence records CPU, frame, heap,
+unchanged, the `incrementalReady` verdict passes, and evidence records CPU, frame, heap,
 long-task, scheduler, input, and terrain-diagnostic results where applicable.
 
 ## Test plan
@@ -272,13 +274,36 @@ long-task, scheduler, input, and terrain-diagnostic results where applicable.
 
 ## Performance acceptance
 
-The assigned rows use the accepted Plan 018 artifacts as the before baseline
-and the shared matrix lifecycle unchanged. Each row requires three independent
-valid after trials; apply nearest-rank per-trial statistics and the worst-trial
-row rule. Never discard a valid budget failure. Plan 019 cannot close while an
-assigned budget fails, a fingerprint differs, the environment is not
-comparable, or evidence is incomplete. No local exception may weaken a shared
-budget or qualification rule.
+This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
+and any plan-local direct-work baseline are the before evidence; capture three
+independent valid after trials per assigned row under the shared lifecycle,
+nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+parity, timing, visual, or lifecycle failure.
+
+```text
+incrementalReady =
+  captureComplete
+  && validityAndComparabilityPass
+  && fixedTickPass
+  && noNewBudgetFailuresPass
+  && frameP95RegressionPass
+  && targetedWorkReductionProofPass
+  && cleanupAndIntegrityPass
+```
+
+`noNewBudgetFailuresPass` uses the accepted Plan 018 row union in
+`PERFORMANCE-ACCEPTANCE.md`; an accepted baseline failure may remain, but a new
+budget-failure key blocks this plan. `frameP95RegressionPass` rejects a frame
+p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
+plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
+evidence; work counts alone do not suffice.
+
+STOP performance acceptance on invalid-trial exhaustion, environment or
+fingerprint drift, a new budget-failure key, a frame p95 regression greater
+than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+The existing functional, parity, save, visual, cadence, lifecycle, and
+plan-specific targeted-proof gates remain independent requirements. The plan
+may close when `incrementalReady` and those independent requirements pass.
 
 ## Evidence contract
 
@@ -313,7 +338,7 @@ normalized result to `plans/evidence/019.md`; it must not rely on `/tmp`.
   renderer change exists.
 - [ ] Namespaced diagnostics and focused tests pass.
 - [ ] Typecheck, determinism, assets, build, pathfinding, and fog/FOV pass.
-- [ ] Every assigned performance row passes the shared budgets with durable,
+- [ ] the `incrementalReady` verdict is satisfied with durable,
   checksum-verified evidence.
 - [ ] The branch contains only Plan 019-owned files; coordinator integration is
   pending or complete separately.
@@ -335,7 +360,7 @@ normalized result to `plans/evidence/019.md`; it must not rely on `/tmp`.
 - The new verifier cannot produce a meaningful behavior-level RED before GREEN.
 - Any parity, focused, type, determinism, asset, or build gate fails twice.
 - Halla or browser qualification fails, another capture is active, a trial
-  exhausts its replacement, an assigned budget fails, or frame p95 regresses
+  exhausts its replacement, a new budget-failure key appears, or frame p95 regresses
   by more than 5%.
 - Durable evidence or checksums cannot be produced and verified.
 

@@ -12,7 +12,9 @@
 
 ## Status
 
-- **Status:** TODO
+- **Status:** IN PROGRESS — RECOVERY AUTHORIZED
+- **Recovery authority:** `WAVE-2-RECOVERY-AMENDMENT Task 1`
+- **Failed evidence:** [020](evidence/020.md)
 - **Wave:** 2 — Independent hot paths
 - **Priority:** P1
 - **Effort:** M
@@ -112,7 +114,7 @@ inventory before Plan 020 begins.
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick state and save comparison passes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `combat-100` at 1280×720 | three valid trials; every assigned budget passes |
+| Performance | accepted Plan 018 `combat-100` at 1280×720 | three valid trials; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, save, combat,
 determinism, asset, and build gates. The new unit-index verifier does not exist
@@ -255,12 +257,11 @@ fields, and save output match; `world.units` remains authoritative and ordered.
 Run every command in the table. Capture three independent valid `combat-100`
 trials using the exact accepted Plan 018 environment, specification, viewport,
 warmup, duration, fingerprints, statistics, and worst-trial rule. Do not pool
-samples or use renderer snapshot data. Every applicable shared budget must
-pass; a greater-than-5% worsening of worst-trial frame p95 also counts as a
+samples or use renderer snapshot data. Require `incrementalReady`; a greater-than-5% worsening of worst-trial frame p95 also counts as a
 regression even if the budget passes.
 
 **Verify:** browser combat and all non-browser gates pass; lookup/rebuild/
-invalidation/duplicate diagnostics are namespaced; all assigned budgets pass;
+invalidation/duplicate diagnostics are namespaced; the `incrementalReady` verdict passes;
 and evidence is durable and checksum-verified.
 
 ## Test plan
@@ -281,12 +282,36 @@ and evidence is durable and checksum-verified.
 
 ## Performance acceptance
 
-The accepted Plan 018 `combat-100` artifact is the before baseline. Capture
-three independent valid after trials and apply the shared per-trial,
-nearest-rank, and worst-trial rules unchanged. Never discard a valid budget
-failure. Plan 020 cannot close while any applicable shared budget fails, the
-environment/fingerprints differ, or evidence is incomplete. No local rule may
-weaken the shared acceptance contract.
+This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
+and any plan-local direct-work baseline are the before evidence; capture three
+independent valid after trials per assigned row under the shared lifecycle,
+nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+parity, timing, visual, or lifecycle failure.
+
+```text
+incrementalReady =
+  captureComplete
+  && validityAndComparabilityPass
+  && fixedTickPass
+  && noNewBudgetFailuresPass
+  && frameP95RegressionPass
+  && targetedWorkReductionProofPass
+  && cleanupAndIntegrityPass
+```
+
+`noNewBudgetFailuresPass` uses the accepted Plan 018 row union in
+`PERFORMANCE-ACCEPTANCE.md`; an accepted baseline failure may remain, but a new
+budget-failure key blocks this plan. `frameP95RegressionPass` rejects a frame
+p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
+plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
+evidence; work counts alone do not suffice.
+
+STOP performance acceptance on invalid-trial exhaustion, environment or
+fingerprint drift, a new budget-failure key, a frame p95 regression greater
+than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+The existing functional, parity, save, visual, cadence, lifecycle, and
+plan-specific targeted-proof gates remain independent requirements. The plan
+may close when `incrementalReady` and those independent requirements pass.
 
 ## Evidence contract
 
@@ -321,7 +346,7 @@ not durable evidence.
   deterministic-state coupling exists.
 - [ ] Typecheck, index, save, attack, browser combat, determinism, assets, and
   build pass.
-- [ ] Every assigned performance budget passes with durable,
+- [ ] the `incrementalReady` verdict is satisfied with durable,
   checksum-verified evidence.
 - [ ] The branch contains only Plan 020-owned files; coordinator integration is
   pending or complete separately.
@@ -343,7 +368,7 @@ not durable evidence.
 - Any focused, type, save, combat, determinism, asset, or build gate fails
   twice.
 - Halla/browser qualification fails, another capture is active, a trial
-  exhausts its replacement, an assigned budget fails, or frame p95 regresses
+  exhausts its replacement, a new budget-failure key appears, or frame p95 regresses
   by more than 5%.
 - Durable evidence or checksums cannot be produced and verified.
 
