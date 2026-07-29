@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
+import path from "node:path";
 
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
 const sourceUi = readFileSync("src/view/sourceUiHelpers.ts", "utf8");
@@ -9,8 +10,25 @@ const mapCommands = readFileSync("src/view/mapCommands.ts", "utf8");
 const main = readFileSync("src/main.ts", "utf8");
 const saveGame = readFileSync("src/wargus/saveGame.ts", "utf8");
 const readme = readFileSync("README.md", "utf8");
-const stratagusUi = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus/src/ui/ui.cpp", "utf8");
-const stratagusHeader = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus/src/include/ui.h", "utf8");
+const sourceRoot = process.env.WARGUS_ORIGINAL_SOURCE_ROOT;
+if (!sourceRoot?.trim()) {
+  console.error("WARGUS_ORIGINAL_SOURCE_ROOT must name a readable Stratagus source root.");
+  process.exit(1);
+}
+const sourceFiles = {
+  ui: path.join(sourceRoot, "src/ui/ui.cpp"),
+  header: path.join(sourceRoot, "src/include/ui.h")
+};
+for (const sourceFile of Object.values(sourceFiles)) {
+  try {
+    accessSync(sourceFile, constants.R_OK);
+  } catch {
+    console.error("WARGUS_ORIGINAL_SOURCE_ROOT requires a readable source file: " + sourceFile);
+    process.exit(1);
+  }
+}
+const stratagusUi = readFileSync(sourceFiles.ui, "utf8");
+const stratagusHeader = readFileSync(sourceFiles.header, "utf8");
 
 const errors = [];
 function expect(condition, message) {
