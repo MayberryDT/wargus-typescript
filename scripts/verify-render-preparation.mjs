@@ -6,6 +6,25 @@ const source = readFileSync(new URL("../src/view/renderPreparation.ts", import.m
 assert.doesNotMatch(source, /worldSelectors|Math\.random|Date\.now|crypto\.getRandomValues/);
 assert.doesNotMatch(source, /pixi\.js|Container|Graphics|Sprite|Texture/);
 assert.match(source, /if \(!index\.has\(key\)\) \{\s*index\.set\(key, value\);/);
+const rendererSource = readFileSync(new URL("../src/view/renderWorld.ts", import.meta.url), "utf8");
+assert.equal(rendererSource.match(/const prepared = prepareWorldRenderSnapshot\(world, manifest, viewport\);/g)?.length, 2, "Active and split viewports each prepare one snapshot");
+assert.doesNotMatch(rendererSource, /worldSelectors|\[\.\.\.world\.(units|corpses|projectiles|spellEffects)\]/);
+assert.doesNotMatch(rendererSource, /manifest\.animations\.find|pendingAttacks\.(find|some)|activeResearch\.(find|some)|world\.units\.find/);
+assert.match(rendererSource, /prepared\.corpses\.below40[\s\S]*prepared\.corpses\.atLeast40/);
+assert.match(rendererSource, /prepared\.projectiles\.below40[\s\S]*prepared\.projectiles\.atLeast40/);
+assert.match(rendererSource, /prepared\.spellEffects\.below40[\s\S]*prepared\.spellEffects\.atLeast40/);
+assert.match(rendererSource, /prepared\.unitById\.get\(unit\.teleportDestinationId\)/);
+assert.match(rendererSource, /prepared\.researchByBuildingId\.get\(unit\.id\)/);
+assert.match(rendererSource, /prepared\.pendingAttackBySourceId\.get\(unit\.id\)/);
+const trackedCallCount = (name) => rendererSource.match(new RegExp(name + "\\(", "g"))?.length ?? 0;
+assert.deepEqual({
+  containers: trackedCallCount("createTrackedContainer"),
+  graphics: trackedCallCount("createTrackedGraphics"),
+  sprites: trackedCallCount("createTrackedSprite"),
+  texts: trackedCallCount("createTrackedText"),
+  destroys: trackedCallCount("destroyTrackedDisplayObject")
+}, { containers: 5, graphics: 12, sprites: 12, texts: 2, destroys: 2 }, "Plan 018 tracked Pixi call sites must remain unchanged");
+
 const sourceFile = ts.createSourceFile("renderPreparation.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const executableSource = sourceFile.statements
   .filter((statement) => !ts.isImportDeclaration(statement) && !ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement))
@@ -260,4 +279,79 @@ assert.deepEqual(getPlan021RenderPreparationDiagnostics().plan021.renderPreparat
   snapshotCount: 0
 });
 
-console.log("Render preparation verified (ordering, culling, strata, indexes, viewports, diagnostics).");
+
+const rendererSourceFile = ts.createSourceFile("renderWorld.ts", rendererSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const rendererFunctionNames = [
+  "getAnimatedFrameNumber", "animationFrameCursorForUnitAction",
+  "sourceAttackAnimationLaunchDelayCyclesForRender", "animationActionForUnit",
+  "isSourceUpgradeProduction", "spriteDirectionForFacing",
+  "getCorpseFrameNumber", "getLastSeenBuildingFrameNumber"
+];
+const rendererDeclarations = rendererFunctionNames.map((name) => {
+  const declaration = rendererSourceFile.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === name);
+  assert.ok(declaration, "Expected renderWorld.ts to define " + name);
+  return declaration.getText(rendererSourceFile);
+});
+const rendererJavascript = ts.transpileModule(rendererDeclarations.join("\n"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+}).outputText;
+const rendererFunctions = Function(
+  "sourceDefaultGameSpeed", "sourceButtonAppliesTo", "sourceCorpseAgeTicks",
+  rendererJavascript + "\nreturn { " + rendererFunctionNames.join(", ") + " };"
+)(() => 10, () => false, (_world, corpseValue) => corpseValue.ageTicks);
+const frameUnit = detailedUnit("frame-unit", 20, 20, 10, {
+  animation: "frame-animation", facing: 6, productionQueue: [], construction: null,
+  spellCooldown: 0, order: null, attackCooldown: 0
+});
+const frameWorld = {
+  ...detailedWorld,
+  units: [frameUnit], corpses: [], projectiles: [], spellEffects: [], activeResearch: [],
+  pendingAttacks: [
+    { sourceId: "frame-unit", targetId: "first-target", remainingSeconds: 0.1 },
+    { sourceId: "frame-unit", targetId: "later-target", remainingSeconds: 9.9 }
+  ],
+  tick: 0, buttonDefinitions: []
+};
+const firstFrameAnimation = {
+  id: "frame-animation", source: "first", actions: {
+    Attack: [{ frame: 1, wait: 2 }, { frame: 2, wait: 2 }, { frame: 0, wait: 1 }],
+    Research: [{ frame: 7, wait: 1 }], Still: [{ frame: 5, wait: 1 }],
+    Death: [{ frame: 11, wait: 2 }]
+  }
+};
+const frameManifest = {
+  animations: [firstFrameAnimation, {
+    id: "frame-animation", source: "later", actions: {
+      Attack: [{ frame: 99, wait: 1 }], Research: [{ frame: 99, wait: 1 }],
+      Still: [{ frame: 99, wait: 1 }], Death: [{ frame: 99, wait: 1 }]
+    }
+  }],
+  missiles: []
+};
+const frameSnapshot = prepareWorldRenderSnapshot(frameWorld, frameManifest, viewportA);
+assert.equal(frameSnapshot.pendingAttackBySourceId.get("frame-unit")?.targetId, "first-target");
+assert.equal(
+  rendererFunctions.getAnimatedFrameNumber(frameUnit, frameWorld, 1, frameSnapshot),
+  2,
+  "First pending attack and first animation record must select the legacy attack frame"
+);
+const researchWorld = {
+  ...frameWorld,
+  pendingAttacks: [],
+  activeResearch: [
+    { buildingId: "frame-unit", upgradeId: "first-research", remainingSeconds: 0.2 },
+    { buildingId: "frame-unit", upgradeId: "later-research", remainingSeconds: 8.2 }
+  ]
+};
+const researchSnapshot = prepareWorldRenderSnapshot(researchWorld, frameManifest, viewportA);
+assert.equal(researchSnapshot.researchByBuildingId.get("frame-unit")?.upgradeId, "first-research");
+assert.equal(rendererFunctions.getAnimatedFrameNumber(frameUnit, researchWorld, 1, researchSnapshot), 7);
+assert.equal(rendererFunctions.getLastSeenBuildingFrameNumber(
+  { animation: "frame-animation", facing: 6 }, 1, frameSnapshot.animationById
+), 5);
+assert.equal(rendererFunctions.getCorpseFrameNumber(
+  { animation: "frame-animation", facing: 6, ageTicks: 1 }, frameWorld, 1, frameSnapshot.animationById
+), 11);
+
+console.log("Render preparation verified (ordering, culling, strata, indexes, frames, viewports, counters, diagnostics).");

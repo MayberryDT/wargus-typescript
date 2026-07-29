@@ -97,7 +97,7 @@ export function prepareWorldRenderSnapshot(
   viewport: WorldViewport
 ): WorldRenderSnapshot {
   const animationById = animationIndexForManifest(manifest);
-  const unitById = firstBy(world.units, (unit) => unit.id);
+  const unitById = new Map<string, WorldState["units"][number]>();
   const researchByBuildingId = firstBy(world.activeResearch, (research) => research.buildingId);
   const pendingAttackBySourceId = firstBy(world.pendingAttacks, (attack) => attack.sourceId);
 
@@ -107,15 +107,22 @@ export function prepareWorldRenderSnapshot(
   diagnostics.sourceCounts.projectiles += world.projectiles.length;
   diagnostics.sourceCounts.spellEffects += world.spellEffects.length;
 
-  const units = world.units
-    .filter((unit) => (
+  const units: WorldState["units"][number][] = [];
+  for (const unit of world.units) {
+    if (!unitById.has(unit.id)) {
+      unitById.set(unit.id, unit);
+    }
+    if (
       !isUnitHiddenInConstruction(unit)
       && !isInvisibleUtilityUnit(unit)
       && !isUnitInsideResourceSource(unit)
       && isUnitVisibleToPlayer(world, unit, world.visibilityPlayer)
       && circleIntersectsViewport(unit.x, unit.y, Math.max(unit.radius + 96, unit.frameWidth, unit.frameHeight), viewport)
-    ))
-    .sort(compareUnitDrawOrder);
+    ) {
+      units.push(unit);
+    }
+  }
+  units.sort(compareUnitDrawOrder);
   const corpses = world.corpses
     .filter((corpse) => (
       isCorpseVisibleToPlayer(world, corpse, world.visibilityPlayer)

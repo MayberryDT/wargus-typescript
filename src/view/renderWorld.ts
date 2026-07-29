@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics } from "pixi.js";
 import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText } from "../performance/displayObjectPerformance";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
-import { isCircleVisibleToPlayer, isInvisibleUtilityUnit, isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
+import { isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
 import { sourceButtonAppliesTo } from "../wargus/buttons";
 import { isFixedBrowserDemoMap } from "../wargus/demoScenario";
 import type { WargusAnimation, WargusDecoration, WargusManifest } from "../wargus/types";
@@ -14,6 +14,7 @@ import { getMissileFrameTexture, type MissileTextureAtlas } from "./missileTextu
 import { sourceCorpseAgeTicks } from "./sourceCorpseRendering";
 import { sourceMissileVisualRole } from "./sourceMissileVisuals";
 import { sourceSelectedOrderRenderState } from "./sourceSelectedOrders";
+import { prepareWorldRenderSnapshot, type WorldRenderSnapshot, type WorldViewport } from "./renderPreparation";
 import { getStatusBarTexture, getStatusDecorationTexture, type StatusDecorationAtlas } from "./statusDecorationAtlas";
 import { fogByteToAlpha, sourceCompletedBarColor, sourceCompletedBarShadow, sourceMapAreaRect, sourcePlayerColor, sourceViewportModeRects } from "./sourceUiHelpers";
 
@@ -29,13 +30,6 @@ let nextTileAtlasId = 1;
 let nextFogAtlasId = 1;
 const sourceTiledFogTable = [0, 11, 10, 2, 13, 6, 14, 3, 12, 15, 4, 1, 8, 9, 7, 0] as const;
 const sourceBlackFogVisibleSuppressionRadius = 1;
-
-interface WorldViewport {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
 
 interface RenderWorldArgs {
   world: WorldState;
@@ -70,18 +64,19 @@ export function renderWorld(args: RenderWorldArgs): void {
   worldLayer.position.set(activeSourceViewportRect.x - camera.x * camera.zoom, activeSourceViewportRect.y - camera.y * camera.zoom);
   applySourceMapAreaMask(app, worldLayer, activeSourceViewportRect);
   const viewport = worldViewportForRect(camera, activeSourceViewportRect);
+  const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
 
   drawMap(mapLayer, world, tileAtlas, viewport);
   destroyLayerChildren(unitLayer);
-  drawCorpses(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-  drawLastSeenBuildings(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-  drawProjectiles(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-  drawSpellEffects(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-  drawUnits(unitLayer, world, manifest, selectedUnitIds, controlGroups, sourceShowOrdersVisible, unitAtlases, missileAtlases, statusDecorationAtlas, viewport);
-  drawLastSeenBuildings(unitLayer, world, manifest, unitAtlases, viewport, { minDrawLevel: 40 });
-  drawCorpses(unitLayer, world, manifest, unitAtlases, viewport, { minDrawLevel: 40 });
-  drawProjectiles(unitLayer, world, viewport, missileAtlases, { minDrawLevel: 40 });
-  drawSpellEffects(unitLayer, world, viewport, missileAtlases, { minDrawLevel: 40 });
+  drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
+  drawLastSeenBuildings(unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
+  drawProjectiles(unitLayer, world, missileAtlases, prepared.projectiles.below40);
+  drawSpellEffects(unitLayer, world, missileAtlases, prepared.spellEffects.below40);
+  drawUnits(unitLayer, world, manifest, selectedUnitIds, controlGroups, sourceShowOrdersVisible, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
+  drawLastSeenBuildings(unitLayer, world, unitAtlases, viewport, { minDrawLevel: 40 }, prepared.animationById);
+  drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.atLeast40, prepared.animationById);
+  drawProjectiles(unitLayer, world, missileAtlases, prepared.projectiles.atLeast40);
+  drawSpellEffects(unitLayer, world, missileAtlases, prepared.spellEffects.atLeast40);
   drawFog(fogLayer, world, viewport, fogAtlas);
   drawSelectionHitArea(selectionLayer, world);
   renderSourceViewportPaneWorlds({ ...args, sourceViewportCameras, activeSourceViewportIndex, sourceViewportRects });
@@ -194,17 +189,18 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     renderer.mask.fill({ color: 0xffffff, alpha: 1 });
     renderer.root.mask = renderer.mask;
     const viewport = worldViewportForRect(viewCamera, rect);
+    const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
     drawMap(renderer.mapLayer, world, tileAtlas, viewport);
     destroyLayerChildren(renderer.unitLayer);
-    drawCorpses(renderer.unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-    drawLastSeenBuildings(renderer.unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-    drawProjectiles(renderer.unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-    drawSpellEffects(renderer.unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-    drawUnits(renderer.unitLayer, world, manifest, selectedUnitIds, args.controlGroups ?? {}, args.sourceShowOrdersVisible === true, unitAtlases, missileAtlases, statusDecorationAtlas, viewport);
-    drawLastSeenBuildings(renderer.unitLayer, world, manifest, unitAtlases, viewport, { minDrawLevel: 40 });
-    drawCorpses(renderer.unitLayer, world, manifest, unitAtlases, viewport, { minDrawLevel: 40 });
-    drawProjectiles(renderer.unitLayer, world, viewport, missileAtlases, { minDrawLevel: 40 });
-    drawSpellEffects(renderer.unitLayer, world, viewport, missileAtlases, { minDrawLevel: 40 });
+    drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
+    drawLastSeenBuildings(renderer.unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
+    drawProjectiles(renderer.unitLayer, world, missileAtlases, prepared.projectiles.below40);
+    drawSpellEffects(renderer.unitLayer, world, missileAtlases, prepared.spellEffects.below40);
+    drawUnits(renderer.unitLayer, world, manifest, selectedUnitIds, args.controlGroups ?? {}, args.sourceShowOrdersVisible === true, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
+    drawLastSeenBuildings(renderer.unitLayer, world, unitAtlases, viewport, { minDrawLevel: 40 }, prepared.animationById);
+    drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.atLeast40, prepared.animationById);
+    drawProjectiles(renderer.unitLayer, world, missileAtlases, prepared.projectiles.atLeast40);
+    drawSpellEffects(renderer.unitLayer, world, missileAtlases, prepared.spellEffects.atLeast40);
     drawFog(renderer.fogLayer, world, viewport, fogAtlas);
   }
   for (; rendererIndex < renderers.length; rendererIndex += 1) {
@@ -530,17 +526,9 @@ function drawUnits(
   unitAtlases: Map<string, UnitTextureAtlas>,
   missileAtlases: Map<string, MissileTextureAtlas>,
   statusDecorationAtlas: StatusDecorationAtlas | null,
-  viewport: WorldViewport
+  prepared: WorldRenderSnapshot
 ): void {
-  const visibleUnits = [...world.units]
-    .sort(compareUnitDrawOrder)
-    .filter((unit) => (
-      !isUnitHiddenInConstruction(unit)
-      && !isInvisibleUtilityUnit(unit)
-      && !isUnitInsideResourceSource(unit)
-      && isUnitVisibleToPlayer(world, unit, world.visibilityPlayer)
-      && circleIntersectsViewport(unit.x, unit.y, Math.max(unit.radius + 96, unit.frameWidth, unit.frameHeight), viewport)
-    ));
+  const visibleUnits = prepared.units;
   if (visibleUnits.length === 0) {
     return;
   }
@@ -563,7 +551,7 @@ function drawUnits(
           ? constructionFrame.frame
           : unit.givesResource
             ? 0
-          : getAnimatedFrameNumber(unit, manifest, world, atlas.numDirections);
+          : getAnimatedFrameNumber(unit, world, atlas.numDirections, prepared);
       const texture = getFrameTexture(atlas, frameNumber);
       const sprite = createTrackedSprite(texture);
       const direction = spriteDirectionForFacing(unit.facing ?? 4, atlas.numDirections);
@@ -598,7 +586,7 @@ function drawUnits(
     drawBurningBuilding(layer, world, manifest, unit, missileAtlases);
 
     if (unit.teleporter) {
-      const destination = unit.teleportDestinationId ? world.units.find((candidate) => candidate.id === unit.teleportDestinationId) : undefined;
+      const destination = unit.teleportDestinationId ? prepared.unitById.get(unit.teleportDestinationId) : undefined;
       if (destination && isUnitVisibleToPlayer(world, destination, world.visibilityPlayer)) {
         graphics.moveTo(unit.x, unit.y);
         graphics.lineTo(destination.x, destination.y);
@@ -841,7 +829,7 @@ function drawUnits(
       graphics.stroke({ width: 2, color: 0xf0df9a, alpha: selected.has(unit.id) ? 0.95 : 0.35 });
     }
 
-    const activeResearch = isOwned ? world.activeResearch.find((research) => research.buildingId === unit.id) : undefined;
+    const activeResearch = isOwned ? prepared.researchByBuildingId.get(unit.id) : undefined;
     const sourceDecorationBars = sourceVariableDecorationBars(unit, isOwned, activeResearch, manifest.decorations ?? []);
     drawSourceVariableDecorations(layer, unit, isOwned, sourceDecorationBars, statusDecorationAtlas, manifest.decorations ?? []);
     const completedBarColor = sourceCompletedBarColor(world);
@@ -1258,12 +1246,6 @@ function hasActiveStatusEffect(unit: WorldState["units"][number], kind: WorldSta
   return unit.statusEffects?.some((effect) => effect.kind === kind && effect.remainingSeconds > 0) === true;
 }
 
-function compareUnitDrawOrder(left: WorldState["units"][number], right: WorldState["units"][number]): number {
-  return left.drawLevel - right.drawLevel
-    || (left.y + left.radius) - (right.y + right.radius)
-    || left.id.localeCompare(right.id);
-}
-
 function constructionFrameForUnit(unit: WorldState["units"][number], manifest: WargusManifest): { file: string; frame: number } | null {
   if (!unit.construction || !unit.constructionTypeId) {
     return null;
@@ -1280,7 +1262,7 @@ function constructionFrameForUnit(unit: WorldState["units"][number], manifest: W
     ?? definition.stages[0];
 }
 
-function drawLastSeenBuildings(layer: Container, world: WorldState, manifest: WargusManifest, unitAtlases: Map<string, UnitTextureAtlas>, viewport: WorldViewport, strata: { minDrawLevel?: number; maxDrawLevel?: number } = {}): void {
+function drawLastSeenBuildings(layer: Container, world: WorldState, unitAtlases: Map<string, UnitTextureAtlas>, viewport: WorldViewport, strata: { minDrawLevel?: number; maxDrawLevel?: number }, animationById: WorldRenderSnapshot["animationById"]): void {
   if (world.lastSeenBuildings.length === 0) {
     return;
   }
@@ -1295,7 +1277,7 @@ function drawLastSeenBuildings(layer: Container, world: WorldState, manifest: Wa
     }
     const atlas = unitAtlases.get(building.typeId);
     if (atlas) {
-      const frameNumber = getLastSeenBuildingFrameNumber(building, manifest, atlas.numDirections);
+      const frameNumber = getLastSeenBuildingFrameNumber(building, atlas.numDirections, animationById);
       const texture = getFrameTexture(atlas, frameNumber);
       const sprite = createTrackedSprite(texture);
       const direction = spriteDirectionForFacing(building.facing ?? 4, atlas.numDirections);
@@ -1354,22 +1336,16 @@ function sourceStableMirrorHash(value: string): number {
   return hash;
 }
 
-function drawCorpses(layer: Container, world: WorldState, manifest: WargusManifest, unitAtlases: Map<string, UnitTextureAtlas>, viewport: WorldViewport, strata: { minDrawLevel?: number; maxDrawLevel?: number } = {}): void {
+function drawCorpses(layer: Container, world: WorldState, unitAtlases: Map<string, UnitTextureAtlas>, corpses: readonly WorldState["corpses"][number][], animationById: WorldRenderSnapshot["animationById"]): void {
   if (!world.corpses || world.corpses.length === 0) {
     return;
   }
   const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
-  for (const corpse of [...world.corpses].sort(compareCorpseDrawOrder)) {
-    if (corpse.drawLevel < (strata.minDrawLevel ?? 0) || corpse.drawLevel > (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY)) {
-      continue;
-    }
-    if (!isCorpseVisibleToPlayer(world, corpse, world.visibilityPlayer) || !circleIntersectsViewport(corpse.x, corpse.y, corpse.radius + 64, viewport)) {
-      continue;
-    }
+  for (const corpse of corpses) {
     const progress = Math.min(1, corpse.age / Math.max(0.01, corpse.duration));
     const atlas = unitAtlases.get(corpse.typeId);
-    const frameNumber = getCorpseFrameNumber(corpse, manifest, world, atlas?.numDirections ?? 0);
+    const frameNumber = getCorpseFrameNumber(corpse, world, atlas?.numDirections ?? 0, animationById);
     const texture = atlas && frameNumber !== null ? getFrameTexture(atlas, frameNumber) : null;
     if (atlas && texture) {
       const direction = spriteDirectionForFacing(corpse.facing ?? 4, atlas.numDirections);
@@ -1393,65 +1369,24 @@ function drawCorpses(layer: Container, world: WorldState, manifest: WargusManife
   }
 }
 
-function isCorpseVisibleToPlayer(world: WorldState, corpse: WorldState["corpses"][number], playerId: number): boolean {
-  return isCircleVisibleToPlayer(world, corpse.x, corpse.y, corpse.radius, playerId)
-    || (corpse.visibleUnderFog && isCorpseExploredByPlayer(world, corpse, playerId));
-}
-
-function isCorpseExploredByPlayer(world: WorldState, corpse: WorldState["corpses"][number], playerId: number): boolean {
-  if (playerId !== world.visibilityPlayer) {
-    return isCircleVisibleToPlayer(world, corpse.x, corpse.y, corpse.radius, playerId);
-  }
-  const clampedRadius = Math.max(0, corpse.radius);
-  const left = Math.floor((corpse.x - clampedRadius) / world.tileSize);
-  const right = Math.floor((corpse.x + clampedRadius) / world.tileSize);
-  const top = Math.floor((corpse.y - clampedRadius) / world.tileSize);
-  const bottom = Math.floor((corpse.y + clampedRadius) / world.tileSize);
-  for (let tileY = top; tileY <= bottom; tileY += 1) {
-    for (let tileX = left; tileX <= right; tileX += 1) {
-      if (tileX >= 0 && tileY >= 0 && tileX < world.map.width && tileY < world.map.height && world.exploredTiles[tileY * world.map.width + tileX] === 1) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function compareCorpseDrawOrder(left: WorldState["corpses"][number], right: WorldState["corpses"][number]): number {
-  return left.drawLevel - right.drawLevel
-    || (left.y + left.radius) - (right.y + right.radius)
-    || left.id.localeCompare(right.id);
-}
-
-function getLastSeenBuildingFrameNumber(building: WorldState["lastSeenBuildings"][number], manifest: WargusManifest, numDirections: number): number {
+function getLastSeenBuildingFrameNumber(building: WorldState["lastSeenBuildings"][number], numDirections: number, animationById: WorldRenderSnapshot["animationById"]): number {
   if (!building.animation) {
     return 0;
   }
-  const animation = manifest.animations.find((candidate) => candidate.id === building.animation);
+  const animation = animationById.get(building.animation);
   const frames = animation?.actions.Still ?? animation?.actions.Move ?? animation?.actions.Attack;
   return (frames?.[0]?.frame ?? 0) + spriteDirectionForFacing(building.facing ?? 4, numDirections).offset;
 }
 
-function drawProjectiles(layer: Container, world: WorldState, viewport: WorldViewport, missileAtlases: Map<string, MissileTextureAtlas>, strata: { minDrawLevel?: number; maxDrawLevel?: number } = {}): void {
+function drawProjectiles(layer: Container, world: WorldState, missileAtlases: Map<string, MissileTextureAtlas>, projectiles: readonly WorldState["projectiles"][number][]): void {
   if (world.projectiles.length === 0) {
     return;
   }
   const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
-  const projectiles = [...world.projectiles].sort((a, b) => a.drawLevel - b.drawLevel);
   for (const projectile of projectiles) {
-    if (projectile.drawLevel < (strata.minDrawLevel ?? 0) || projectile.drawLevel > (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY)) {
-      continue;
-    }
     const atlas = projectile.missileId ? missileAtlases.get(projectile.missileId) : undefined;
     const drawPosition = projectileDrawPosition(projectile);
-    const visibilityRadius = projectileVisibilityRadius(projectile, atlas);
-    if (!isCircleVisibleToPlayer(world, drawPosition.x, drawPosition.y, visibilityRadius, world.visibilityPlayer)) {
-      continue;
-    }
-    if (!circleIntersectsViewport(drawPosition.x, drawPosition.y, visibilityRadius, viewport)) {
-      continue;
-    }
     const dx = projectile.targetX - projectile.x;
     const dy = projectile.targetY - projectile.y;
     const distance = Math.max(1, Math.hypot(dx, dy));
@@ -1621,37 +1556,14 @@ function missileSpriteScale(): number {
   return 1;
 }
 
-function projectileVisibilityRadius(projectile: WorldState["projectiles"][number], atlas: MissileTextureAtlas | undefined): number {
-  if (atlas) {
-    return Math.ceil(Math.max(atlas.frameWidth, atlas.frameHeight) * missileSpriteScale() * 0.5);
-  }
-  if (projectile.kind === "siege" || projectile.kind === "torpedo") {
-    return 28;
-  }
-  if (projectile.kind === "cannon") {
-    return 18;
-  }
-  return 22;
-}
-
-function drawSpellEffects(layer: Container, world: WorldState, viewport: WorldViewport, missileAtlases: Map<string, MissileTextureAtlas>, strata: { minDrawLevel?: number; maxDrawLevel?: number } = {}): void {
+function drawSpellEffects(layer: Container, world: WorldState, missileAtlases: Map<string, MissileTextureAtlas>, effects: readonly WorldState["spellEffects"][number][]): void {
   if (!world.spellEffects || world.spellEffects.length === 0) {
     return;
   }
   const graphics = createTrackedGraphics();
   let drewFallbackGraphics = false;
   const enhancedEffects = world.engineSettings.enhancedEffectsDefault !== false;
-  const effects = [...world.spellEffects].sort(compareSpellEffectDrawOrder);
   for (const effect of effects) {
-    if (effect.drawLevel < (strata.minDrawLevel ?? 0) || effect.drawLevel > (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY)) {
-      continue;
-    }
-    if (!isCircleVisibleToPlayer(world, effect.x, effect.y, effect.radius, world.visibilityPlayer)) {
-      continue;
-    }
-    if (!circleIntersectsViewport(effect.x, effect.y, effect.radius + 24, viewport)) {
-      continue;
-    }
     const progress = Math.min(1, effect.age / Math.max(0.01, effect.duration));
     const persistent = effect.kind === "blizzard" || effect.kind === "death-and-decay";
     const alpha = persistent ? Math.max(0.28, 0.72 - progress * 0.35) : Math.max(0, 1 - progress);
@@ -1721,12 +1633,6 @@ function drawSpellEffects(layer: Container, world: WorldState, viewport: WorldVi
   if (drewFallbackGraphics) {
     layer.addChild(graphics);
   }
-}
-
-function compareSpellEffectDrawOrder(left: WorldState["spellEffects"][number], right: WorldState["spellEffects"][number]): number {
-  return left.drawLevel - right.drawLevel
-    || left.y - right.y
-    || left.id.localeCompare(right.id);
 }
 
 function drawAreaSpellMissiles(layer: Container, world: WorldState, effect: WorldState["spellEffects"][number], atlas: MissileTextureAtlas, alpha: number): void {
@@ -1856,19 +1762,19 @@ function spellColor(kind: WorldState["spellEffects"][number]["kind"]): number {
   return 0xf0df9a;
 }
 
-function getAnimatedFrameNumber(unit: WorldState["units"][number], manifest: WargusManifest, world: WorldState, numDirections: number): number {
+function getAnimatedFrameNumber(unit: WorldState["units"][number], world: WorldState, numDirections: number, prepared: WorldRenderSnapshot): number {
   if (!unit.animation) {
     return 0;
   }
-  const animation = manifest.animations.find((candidate) => candidate.id === unit.animation);
-  const action = animationActionForUnit(unit, world, animation);
+  const animation = prepared.animationById.get(unit.animation);
+  const action = animationActionForUnit(unit, world, animation, prepared);
   const frames = animation?.actions[action] ?? animation?.actions.Move ?? animation?.actions.Still ?? animation?.actions.Attack;
   if (!frames || frames.length === 0) {
     return 0;
   }
 
   const totalWait = frames.reduce((sum, frame) => sum + Math.max(frame.wait, 1), 0);
-  let cursor = animationFrameCursorForUnitAction(unit, world, action, frames, totalWait);
+  let cursor = animationFrameCursorForUnitAction(unit, world, action, frames, totalWait, prepared);
   for (const frame of frames) {
     cursor -= Math.max(frame.wait, 1);
     if (cursor <= 0) {
@@ -1878,11 +1784,11 @@ function getAnimatedFrameNumber(unit: WorldState["units"][number], manifest: War
   return frames[0].frame + spriteDirectionForFacing(unit.facing ?? 4, numDirections).offset;
 }
 
-function animationFrameCursorForUnitAction(unit: WorldState["units"][number], world: WorldState, action: string, frames: NonNullable<WargusAnimation["actions"][string]>, totalWait: number): number {
+function animationFrameCursorForUnitAction(unit: WorldState["units"][number], world: WorldState, action: string, frames: NonNullable<WargusAnimation["actions"][string]>, totalWait: number, prepared: WorldRenderSnapshot): number {
   if (action !== "Attack") {
     return world.tick % totalWait;
   }
-  const pendingAttack = world.pendingAttacks.find((attack) => attack.sourceId === unit.id);
+  const pendingAttack = prepared.pendingAttackBySourceId.get(unit.id);
   if (pendingAttack) {
     const launchDelayCycles = sourceAttackAnimationLaunchDelayCyclesForRender(frames);
     const remainingCycles = Math.max(0, Math.floor(pendingAttack.remainingSeconds * sourceDefaultGameSpeed(world)));
@@ -1911,11 +1817,11 @@ function sourceAttackAnimationLaunchDelayCyclesForRender(frames: NonNullable<War
   return sawActiveFrame ? cycles : 0;
 }
 
-function getCorpseFrameNumber(corpse: WorldState["corpses"][number], manifest: WargusManifest, world: WorldState, numDirections: number): number | null {
+function getCorpseFrameNumber(corpse: WorldState["corpses"][number], world: WorldState, numDirections: number, animationById: WorldRenderSnapshot["animationById"]): number | null {
   if (!corpse.animation) {
     return null;
   }
-  const animation = manifest.animations.find((candidate) => candidate.id === corpse.animation);
+  const animation = animationById.get(corpse.animation);
   const frames = animation?.actions.Death;
   if (!frames || frames.length === 0) {
     return null;
@@ -1931,9 +1837,9 @@ function getCorpseFrameNumber(corpse: WorldState["corpses"][number], manifest: W
   return frames[frames.length - 1].frame + spriteDirectionForFacing(corpse.facing ?? 4, numDirections).offset;
 }
 
-function animationActionForUnit(unit: WorldState["units"][number], world: WorldState, animation: WargusAnimation | undefined): string {
+function animationActionForUnit(unit: WorldState["units"][number], world: WorldState, animation: WargusAnimation | undefined, prepared: WorldRenderSnapshot): string {
   const hasAction = (action: string) => Boolean(animation?.actions[action]?.length);
-  if (world.activeResearch.some((research) => research.buildingId === unit.id) && hasAction("Research")) {
+  if (prepared.researchByBuildingId.has(unit.id) && hasAction("Research")) {
     return "Research";
   }
   if (unit.productionQueue[0] && hasAction("Upgrade") && isSourceUpgradeProduction(world, unit)) {
@@ -1954,7 +1860,7 @@ function animationActionForUnit(unit: WorldState["units"][number], world: WorldS
   if (unit.order?.kind === "repair" && hasAction("Repair")) {
     return "Repair";
   }
-  if (world.pendingAttacks.some((attack) => attack.sourceId === unit.id) && hasAction("Attack")) {
+  if (prepared.pendingAttackBySourceId.has(unit.id) && hasAction("Attack")) {
     return "Attack";
   }
   if (unit.attackCooldown > 0.55 && hasAction("Attack")) {
