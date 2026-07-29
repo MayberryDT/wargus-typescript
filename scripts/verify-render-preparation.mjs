@@ -107,7 +107,9 @@ assert.equal(
 
 
 const detailedUnit = (id, x, y, drawLevel, extra = {}) => ({
-  id, x, y, radius: 8, frameWidth: 16, frameHeight: 16, drawLevel, ...extra
+  id, x, y, radius: 8, frameWidth: 16, frameHeight: 16, drawLevel,
+  productionQueue: [], construction: null, spellCooldown: 0, order: null, attackCooldown: 0,
+  ...extra
 });
 const corpse = (id, x, y, drawLevel, extra = {}) => ({
   id, x, y, radius: 8, drawLevel, visibleUnderFog: false, ...extra
@@ -354,4 +356,144 @@ assert.equal(rendererFunctions.getCorpseFrameNumber(
   { animation: "frame-animation", facing: 6, ageTicks: 1 }, frameWorld, 1, frameSnapshot.animationById
 ), 11);
 
-console.log("Render preparation verified (ordering, culling, strata, indexes, frames, viewports, counters, diagnostics).");
+
+const drawUnitsDeclaration = rendererSourceFile.statements.find((statement) =>
+  ts.isFunctionDeclaration(statement) && statement.name?.text === "drawUnits");
+assert.ok(drawUnitsDeclaration, "Expected renderWorld.ts to define drawUnits");
+let teleportBranch;
+const findTeleportBranch = (node) => {
+  if (ts.isIfStatement(node) && node.expression.getText(rendererSourceFile) === "unit.teleporter") {
+    teleportBranch = node;
+    return;
+  }
+  ts.forEachChild(node, findTeleportBranch);
+};
+findTeleportBranch(drawUnitsDeclaration);
+assert.ok(teleportBranch, "Expected drawUnits to contain the production teleporter branch");
+const teleportJavascript = ts.transpileModule(
+  "function renderTeleportBranch(unit, world, prepared, graphics) {\n"
+    + teleportBranch.getText(rendererSourceFile)
+    + "\n}",
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }
+).outputText;
+const renderTeleportBranch = Function(
+  "exports",
+  "isUnitVisibleToPlayer",
+  teleportJavascript + "\nreturn renderTeleportBranch;"
+)({}, (_world, candidate) => candidate.visible !== false);
+
+const teleportSource = detailedUnit("teleporter", 20, 20, 5, {
+  animation: "teleporter-animation",
+  facing: 6,
+  player: 0,
+  teleporter: true,
+  teleportDestinationId: "duplicate-destination",
+  productionQueue: [],
+  construction: null,
+  spellCooldown: 0,
+  order: null,
+  attackCooldown: 0
+});
+const firstDestination = detailedUnit("duplicate-destination", 70, 75, 6, {
+  animation: "first-destination-animation",
+  facing: 6,
+  visible: true,
+  marker: "first"
+});
+const laterDestination = detailedUnit("duplicate-destination", 85, 80, 6, {
+  animation: "later-destination-animation",
+  facing: 6,
+  visible: false,
+  marker: "later"
+});
+const teleportWorld = {
+  ...detailedWorld,
+  units: [teleportSource, firstDestination, laterDestination],
+  corpses: [],
+  projectiles: [],
+  pendingAttacks: [],
+  spellEffects: [],
+  activeResearch: [],
+  tick: 0,
+  buttonDefinitions: []
+};
+const teleportManifest = {
+  animations: [
+    { id: "teleporter-animation", source: "teleporter", actions: { Still: [{ frame: 3, wait: 1 }] } },
+    { id: "first-destination-animation", source: "first", actions: { Still: [{ frame: 7, wait: 1 }] } },
+    { id: "later-destination-animation", source: "later", actions: { Still: [{ frame: 99, wait: 1 }] } }
+  ],
+  missiles: []
+};
+const teleportSnapshot = prepareWorldRenderSnapshot(teleportWorld, teleportManifest, viewportA);
+const legacyDestination = teleportWorld.units.find((candidate) => candidate.id === teleportSource.teleportDestinationId);
+assert.equal(legacyDestination, firstDestination);
+assert.equal(teleportSnapshot.unitById.get("duplicate-destination"), legacyDestination);
+
+const captureTeleportOps = (prepared) => {
+  const operations = [];
+  const graphics = {
+    moveTo: (x, y) => operations.push(["moveTo", x, y]),
+    lineTo: (x, y) => operations.push(["lineTo", x, y]),
+    stroke: (style) => operations.push(["stroke", style]),
+    circle: (x, y, radius) => operations.push(["circle", x, y, radius])
+  };
+  renderTeleportBranch(teleportSource, teleportWorld, prepared, graphics);
+  return operations;
+};
+const expectedTeleportOps = [
+  ["moveTo", teleportSource.x, teleportSource.y],
+  ["lineTo", firstDestination.x, firstDestination.y],
+  ["stroke", { width: 2, color: 0xa78de8, alpha: 0.34 }],
+  ["circle", teleportSource.x, teleportSource.y, teleportSource.radius + 16],
+  ["stroke", { width: 2, color: 0xa78de8, alpha: 0.58 }]
+];
+const actualTeleportOps = captureTeleportOps(teleportSnapshot);
+assert.deepEqual(actualTeleportOps, expectedTeleportOps, "Prepared lookup must produce the legacy first-match teleport line");
+const lastWriteSnapshot = {
+  ...teleportSnapshot,
+  unitById: new Map([["duplicate-destination", laterDestination]])
+};
+assert.notDeepEqual(
+  captureTeleportOps(lastWriteSnapshot),
+  expectedTeleportOps,
+  "Teleport assertion must reject a later duplicate replacing the legacy first match"
+);
+
+const actualRenderProjection = {
+  teleport: actualTeleportOps,
+  units: teleportSnapshot.units.map((candidate) => ({
+    id: candidate.id,
+    x: candidate.x,
+    y: candidate.y,
+    animation: candidate.animation,
+    frame: rendererFunctions.getAnimatedFrameNumber(candidate, teleportWorld, 1, teleportSnapshot)
+  }))
+};
+const expectedRenderProjection = {
+  teleport: expectedTeleportOps,
+  units: [...teleportWorld.units]
+    .sort(unitOrder)
+    .filter((candidate) => candidate.visible !== false
+      && intersects(
+        candidate.x,
+        candidate.y,
+        Math.max(candidate.radius + 96, candidate.frameWidth, candidate.frameHeight),
+        viewportA
+      ))
+    .map((candidate) => ({
+      id: candidate.id,
+      x: candidate.x,
+      y: candidate.y,
+      animation: candidate.animation,
+      frame: teleportManifest.animations.find((animation) => animation.id === candidate.animation)?.actions.Still[0]?.frame ?? 0
+    }))
+};
+assert.deepEqual(
+  actualRenderProjection,
+  expectedRenderProjection,
+  "Duplicate-ID teleport, chosen animation/frame, and normalized rendered result must match the legacy path"
+);
+assert.deepEqual(actualRenderProjection.units.map(({ frame }) => frame), [3, 7]);
+
+console.log("Render preparation verified (ordering, culling, strata, indexes, teleport, frames, viewports, counters, diagnostics).");
