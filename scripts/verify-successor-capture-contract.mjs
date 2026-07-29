@@ -212,8 +212,8 @@ for (const [actualIssueOffsetMs, expectedInvalid] of [[9749.99, true], [9750, fa
   assert.equal(boundary.scheduleInvalid, expectedInvalid, `One-sided target lateness classification failed for ${actualIssueOffsetMs} ms.`);
 }
 assert.equal(helpers.commandTrialDiagnostics([
-  { success: true, scheduledIssueOffsetMs: 500, actualIssueOffsetMs: 760 },
-  { success: true, scheduledIssueOffsetMs: 750, actualIssueOffsetMs: 755 }
+  { success: true, scheduledIssueOffsetMs: 500, actualIssueOffsetMs: 700 },
+  { success: true, scheduledIssueOffsetMs: 500, actualIssueOffsetMs: 650 }
 ], { inputToCommandSamples: [], inputToNextRenderSamples: [] }).scheduleInvalid, true, "Issue timestamps must remain ordered.");
 
 const disposablePair = await exerciseRealPair({
