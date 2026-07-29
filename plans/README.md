@@ -159,7 +159,7 @@ individual exit packets or integration alone.
 | 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |
 | 025 | Make visibility and fog dirty-driven | 4 — High-risk scheduling | P1 | 018, 019, 022, 023 | TODO | — | — | — | — |
 | 026 | Standardize Halla browser execution | 0 — Foundation repair | P0 | — | DONE-VERIFIED | implementation `eb0cb0e`–`02051ad`; integration `d99a24a`; acceptance `9bbcc00` | [026](evidence/026.md) | 2026-07-28 | — |
-| 027 | Repair drifted verification gates | 0 — Foundation repair | P0 | 026 (closeout/revalidation only) | TODO | — | — | — | — |
+| 027 | Repair drifted verification gates | 0 — Foundation repair | P0 | 026 (closeout/revalidation only) | DONE-VERIFIED | implementation `ef7d8a8`, `6b8f89a`; follow-up repairs `caa7df8`, `de8d83f`, `1b8ad44`; acceptance `704f321` | [027](evidence/027.md) | 2026-07-28 | — |
 
 ## Governing contracts
 
