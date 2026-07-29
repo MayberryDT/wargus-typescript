@@ -39,6 +39,17 @@ assert.equal(helpers.commandPairReady({
   previousRaf: 100
 }), true, "Two command and render samples with advancing RAF must complete a pair.");
 
+const acceptedLongRafTail = await helpers.awaitCommandPair({
+  before: { inputToCommandSamples: [], inputToNextRenderSamples: [] },
+  previousRaf: 100,
+  readRaf: () => new Promise((resolve) => setTimeout(() => resolve({ timestamp: 101 }), 150)),
+  readSummary: async () => ({ inputToCommandSamples: [1, 2], inputToNextRenderSamples: [1, 2] }),
+  intervalMs: 1
+});
+assert.equal(acceptedLongRafTail.ready, true, "A valid 150 ms RAF tail inside the 1000 ms absolute deadline must complete.");
+assert.equal(acceptedLongRafTail.after.inputToCommandSamples.length, 2);
+assert.equal(acceptedLongRafTail.after.inputToNextRenderSamples.length, 2);
+
 const stalledStartedAt = Date.now();
 const stalledRaf = await helpers.awaitCommandPair({
   before: { inputToCommandSamples: [], inputToNextRenderSamples: [] },
@@ -46,12 +57,12 @@ const stalledRaf = await helpers.awaitCommandPair({
   readRaf: () => new Promise(() => {}),
   readSummary: async () => ({ inputToCommandSamples: [], inputToNextRenderSamples: [] }),
   deadlineMs: 40,
-  rafTimeoutMs: 10,
   intervalMs: 1
 });
+const stalledElapsedMs = Date.now() - stalledStartedAt;
 assert.equal(stalledRaf.ready, false, "A stalled browser RAF must deterministically produce an invalid pair result.");
 assert.match(String(stalledRaf.error?.message), /RAF|timed out|deadline/i);
-assert.ok(Date.now() - stalledStartedAt < 500, "The Node-side RAF bound must not inherit the browser watchdog duration.");
+assert.ok(stalledElapsedMs >= 25 && stalledElapsedMs < 150, `A stalled RAF must consume its explicit 40 ms deadline within a tight scheduling envelope; observed ${stalledElapsedMs} ms.`);
 
 let fakeNow = 0;
 let changingRaf = 100;
@@ -63,7 +74,6 @@ const missingSamples = await helpers.awaitCommandPair({
   nowMs: () => fakeNow,
   delay: async (milliseconds) => { fakeNow += milliseconds; },
   deadlineMs: 1000,
-  rafTimeoutMs: 100,
   intervalMs: 250
 });
 assert.equal(missingSamples.ready, false, "Ever-changing RAF progress must not extend the absolute command deadline.");
@@ -75,7 +85,6 @@ const paired = await helpers.awaitCommandPair({
   readRaf: async () => ({ timestamp: 101 }),
   readSummary: async () => ({ inputToCommandSamples: [1, 2], inputToNextRenderSamples: [1, 2] }),
   deadlineMs: 40,
-  rafTimeoutMs: 10,
   intervalMs: 1
 });
 assert.equal(paired.ready, true, "Two paired samples and advancing RAF must finish inside the absolute deadline.");
@@ -86,14 +95,13 @@ const stalledSummary = await helpers.awaitCommandPair({
   readRaf: async () => ({ timestamp: 101 }),
   readSummary: () => new Promise(() => {}),
   deadlineMs: 40,
-  rafTimeoutMs: 10,
   intervalMs: 1
 });
 assert.equal(stalledSummary.ready, false, "A stalled performance summary must deterministically produce an invalid pair result.");
 
 const retainedRafFailure = retainedQualificationFailure(stalledRaf, { inputToCommandSamples: [], inputToNextRenderSamples: [] }, 100);
 assert.equal(retainedRafFailure.pairingFailureKind, "raf-timeout", "RAF timeout evidence must be explicitly distinguished.");
-assert.match(retainedRafFailure.cause.message, /^RAF timed out after 10 ms\.$/);
+assert.match(retainedRafFailure.cause.message, /^RAF timed out after [0-9.]+ ms\.$/);
 assert.equal(JSON.stringify(retainedRafFailure.commandOutcome), JSON.stringify({
   actualIssueOffsetMs: 250, success: false, inputToCommandDelta: 0, inputToNextRenderDelta: 0,
   rawInputToCommandSliceMs: [], rawInputToNextRenderSliceMs: [], rafTimestamp: 100
@@ -354,7 +362,15 @@ console.log("Successor capture contract verified (paired real input and schema-v
 function loadHelpers(moduleSource, names) {
   const declarations = names.map((name) => extractFunction(moduleSource, name)).join("\n");
   const assignments = names.map((name) => `this.${name} = ${name};`).join("\n");
-  const context = { COMMAND_OFFSET_TOLERANCE_MS: 250, path, process, setTimeout, clearTimeout };
+  const context = {
+    COMMAND_OFFSET_TOLERANCE_MS: 250,
+    COMMAND_PAIR_DEADLINE_MS: 1000,
+    RAF_AWAIT_TIMEOUT_MS: 100,
+    path,
+    process,
+    setTimeout,
+    clearTimeout
+  };
   vm.runInNewContext(`${declarations}\n${assignments}`, context, { filename: "successor-capture-helpers.mjs" });
   return context;
 }

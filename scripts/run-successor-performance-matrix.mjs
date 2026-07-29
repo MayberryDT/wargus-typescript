@@ -23,7 +23,6 @@ const ROWS = ROW_IDS.map((row) => ALL_ROWS[row - 1]);
 const OFFSETS_MS = [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
 const COMMAND_PAIR_DEADLINE_MS = 1000;
-const RAF_AWAIT_TIMEOUT_MS = 100;
 const SUMMARY_PUBLISHER_SOURCE = new URL("./lib/checksummed-summary-publisher.mjs", import.meta.url);
 const FIXED_TICK_OFFSET = 600;
 const FIXED_PROOF_PROFILE_IDS = ["idle-25", "army-100", "army-200", "command-18", "combat-100"];
@@ -574,7 +573,7 @@ function withTimeout(promiseFactory, timeoutMs, label) {
   ]).finally(() => { if (timer !== null) clearTimeout(timer); });
 }
 
-async function awaitCommandPair({ before, previousRaf, readRaf, readSummary, nowMs = () => Number(process.hrtime.bigint()) / 1e6, delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)), deadlineMs = COMMAND_PAIR_DEADLINE_MS, rafTimeoutMs = RAF_AWAIT_TIMEOUT_MS, intervalMs = 25 }) {
+async function awaitCommandPair({ before, previousRaf, readRaf, readSummary, nowMs = () => Number(process.hrtime.bigint()) / 1e6, delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)), deadlineMs = COMMAND_PAIR_DEADLINE_MS, intervalMs = 25 }) {
   const deadlineAt = nowMs() + deadlineMs;
   let after = before;
   let rafTimestamp = previousRaf;
@@ -582,7 +581,7 @@ async function awaitCommandPair({ before, previousRaf, readRaf, readSummary, now
     let remainingMs = deadlineAt - nowMs();
     if (remainingMs <= 0) return { ready: false, after, rafTimestamp, error: new Error(`Real command pairing exceeded its absolute ${deadlineMs} ms deadline.`) };
     try {
-      const frame = await withTimeout(readRaf, Math.max(1, Math.min(rafTimeoutMs, remainingMs)), "RAF");
+      const frame = await withTimeout(readRaf, Math.max(1, remainingMs), "RAF");
       rafTimestamp = frame.timestamp;
       remainingMs = deadlineAt - nowMs();
       if (remainingMs <= 0) return { ready: false, after, rafTimestamp, error: new Error(`Real command pairing exceeded its absolute ${deadlineMs} ms deadline.`) };
