@@ -9,6 +9,9 @@
 > the existing AI exploration cadence, fog pixels, and view independence. All
 > contribution and fog caches are transient and not serialized. Add no save
 > fields. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -53,7 +56,7 @@ per-source contributions. It exposes deterministic tile revisions to a
 separate renderer-owned, bounded fog chunk cache. Simulation correctness never
 depends on a renderer, and renderer correctness never mutates simulation.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, the authoritative published state is held on the
 world:
@@ -154,7 +157,7 @@ required coordinator refresh, STOP.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Visibility/fog | `node scripts/verify-visibility-fog-incremental.mjs` | source contributions, revisions, bounds, full parity, memory, chunks, disposal, rollback, and timing cases pass |
+| New visibility/fog verifier (created in Step 1) | `node scripts/verify-visibility-fog-incremental.mjs` | source contributions, revisions, bounds, full parity, memory, chunks, disposal, rollback, and timing cases pass |
 | Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | accepted Plan 019 raw opacity and terrain semantics remain exact |
 | Render cache | `node scripts/verify-world-render-cache.mjs` | accepted Plan 022 retained-object ownership and counters remain exact |
 | Occupancy parity | `node scripts/verify-occupancy-index.mjs` | accepted Plan 023 order/mutation behavior remains exact |
@@ -168,9 +171,13 @@ required coordinator refresh, STOP.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; direct visibility/fog evidence recorded; every unchanged shared budget passes |
 
-Run focused and non-browser commands before implementation. Performance
-captures run serially under the shared contracts and never overlap Plan 024 or
-another executor's capture.
+Before implementation, run only the pre-existing typecheck, upstream parity,
+source-FOV/fog, save, determinism, asset, build, and direct-timing gates. The
+explicitly new incremental verifier does not exist at the Wave 4 base; a
+missing script is not a red baseline. Create it in Step 1, record a meaningful
+failing assertion against the accepted full-grid behavior, then make that same
+assertion green. Performance captures run serially under the shared contracts
+and never overlap Plan 024 or another executor's capture.
 
 ## Scope
 
@@ -375,14 +382,20 @@ or raise their frequency without a separately approved semantic plan.
 
 ## Dirty revision and full-parity contract
 
-The transient cache owns a safe-integer `revision`, one
-`Uint32Array(tileCount)` of last-changed tile revisions, sorted unique
-`dirtyTileIndices`, and either `null` or exact inclusive dirty bounds
-`{ minX, minY, maxX, maxY }`. When final visible/explored bits change, increment
-the revision once for that simulation update, stamp changed tiles, and derive
-bounds from those tiles. An unchanged tick retains the revision and publishes
-an empty list/null bounds. Before numeric wrap, perform a full rebuild, reset
-the revision to one, stamp every tile, and force all renderer chunks stale.
+The transient cache owns a JavaScript `number` constrained to the unsigned
+32-bit integer range `1..0xffffffff`, matching its
+`Uint32Array(tileCount)` of last-changed tile revisions; zero is reserved for
+an unstamped tile. A construction/full rebuild sets the cache revision to one
+and stamps every tile. The cache also owns sorted unique `dirtyTileIndices` and
+either `null` or exact inclusive dirty bounds `{ minX, minY, maxX, maxY }`.
+
+When final visible/explored bits change and the current revision is below
+`0xffffffff`, increment once for that simulation update, stamp changed tiles,
+and derive bounds from those tiles. An unchanged tick retains its revision,
+including at `0xffffffff`, and publishes an empty list/null bounds. If a changed
+update begins at `0xffffffff`, perform a deterministic full rebuild instead,
+reset to one, stamp every tile, and force every renderer chunk stale. Revision
+zero or a value above `0xffffffff` is never published.
 
 Keep the current complete-grid algorithm as `rebuildVisibilityReference`.
 Development/test full parity runs after every scripted update; deterministic
@@ -452,7 +465,9 @@ determinism, durability, and review exit gates and integrated. Verify technical
 Plans 018/019/022/023 and their accepted artifacts/checksums/fingerprints,
 terrain opacity parity, retained-object lifecycle/counters, and authoritative
 unit ordering/mutation inventory. Run refreshed drift checks and all
-non-browser baseline commands.
+pre-existing non-browser baseline commands. Do not invoke
+`verify-visibility-fog-incremental.mjs` until Step 1 has created a meaningful
+red fixture.
 
 Regenerate the complete visibility inventory: units, holy vision, reveal
 effects, source spawn/removal/death, movement/tile crossing, footprint/range/
@@ -475,6 +490,12 @@ published grids, cadence, pixels, saves, and baseline gates are green.
 
 ### Step 1: Add transient contribution state and the full-grid oracle
 
+Create `scripts/verify-visibility-fog-incremental.mjs` first. Its initial
+incremental-work/revision assertion must fail against the accepted full-grid
+implementation for the intended behavioral reason, not because a file/import
+is missing; preserve that red output before adding the transient cache and
+making the same assertion green.
+
 Create `visibilityCache.ts` with source discovery/signatures, bounded sorted
 records, `Uint32Array` counts, revision metadata, invalidation, diagnostics,
 and `rebuildVisibilityReference`. Initially run incremental calculation only as
@@ -488,6 +509,10 @@ reference grid and a clean contribution cache replace the transaction, and
 reference mode is selected. After an explicit clean rebuild, inject a second
 underflow and assert `persistentCorruptions`, permanent reference mode, and
 acceptance STOP. Compare exact grids/revisions after each operation.
+
+Exercise revision `0xfffffffe` to `0xffffffff`, an unchanged tick retained at
+`0xffffffff`, and the next changed update's full reset to one with every tile
+stamped and every fog chunk stale. Reject zero and out-of-range revisions.
 
 **Verify:** shadow output equals the reference byte-for-byte; records respect
 per-source/aggregate bounds; first underflow recovers atomically without
@@ -605,8 +630,9 @@ and evidence is durable and checksum-verified.
   persistent-corruption STOP.
 - Local every-fixed-tick visibility/targeting and independent existing AI
   exploration cadence with due/not-due next-tick assertions.
-- Dirty final transitions, inclusive bounds, tile revisions, unchanged tick,
-  full invalidation, and revision wrap.
+- Dirty final transitions, inclusive bounds, tile revisions, unchanged tick at
+  `0xffffffff`, `0xfffffffe` increment, changed-at-maximum full reset to one,
+  zero/out-of-range rejection, and full invalidation.
 - Save/load/world replacement full rebuild from authoritative state with no new
   serialized contribution/revision/fog fields and unreachable old caches.
 - 16×16 chunks, exact dependency radius, edge/corner propagation, view-level
@@ -650,11 +676,12 @@ environment, profile-definition and initial entity/effect fingerprints, one
 JSON per trial, normalized summaries, exact source/global/fog lifecycle
 inventories, legacy and incremental direct timing, golden grids and visual
 references, dirty revisions/bounds, contribution and memory high-water,
-raw underflow fixture counts/indices, no-wrap assertion, rebuilt grid/cache
-fingerprints,
-first-recovery and repeated-corruption outcomes, chunk actions/bounds/disposal,
-Plan 018 tracked counters, parity/cadence/load/rollback results,
-controller/resource records, invalid/replacement records, and SHA-256
+meaningful red and final green incremental-verifier outputs, raw underflow
+fixture counts/indices, unsigned-32-bit boundary/reset/no-wrap assertions,
+rebuilt grid/cache fingerprints, first-recovery and repeated-corruption
+outcomes, chunk actions/bounds/disposal, Plan 018 tracked counters,
+parity/cadence/load/rollback results, controller/resource records,
+invalid/replacement records, and SHA-256
 checksums. Independently recompute new checksums and verify every baseline.
 
 Commit only concise normalized results to the single evidence file
@@ -675,6 +702,11 @@ on `/tmp` as durable evidence.
   exploration cadence remains exact and independent from local rendering.
 - [ ] Dirty tile indices, bounds, and revisions represent only final published
   changes and rebuild deterministically on load/world/global invalidation.
+- [ ] Revision is exactly unsigned-32-bit `1..0xffffffff`; unchanged-at-maximum
+  retains the value, the next changed update rebuilds at one and stamps every
+  tile, and zero/out-of-range publication is rejected.
+- [ ] The new focused verifier has meaningful behavior-level red evidence and
+  a final green result; missing-file/import failure is not accepted.
 - [ ] Bounded fog chunks are independent per view, invalidate by exact
   dependency radius, preserve pixels/blur, and dispose on every lifecycle seam.
 - [ ] Contribution/revision/chunk/cache/diagnostic state is not serialized; no

@@ -39,7 +39,7 @@ and whether it is owned.
 
 - Implementation and focused non-benchmark checks may run concurrently in
   isolated worktrees when the wave ownership table permits.
-- Performance captures run one at a time.
+- Later performance captures run one at a time.
 - Broad integration verification runs after all wave branches integrate.
 
 ## Browser qualification
@@ -53,6 +53,30 @@ and whether it is owned.
 
 ## Artifact storage
 
-```
+The canonical logical path is:
+
+```text
 .artifacts/performance/<plan>/<commit>/<UTC-stamp>/
 ```
+
+This path is not usable yet merely because it is documented. Before any
+capture, Wave 0 must:
+
+1. have the coordinator integrate the exact `/.artifacts/` rule into the
+   repository `.gitignore`;
+2. designate a retained Halla checkout under `/home/halla/workspaces/` that is
+   not the disposable plan worktree;
+3. set `WARGUS_ARTIFACT_ROOT` to that retained checkout's `.artifacts`
+   directory and pass the absolute root to the shared controller;
+4. prove a representative nested path is ignored with `git check-ignore`, the
+   physical root is writable, has enough free space, and resolves outside the
+   disposable worktree; and
+5. record the checkout/root identity and preservation owner in Plan 026
+   evidence without committing raw files.
+
+The controller writes
+`$WARGUS_ARTIFACT_ROOT/performance/<plan>/<commit>/<UTC-stamp>/`; evidence uses
+the canonical logical path above. Removing an isolated plan worktree must not
+remove this retained root. Do not delete or relocate it without an explicit
+retention decision after checksums and concise committed evidence are verified.
+If the ignore rule, retained root, or preflight is absent, STOP before capture.

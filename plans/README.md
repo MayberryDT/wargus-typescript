@@ -7,11 +7,28 @@ recorded commits, evidence, revalidation dates, drift, successors, and waiver
 boundaries are authoritative in
 [the historical plan audit](HISTORICAL-PLAN-AUDIT.md).
 
+## Roadmap rewrite approval gate
+
+The optimized roadmap closeout is documentation only. Its readiness verdict is
+`READY FOR USER REVIEW`, not authorization to start Wave 0. After the rewrite
+commit, STOP: do not execute Plan 026, Plan 027, any later roadmap plan, a
+browser/runtime capture, host or tooling mutation, preview, or deployment until
+the user explicitly approves this roadmap for execution.
+
+`TODO` and `BLOCKED` below describe truthful plan state; neither status
+grants execution authority. Once approval is recorded, Wave 0 remains the first
+allowed work and every detailed entry/STOP condition still applies. The prior
+user authorization for final production deployment remains in force only after
+Plans 018–027, X12, combined verification/review, and preview smoke are complete;
+it does not authorize Wave 0, an early preview, or an early deployment.
+
 ## Status vocabulary
 
-- `TODO`: approved but not started.
-- `IN PROGRESS`: implementation or acceptance work is active.
-- `BLOCKED`: an explicit entry or STOP condition prevents progress.
+- `TODO`: planned but not started; an unopened approval, dependency, or wave gate
+  is expected and does not by itself change this status.
+- `IN PROGRESS`: eligible implementation or acceptance work is active.
+- `BLOCKED`: work has started or landed, but an explicit STOP or exceptional
+  condition prevents its next required step.
 - `DONE-VERIFIED`: implementation and required acceptance evidence passed.
 - `DONE-HISTORICAL`: implementation landed, but the plan predates current
   evidence conventions or has current successor drift.
@@ -31,10 +48,17 @@ boundaries are authoritative in
 | 4 — High-risk scheduling | 024, 025 |
 | 5 — Release | combined verification, review, preview, production |
 
-Plans 026/027 in Wave 0, Plans 019/020/021 in Wave 2, and Plans 022/023 in
-Wave 3 execute in parallel in isolated worktrees under the frozen ownership
-tables below. Performance captures are serial. A later wave starts only after
-every predecessor exit gate is accepted and integrated.
+The Plan 026 branch and Plan 027's two implementation checkpoints may execute
+in parallel in isolated worktrees under the frozen Wave 0 ownership below.
+Plan 027 browser/historical revalidation and closeout run only after Plan 026 is
+accepted and coordinator-integrated. Performance captures are serial. A later
+wave starts only after every predecessor exit gate is accepted and integrated.
+
+| Wave 0 owner | Exclusive implementation slice | Verification and integration boundary |
+|---|---|---|
+| 026 | shared browser execution controller; every browser verifier server/debug-port/cleanup migration; controller verifier and generic browser resource/artifact helpers | owns all browser lifecycle, allocation, and cleanup behavior plus evidence 026 |
+| 027 | exactly `scripts/verify-source-resource-ui.mjs` and the two named assertions in `scripts/verify-fixed-demo-polish.mjs` | owns branch-local red/green proof and evidence 027; source-pathfinding and all browser verifiers are read-only gates |
+| Wave coordinator | no plan-local implementation | after Plan 026 checkpoint approval, integrates `.gitignore`/`package.json`, runs Plan 026 final verification, records acceptance, then runs Plan 027 browser/historical revalidation; alone closes `plans/README.md` rows |
 
 Wave 2 begins only after Plan 018 is accepted and integrated, not after its
 documentation rewrite alone. Plans 019, 020, and 021 then execute independently;
@@ -111,7 +135,7 @@ even when implementation and focused checks run in parallel.
 | 015 | Complete and extend the fixed-demo advanced tech paths | Historical | P2 | 011, 012 | DONE-VERIFIED | `e6be507`, `c43a28c`, `7eb9230`, `66f0ed8` / `5f9a444` | [015](evidence/015.md) | 2026-07-23 | — |
 | 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | `65bfd1a` / user acceptance `8655330` | [016](evidence/016.md) | 2026-07-24 | — |
 | 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | `a17bfa7` / user acceptance `8655330` | [017](evidence/017.md) | 2026-07-24 | — |
-| 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | IN PROGRESS | implementation `fc41c95`–`e80215e`; acceptance pending | [018](evidence/018.md) | 2026-07-28 | — |
+| 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | BLOCKED | implementation `fc41c95`–`e80215e`; acceptance blocked on Wave 0 | [018](evidence/018.md) | 2026-07-28 | — |
 | 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
 | 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | TODO | — | — | — | — |
@@ -120,7 +144,7 @@ even when implementation and focused checks run in parallel.
 | 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |
 | 025 | Make visibility and fog dirty-driven | 4 — High-risk scheduling | P1 | 018, 019, 022, 023 | TODO | — | — | — | — |
 | 026 | Standardize Halla browser execution | 0 — Foundation repair | P0 | — | TODO | — | — | — | — |
-| 027 | Repair drifted verification gates | 0 — Foundation repair | P0 | — | TODO | — | — | — | — |
+| 027 | Repair drifted verification gates | 0 — Foundation repair | P0 | 026 (closeout/revalidation only) | TODO | — | — | — | — |
 
 ## Governing contracts
 

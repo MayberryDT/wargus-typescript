@@ -7,10 +7,13 @@
 > accepted. The [Halla execution policy](HALLA-EXECUTION-POLICY.md) and
 > [performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) are authoritative;
 > this plan references rather than replaces them.
+>
+> **Drift check:** Run every command in `Current state` first. STOP on an
+> unexplained path, commit, branch, or browser-verifier difference.
 
-## Status and entry gate
+## Status
 
-- **Status:** IN PROGRESS
+- **Status:** BLOCKED
 - **Wave:** 1 — Measurement foundation
 - **Priority:** P1
 - **Effort:** M remaining acceptance work
@@ -36,7 +39,7 @@ use. A valid baseline may fail a performance budget; truthfully recording that
 failure is acceptable for Plan 018. Later optimization plans must pass their
 assigned budgets under the same accepted contract.
 
-## Drift bases and checks
+## Current state
 
 The Plan 018-owned implementation starts after `783d1a5` and ends at
 `e80215e`. The later roadmap contracts were reconciled at rewrite base
@@ -91,7 +94,7 @@ not Plan 018-owned implementation. STOP if a result differs from these bases,
 if a relevant change is unexplained, or if the expected branch has already
 integrated other runtime work. Reconcile the plan before continuing.
 
-## Existing implementation checkpoints
+### Existing implementation checkpoints
 
 Do not reimplement these checkpoints:
 
@@ -111,7 +114,7 @@ green non-browser gates recorded in [Plan 018 evidence](evidence/018.md).
 Representative capture, canonical determinism acceptance, and final integration
 remain incomplete.
 
-## Actual implementation and drift scope
+## Scope
 
 Plan 018-owned commits `fc41c95..e80215e` changed exactly:
 
@@ -136,19 +139,7 @@ instrumentation labels its scope as instrumented Pixi scene objects and
 excludes texture destruction. It is not permission to optimize or refactor
 rendering.
 
-Ownership is explicit:
-
-| Owner | Files and interfaces |
-|---|---|
-| Plan 018 | Owns the performance summary schema, deterministic profiles, runtime/display-object instrumentation, matrix evidence, and focused `verify-performance-metrics`, `verify-playtest-telemetry`, and `verify-simulation-scheduler` contracts listed above. It does not own browser process control or the Wave 0 gate repairs. |
-| Plan 026 | Owns the shared browser execution controller, browser verifier server/debug-port/PID-cleanup migrations, hardware-renderer qualification, and generic resource-monitor/artifact helpers. It may expose generic records to Plan 018 but may not alter Plan 018 measurements or acceptance. |
-| Plan 027 | Owns only its `verify-source-resource-ui` portability repair, the two named `verify-fixed-demo-polish` assertion repairs, and focused revalidation needed for those gates. It does not own the performance contract, controller, or Plan 018 instrumentation. |
-| Wave coordinator | Owns integration edits to `plans/README.md`, `package.json`, and any shared verifier integration named in this plan that crosses the Plan 018/026/027 boundaries. Plan branches must not independently resolve a shared-file conflict by absorbing another plan's ownership. |
-
-The browser verifier surfaces named in the drift section follow this map:
-Plan 026 owns their browser-execution behavior, Plan 027 may only revalidate or
-make its narrowly scoped gate repair, and cross-plan integration is
-coordinator-owned.
+### Boundaries
 
 Out of scope for this closeout:
 
@@ -164,7 +155,31 @@ Out of scope for this closeout:
 If acceptance exposes a harness defect that requires code, STOP and amend the
 scope before editing it.
 
-## Commands required before capture
+## Git workflow
+
+- Continue from the accepted Wave 0 integration in the assigned isolated
+  `perf/plan-018-v2` worktree; re-run ancestry and drift before capture.
+- The closeout may update Plan 018 evidence and coordinator-owned roadmap state
+  only after acceptance. It may not rewrite the landed implementation
+  checkpoints or absorb Plans 019–025.
+- Keep raw artifacts uncommitted, do not push, deploy, or open a PR unless
+  instructed, and never resolve a Plan 026/027 ownership issue in this branch.
+
+## Shared interfaces and ownership
+
+| Owner | Files and interfaces |
+|---|---|
+| Plan 018 | Owns the performance summary schema, deterministic profiles, runtime/display-object instrumentation, matrix evidence, and focused `verify-performance-metrics`, `verify-playtest-telemetry`, and `verify-simulation-scheduler` contracts listed above. It does not own browser process control or the Wave 0 gate repairs. |
+| Plan 026 | Owns the shared browser execution controller, browser verifier server/debug-port/PID-cleanup migrations, hardware-renderer qualification, and generic resource-monitor/artifact helpers. It may expose generic records to Plan 018 but may not alter Plan 018 measurements or acceptance. |
+| Plan 027 | Owns only its `verify-source-resource-ui` portability repair, the two named `verify-fixed-demo-polish` assertion repairs, and focused revalidation needed for those gates. It does not own the performance contract, controller, or Plan 018 instrumentation. |
+| Wave coordinator | Owns integration edits to `plans/README.md`, `package.json`, and any shared verifier integration named in this plan that crosses the Plan 018/026/027 boundaries. Plan branches must not independently resolve a shared-file conflict by absorbing another plan's ownership. |
+
+The browser verifier surfaces named in the drift section follow this map:
+Plan 026 owns their browser-execution behavior, Plan 027 may only revalidate or
+make its narrowly scoped gate repair, and cross-plan integration is
+coordinator-owned.
+
+## Commands you will need
 
 Run after Wave 0 is accepted and before starting a browser:
 
@@ -183,7 +198,7 @@ required. Do not substitute a package manager or dependency version. STOP on
 any red baseline; a second identical failure confirms the blocker but does not
 authorize capture.
 
-## Execution steps
+## Steps
 
 ### Step 0: Prove the Wave 0 entry dependency
 
@@ -192,7 +207,9 @@ evidence is accepted, and the integrated Wave 0 commit is the base of this
 worktree. Then run the drift checks above and the non-browser commands.
 
 **Verify:** Wave 0 evidence, ancestry, drift, focused gates, assets, and build
-are green. Until then, STOP with Plan 018 `IN PROGRESS`.
+are green. Until then, STOP with Plan 018 `BLOCKED`. After the roadmap is
+explicitly approved and this entry dependency passes, change it to
+`IN PROGRESS` for the acceptance work.
 
 ### Step 1: Produce fixed-tick determinism proof
 
@@ -311,32 +328,40 @@ and worst-trial row results are the unchanged baseline handoff for Plans
 contract; they may not reinterpret Plan 018 diagnostic files or invent a
 competing measurement protocol.
 
-## STOP and rollback
+## Test plan
 
-STOP immediately when:
+- Run every command in the required-command table after the Wave 0 entry gate.
+- Prove fixed-tick state, scheduler, and save equality for every deterministic
+  profile at the same exact tick offset.
+- Qualify Halla, the hardware renderer, focus, visibility, advancing RAF,
+  viewport, profile definition, and initial entity/effect fingerprint.
+- Run three independent valid trials for every canonical matrix row, including
+  the real `command-18` outcomes and paired sample minima.
+- Recompute per-trial nearest-rank statistics, worst-trial row dispositions,
+  the canonical heap formula, and all artifact checksums independently.
+- Exercise invalid-trial replacement and exact-owned cleanup without touching
+  an unrelated process or listener.
 
-- Wave 0 is not accepted or its integrated commit is absent;
-- a drift check is unexplained;
-- a required non-browser gate or asset/build check is red;
-- deterministic state or save output changes under instrumentation;
-- accurate collection would require manual Pixi rendering or a second render;
-- profile gating permits normal-demo access;
-- Halla violates a start/stop threshold;
-- renderer, focus, visibility, RAF, viewport, profile, fingerprint, required
-  command outcome, or paired sample qualification fails;
-- a trial slot exhausts its one replacement;
-- required environment metadata, resource records, raw files, or checksums
-  cannot be made durable; or
-- another performance capture is active.
+## Performance acceptance
 
-On capture failure, stop only the exact owned PIDs, verify owned ports and
-descendants are gone, preserve invalid-trial metadata and any diagnostic raw
-output, and leave Plan 018 `IN PROGRESS`. Do not delete or relabel a failed
-trial. This closeout plan authorizes no runtime mutation, so a code-level fix
-requires a reviewed amendment and a separate commit. If such an amendment is
-later approved and breaks determinism or a required gate, revert only that
-Plan 018-owned amendment to the last green checkpoint; never roll back
-unrelated Wave 0 or user work.
+`PERFORMANCE-ACCEPTANCE.md` is authoritative for profile rows, qualification,
+three-trial validity, nearest-rank statistics, worst-trial disposition, heap,
+determinism, replacement limits, and checksums. A complete valid Plan 018
+baseline may close while truthfully reporting failed budgets; missing, invalid,
+or software-rendered evidence blocks it. Plans 019–025 inherit the same baseline
+and must pass every budget assigned to them.
+
+## Evidence contract
+
+The durable evidence authority is `plans/evidence/018.md`, backed by raw
+artifacts at `.artifacts/performance/018/<commit>/<UTC-stamp>/`. It must name
+the accepted Wave 0 integration, capture commit, fixed-tick determinism result,
+environment and hardware renderer, controller version, profile-definition
+hash, initial entity/effect fingerprint, all 21 valid trials, invalid and
+replacement dispositions, per-trial and worst-trial results, resource
+records, and verified SHA-256 checksums. Missing, invalid, software-rendered,
+single-trial, or scratch-only evidence blocks closeout even when a baseline
+budget fails.
 
 ## Done criteria
 
@@ -357,3 +382,39 @@ unrelated Wave 0 or user work.
   SHA-256 checksums are verified.
 - [ ] Normalized committed evidence is accepted without overclaiming failures.
 - [ ] `plans/README.md` records the final acceptance commit and date.
+
+## STOP conditions
+
+STOP immediately when:
+
+- Wave 0 is not accepted or its integrated commit is absent;
+- a drift check is unexplained;
+- a required non-browser gate or asset/build check is red;
+- deterministic state or save output changes under instrumentation;
+- accurate collection would require manual Pixi rendering or a second render;
+- profile gating permits normal-demo access;
+- Halla violates a start/stop threshold;
+- renderer, focus, visibility, RAF, viewport, profile, fingerprint, required
+  command outcome, or paired sample qualification fails;
+- a trial slot exhausts its one replacement;
+- required environment metadata, resource records, raw files, or checksums
+  cannot be made durable; or
+- another performance capture is active.
+
+## Rollback
+
+On capture failure, stop only the exact owned PIDs, verify owned ports and
+descendants are gone, preserve invalid-trial metadata and any diagnostic raw
+output, and leave Plan 018 `BLOCKED` until the failed condition is resolved.
+Do not delete or relabel a failed trial. This closeout plan authorizes no runtime mutation, so a code-level fix
+requires a reviewed amendment and a separate commit. If such an amendment is
+later approved and breaks determinism or a required gate, revert only that
+Plan 018-owned amendment to the last green checkpoint; never roll back
+unrelated Wave 0 or user work.
+
+## Maintenance notes
+
+Keep the accepted matrix, metric names, profile fingerprints, fixed-tick proof,
+and artifact layout stable for downstream comparisons. A future measurement or
+instrumentation change requires an explicit reviewed amendment; it must not be
+smuggled into an optimization wave or reinterpret failed historical trials.

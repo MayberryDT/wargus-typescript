@@ -9,6 +9,9 @@
 > Preserve `world.units` as the authoritative ordered collection and preserve
 > every first-match, iteration, passability, placement, collision, and path
 > tie-breaking result. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -40,7 +43,7 @@ candidate set. A transient ordered occupancy index can bound candidate visits
 by covered tiles while leaving authoritative unit state and every semantic
 predicate unchanged.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, occupancy blocking iterates the authoritative
 array and returns on the first blocking unit:
@@ -139,9 +142,9 @@ before Plan 023 begins.
 
 | Purpose | Command | Expected result |
 |---|---|---|
-| Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
+| Host/worktree | `test "$(hostname)" = halla && case "$(pwd -P)" in /home/halla/workspaces/*) ;; *) exit 1 ;; esac && test -f "$(git rev-parse --show-toplevel)/.git" && git status --short --branch` | Halla, linked isolated worktree path, assigned branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Occupancy parity | `node scripts/verify-occupancy-index.mjs` | order, first-match, query, mutation, coordinator-fixture invalidation/rebuild, timing, diagnostics, save/load, and fallback cases pass |
+| New occupancy-parity verifier (created in Step 1) | `node scripts/verify-occupancy-index.mjs` | order, first-match, query, mutation, coordinator-fixture invalidation/rebuild, timing, diagnostics, save/load, and fallback cases pass |
 | Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | accepted Plan 019 terrain/passability semantics remain exact |
 | Unit-ID parity | `node scripts/verify-unit-index.mjs` | accepted Plan 020 first-match lookup/invalidation semantics remain exact |
 | Pathfinding | `npm run verify:source-pathfinding` | path results and tie-breaking unchanged |
@@ -154,8 +157,13 @@ before Plan 023 begins.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; every unchanged shared budget passes |
 
-Run baseline commands before implementation. Performance captures run serially
-under the shared contracts and never overlap another executor's capture.
+Before implementation, run only the pre-existing typecheck, accepted terrain
+and unit-ID parity, pathfinding, save, determinism, asset, build, and direct
+legacy timing gates. The new occupancy verifier does not exist at the Wave 3
+base; a missing script/import is not red evidence. Create it in Step 1, record a
+meaningful failing assertion against accepted full-scan behavior, then make that
+same assertion green. Browser gates run after implementation; captures run
+serially and never overlap another executor's capture.
 
 ## Scope
 
@@ -315,13 +323,22 @@ Before migrating query consumers, capture direct legacy full-scan occupancy-
 query duration with the exact timer boundaries that the indexed path will use.
 Record query count, p50/p95/p99/mean/max/total, processed simulation steps,
 candidate visits, and zero index-maintenance cost for every assigned profile.
-Run refreshed drift checks and all non-browser baseline commands.
+Run refreshed drift checks and all pre-existing non-browser baseline commands.
+Record `scripts/verify-occupancy-index.mjs` as absent and not run; if it already
+exists without an accepted plan refresh, STOP.
 
 **Verify:** the all-Wave-2 barrier, technical dependencies, ancestry,
 inventories, checksums/fingerprints, timing baseline, host policy, upstream
 parity, save schema, determinism, and baseline gates are green.
 
 ### Step 1: Build a read-only ordered occupancy index
+
+Create a loadable full-scan occupancy API shell and
+`scripts/verify-occupancy-index.mjs` first. A local-candidate-scaling, stable
+reuse, maintenance-diagnostic, or rebuild fixture must execute and fail against
+the full-scan shell for the intended behavior-level reason; `MODULE_NOT_FOUND`,
+an import error, or a missing file is not acceptable RED evidence. Preserve
+that output, then implement until the same fixture and full verifier are green.
 
 Implement construction from authoritative `world.units`, exact covered-tile
 calculation, deterministic tile/footprint candidate queries, object-identity
@@ -430,6 +447,8 @@ is durable and checksum-verified.
 
 ## Test plan
 
+- A recorded meaningful RED followed by GREEN for the new verifier; load/import
+  failure does not qualify.
 - Exact ordered tile/footprint candidates across edges, overlaps, duplicate IDs.
 - First-match, early exits, filter order, stable ties, blocker cost, exclusion,
   and stack-recovery selection.
@@ -483,8 +502,8 @@ Include accepted Plan 018/019/020 artifact/checksum references, environment,
 profile-definition and initial entity/effect fingerprints, one JSON per trial,
 normalized summaries, exact `orders.ts` and coordinator-owned `main.ts` mutation
 inventories, fixture invalidation/rebuild parity, ordered/first-match parity,
-save/load and determinism, candidate counts, direct query-time distributions,
-per-operation maintenance-time distributions and total maintenance time,
+save/load and determinism, the focused verifier's meaningful RED/GREEN output,
+candidate counts, direct query-time distributions, per-operation maintenance-time distributions and total maintenance time,
 maintenance-inclusive cost per processed simulation step, controller/resource
 records, invalid/replacement records, and SHA-256 checksums. Independently
 recompute new checksums and verify every baseline reference.
@@ -497,6 +516,8 @@ on `/tmp` as durable evidence.
 
 - [ ] The strict Wave 3 barrier is open: Plans 019, 020, and 021 passed their
   exit gates and are integrated; technical Plans 018/019/020 handoffs verify.
+- [ ] The new verifier has a recorded behavior-level RED and GREEN; no missing
+  file/import result is counted as RED.
 - [ ] `world.units` remains authoritative and candidates match exact reference
   order and first-match behavior.
 - [ ] Complete mutation inventory has a register, unregister, transition,
@@ -540,6 +561,7 @@ on `/tmp` as durable evidence.
   rather than reduces the measured work.
 - An owned edit reaches renderer/cache, `main`, performance schema,
   `package.json`, `plans/README.md`, or shared verifier before integration.
+- The new verifier cannot produce a meaningful behavior-level RED before GREEN.
 - Any occupancy, upstream, type, pathfinding, save, fixture, browser,
   determinism, asset, or build gate fails twice.
 - Halla/browser qualification fails, capture overlaps, replacement exhausts,

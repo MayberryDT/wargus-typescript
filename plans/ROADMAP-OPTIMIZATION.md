@@ -154,5 +154,182 @@ full-roadmap rewrite preserves that score as a pre-implementation plan-quality
 record; it does not reinterpret the score as proof that original exhaustive
 acceptance ran.
 
-No separate score for the full-roadmap rewrite is recorded yet. A later score
-must use its own stated rubric and repository-backed review record.
+The separate full-roadmap score is recorded below with its own frozen rubric
+and repository-backed review record; it does not replace the historical score.
+
+## Task 8 full-roadmap optimizer — frozen 100-point rubric
+
+This is a separate plan-quality audit for the Plans 001–027 wave rewrite. It
+does not rescore the historical gameplay-only rubric above and does not claim
+that any future plan has executed. The rubric was frozen before the Task 8
+correction rounds:
+
+| Criterion | Weight |
+|---|---:|
+| Repository grounding and drift control | 15 |
+| Measurable goal and done criteria | 12 |
+| Dependency and wave correctness | 18 |
+| Verification and evidence quality | 18 |
+| Shared browser/resource/protocol consistency | 15 |
+| Risk and rollback | 10 |
+| Parallel executability and file ownership | 8 |
+| Maintenance and handoff | 4 |
+| **Total** | **100** |
+
+Each criterion is scored independently. A proposed round is accepted only for
+a gain of at least two points. The optimizer may run at most eight rounds and
+stops after three consecutive non-improving rounds. The roadmap is acceptable
+only above 90. Scores below grade plan executability, not implementation or
+acceptance completion.
+
+### Pass 0 — repository candidate: 87/100
+
+| Criterion | Score | Limiting evidence |
+|---|---:|---|
+| Repository grounding and drift control | 13/15 | Every active plan had a concrete ancestor base, but Plan 018 did not satisfy the normalized active-section contract. |
+| Measurable goal and done criteria | 11/12 | Goals and gates were measurable, but the rewrite had no explicit post-closeout user-approval boundary. |
+| Dependency and wave correctness | 18/18 | Wave barriers and narrower API dependencies were consistent and acyclic. |
+| Verification and evidence quality | 13/18 | Deferred findings left wrapper-only lifecycle evidence, ambiguous new-verifier baselines, and an underspecified revision boundary. |
+| Shared browser/resource/protocol consistency | 13/15 | Shared policies were authoritative, but Plan 027 did not pass its available runtime-port override explicitly. |
+| Risk and rollback | 8/10 | STOP/rollback rules were strong, but the final rewrite-to-execution stop was implicit. |
+| Parallel executability and file ownership | 7/8 | Waves 2–4 were disjoint, but Plans 026/027 both claimed browser-verifier edits and Plan 026 simultaneously scoped and delegated its package entry. |
+| Maintenance and handoff | 4/4 | Evidence files, coordinator handoffs, refresh rules, and status ownership were explicit. |
+| **Total** | **87/100** | Below the required threshold. |
+
+**Critique:** a capable executor could still misread a new verifier as a
+pre-existing baseline, accept wrapper-name presence as lifecycle proof, or
+cross the overlapping Wave 0 browser/shared-file boundary differently from the
+coordinator.
+
+### Pass 1 — contract correction: 95/100
+
+Accepted substantive changes:
+
+- normalized Plan 018 to the complete active-plan template and classified its
+  stopped acceptance state as `BLOCKED`;
+- froze Wave 0 ownership: Plan 026 owns every browser controller/verifier
+  migration and the ignored retained-artifact deliverable; Plan 027 owns exactly
+  two scripts, with browser revalidation only after Plan 026 integration;
+- made Plan 026's branch-local direct verifier and coordinator-only `.gitignore`,
+  `package.json`, and roadmap integration unambiguous;
+- required Plan 027 runtime smoke to pass and record an explicit inspected
+  requested-candidate port through the integrated controller;
+- added negative added-line/final-source evidence against direct Pixi
+  construction/destruction in Plan 022 and explicit linked-worktree checks in
+  Plans 022/023;
+- separated pre-existing baselines from meaningful behavior-level RED/GREEN
+  creation gates for every new verifier in Plans 019–025; and
+- froze Plan 025's revision range and exact maximum/reset behavior.
+
+| Criterion | Score | Re-anchor rationale |
+|---|---:|---|
+| Repository grounding and drift control | 14/15 | Exact active sections and concrete drift checks pass; future integrated bases must still be refreshed at execution. |
+| Measurable goal and done criteria | 11/12 | Every plan has measurable gates, but the rewrite-to-execution authority boundary remains implicit. |
+| Dependency and wave correctness | 18/18 | No barrier/API edge changed; DAG and wave order remain exact. |
+| Verification and evidence quality | 16/18 | Negative lifecycle scans, meaningful new-verifier RED/GREEN sequencing, ignored retained-artifact preflight, and revision boundary tests close the proof gaps; future results remain unexecuted. |
+| Shared browser/resource/protocol consistency | 15/15 | Browser, port, PID, resource, capture, renderer, and evidence rules now point to one shared protocol without a local exception. |
+| Risk and rollback | 9/10 | Plan-local rollback is precise; final rewrite authority still needs an explicit STOP. |
+| Parallel executability and file ownership | 8/8 | Exclusive slices and coordinator-only shared integration are now consistent. |
+| Maintenance and handoff | 4/4 | Evidence and refresh handoffs remain complete. |
+| **Total** | **95/100** | **Accepted: +8.** |
+
+This is a full frozen-rubric re-anchor, not “87 plus edits.”
+
+### Pass 2 — approval boundary: 97/100
+
+**Accepted substantive change:** `plans/README.md` now states that the rewrite
+is `READY FOR USER REVIEW`, not execution authority, and requires explicit user
+approval before Wave 0, browser/runtime capture, host/tooling mutation,
+preview, deployment, or any later plan.
+
+| Criterion | Score | Re-anchor rationale |
+|---|---:|---|
+| Repository grounding and drift control | 14/15 | Current repository state is grounded; future integration drift cannot be prepaid. |
+| Measurable goal and done criteria | 12/12 | Rewrite readiness and the next authorized state are now explicit and testable. |
+| Dependency and wave correctness | 18/18 | Wave order, barriers, and technical edges remain exact. |
+| Verification and evidence quality | 16/18 | Planned proof is strong; future implementation evidence does not yet exist. |
+| Shared browser/resource/protocol consistency | 15/15 | One protocol governs shared execution. |
+| Risk and rollback | 10/10 | Plan-local rollback and the roadmap-level approval STOP are explicit. |
+| Parallel executability and file ownership | 8/8 | Parallel slices and shared-file serialization are frozen. |
+| Maintenance and handoff | 4/4 | Coordinator, executor, reviewer, and user handoffs are explicit. |
+| **Total** | **97/100** | **Accepted: +2.** |
+
+This second-pass table is the required two-round rubric re-anchor.
+
+### Pass 3 — no accepted gain: 97/100
+
+The pass considered duplicating shared artifact and controller rules into each
+active plan. That would add prose while increasing future drift risk; the
+existing authoritative references plus plan-specific deltas are more
+executable. No change was accepted.
+
+| Criterion | Score |
+|---|---:|
+| Repository grounding and drift control | 14/15 |
+| Measurable goal and done criteria | 12/12 |
+| Dependency and wave correctness | 18/18 |
+| Verification and evidence quality | 16/18 |
+| Shared browser/resource/protocol consistency | 15/15 |
+| Risk and rollback | 10/10 |
+| Parallel executability and file ownership | 8/8 |
+| Maintenance and handoff | 4/4 |
+| **Total** | **97/100 — no gain (1/3).** |
+
+### Pass 4 — no accepted gain and re-anchor: 97/100
+
+The pass considered freezing post-integration acceptance SHAs now. Those SHAs
+do not exist; inventing them would weaken repository grounding. The existing
+coordinator refresh/STOP rules are the correct executable contract. No change
+was accepted.
+
+| Criterion | Score |
+|---|---:|
+| Repository grounding and drift control | 14/15 |
+| Measurable goal and done criteria | 12/12 |
+| Dependency and wave correctness | 18/18 |
+| Verification and evidence quality | 16/18 |
+| Shared browser/resource/protocol consistency | 15/15 |
+| Risk and rollback | 10/10 |
+| Parallel executability and file ownership | 8/8 |
+| Maintenance and handoff | 4/4 |
+| **Total** | **97/100 — no gain (2/3).** |
+
+This is a fresh frozen-rubric re-anchor after two more passes.
+
+### Pass 5 — no accepted gain; optimizer stop: 97/100
+
+The pass considered awarding the remaining points for future drift refreshes,
+acceptance artifacts, and exercised rollback. Those facts can exist only after
+approved plan execution and therefore cannot improve this pre-execution
+roadmap. No change was accepted.
+
+| Criterion | Score |
+|---|---:|
+| Repository grounding and drift control | 14/15 |
+| Measurable goal and done criteria | 12/12 |
+| Dependency and wave correctness | 18/18 |
+| Verification and evidence quality | 16/18 |
+| Shared browser/resource/protocol consistency | 15/15 |
+| Risk and rollback | 10/10 |
+| Parallel executability and file ownership | 8/8 |
+| Maintenance and handoff | 4/4 |
+| **Total** | **97/100 — no gain (3/3).** |
+
+Trajectory: **87 → 95 → 97 → 97 → 97 → 97**. The optimizer stops after
+three consecutive non-improving passes, within the eight-round maximum. The
+roadmap clears the required greater-than-90 quality threshold.
+
+Independent review then challenged evidence behind already-scored criteria. The
+final candidate incorporates its corrections: truthful Plan 018 status and
+GBrain context, complete active headings, Wave 0 ownership/closeout ordering,
+meaningful RED/GREEN creation for Plans 019–023, rendered table integrity,
+complete rewrite inventory, and the Wave 0 ignored retained-artifact gate. A
+fresh frozen-rubric re-anchor remains **97/100**: these fixes make the claimed
+criterion evidence true but do not award points for unexecuted future results,
+so they do not add a post-plateau optimizer round or alter the trajectory.
+
+The missing three points are deliberately withheld: one repository-grounding
+point requires future integrated-base drift refreshes, and two verification
+points require actual implementation/capture evidence. The score authorizes
+no execution; the roadmap remains `READY FOR USER REVIEW` pending explicit
+user approval.

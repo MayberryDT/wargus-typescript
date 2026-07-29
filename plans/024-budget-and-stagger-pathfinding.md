@@ -9,6 +9,9 @@
 > unchanged. Implement resumable A* and the node-expansion budget from the
 > first scheduler commit. Pending path requests and resumable progress are
 > authoritative, mandatory save state. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -54,7 +57,7 @@ eligible request advances under one global node-expansion budget, retains its
 A* state between ticks, survives save/load exactly, and commits through the
 same ordered endpoint and order semantics as the synchronous implementation.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, `findPathResult` can run two complete searches
 synchronously:
@@ -156,8 +159,8 @@ refresh required above, STOP.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Path scheduler | `node scripts/verify-pathfinding-budget.mjs` | node budget, immutable snapshots, resume, mid-quantum restoration, queue semantics, retry hash, cycle validation, fairness, cancellation, route, and diagnostics pass |
-| X12 | `node scripts/verify-x12-first-tick.mjs` | production X12 world advances exactly one first tick under the expansion cap, then reaches the legacy outcome |
+| New path-scheduler verifier (created in Step 1) | `node scripts/verify-pathfinding-budget.mjs` | node budget, immutable snapshots, resume, mid-quantum restoration, queue semantics, retry hash, cycle validation, fairness, cancellation, route, and diagnostics pass |
+| New X12 verifier (created in Step 5) | `node scripts/verify-x12-first-tick.mjs` | production X12 world advances exactly one first tick under the expansion cap, then reaches the legacy outcome |
 | Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | accepted Plan 019 terrain semantics remain exact |
 | Unit-ID parity | `node scripts/verify-unit-index.mjs` | accepted Plan 020 first-match semantics remain exact |
 | Occupancy parity | `node scripts/verify-occupancy-index.mjs` | accepted Plan 023 order, mutation, fallback, and timing semantics remain exact |
@@ -170,8 +173,12 @@ refresh required above, STOP.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted `command-18`, `army-200`, and `combat-100` rows at 1280×720 plus X12 | three valid trials per matrix row; direct scheduler evidence recorded; every unchanged shared budget passes |
 
-Run the focused and non-browser commands before implementation to freeze the
-accepted baseline. Performance captures run serially under the shared
+Before implementation, run only the pre-existing typecheck, upstream parity,
+source-pathfinding, save, determinism, asset, build, and direct-timing gates.
+The two explicitly new verifier scripts do not exist at the Wave 4 base; a
+missing script is not a red baseline. Create each in its owning step, record a
+meaningful failing assertion against the accepted legacy behavior, then make
+that same assertion green. Performance captures run serially under the shared
 contracts and never overlap Plan 025 or another executor's capture.
 
 ## Scope
@@ -638,7 +645,9 @@ predecessor.
 Confirm Plans 022 and 023 passed all focused, shared-budget, browser,
 determinism, durability, and review exit gates and integrated. Verify technical
 Plans 018/019/020/023 and their accepted artifacts/checksums/fingerprints.
-Run refreshed drift checks and all non-browser baseline commands.
+Run refreshed drift checks and all pre-existing non-browser baseline commands.
+Do not invoke `verify-pathfinding-budget.mjs` or `verify-x12-first-tick.mjs`
+until its owning step has created a meaningful red fixture.
 
 Regenerate the complete production path inventory: initial commands,
 validation/commit pairs, queued commands, group movement, attack candidate
@@ -661,6 +670,12 @@ inventory, save baseline, direct timing, route/order fingerprints, X12
 outcome, shared checksums, host policy, and baseline gates are green.
 
 ### Step 1: Build resumable A* with exact synchronous parity
+
+Create `scripts/verify-pathfinding-budget.mjs` first. Its initial cap/resume/
+snapshot assertion must fail against the accepted synchronous implementation
+for the intended behavioral reason, not because a file/import is missing;
+preserve that red output before extracting the state machine and making the
+same assertion green.
 
 Extract the state machine and serialization described above without routing a
 production caller. Drive it to completion in the focused verifier and compare
@@ -754,6 +769,11 @@ is phased; starvation bounds hold under continuous arrivals; stale results
 cannot commit; and no synchronous fallback or unexplained restart occurs.
 
 ### Step 5: Prove X12, save/load, and deterministic behavior
+
+Create `scripts/verify-x12-first-tick.mjs` and first preserve a failing result
+showing that the accepted synchronous production path does not satisfy the
+512-expansion first-tick contract. A missing script, fixture, asset, or import
+is not the required red proof. Then make the same production assertion green.
 
 Create the production X12 world from
 `campaigns/human-exp/levelx12h.smp.gz`. Its first active simulation tick must
@@ -884,8 +904,9 @@ hash golden vectors and algorithm fingerprint, replacement/append queue
 provenance, snapshot bytes/identity/hash/limits/restarts, intra-quantum/tick
 restoration, strict cycle rejection,
 save/normalizer/frontier/sequence fixtures, X12 raw result, terrain/ID/
-occupancy/pathfinding parity, controller/resource records,
-invalid/replacement records, and SHA-256 checksums. Independently recompute new
+occupancy/pathfinding parity, meaningful red and final green outputs for both
+new focused verifiers, controller/resource records, invalid/replacement
+records, and SHA-256 checksums. Independently recompute new
 checksums and verify every referenced baseline.
 
 Commit only concise normalized results to the single evidence file
@@ -921,6 +942,8 @@ on `/tmp` as durable evidence.
   accepted route/order/hash outcome.
 - [ ] Terrain, ID, occupancy, source-pathfinding, save, normalizer, browser,
   determinism, asset, build, and focused gates pass.
+- [ ] Both new focused verifiers have meaningful behavior-level red evidence
+  and final green results; missing-file/import failures are not accepted.
 - [ ] Direct path timing improves, work is not shifted into maintenance, and
   every assigned shared budget passes with durable checksum-verified evidence.
 - [ ] The branch contains only Plan 024-owned files; coordinator

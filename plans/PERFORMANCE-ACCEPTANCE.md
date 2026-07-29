@@ -101,12 +101,19 @@ Store durable raw artifacts outside Git at:
 .artifacts/performance/<plan>/<commit>/<UTC-stamp>/
 ```
 
+This is the logical path backed by the ignored retained workspace root defined
+in `HALLA-EXECUTION-POLICY.md`. It is a Wave 0 deliverable, not a current
+repository fact: no trial may start until the committed `/.artifacts/` ignore
+rule, explicit `WARGUS_ARTIFACT_ROOT`, `git check-ignore` probe, writable-root
+check, and outside-disposable-worktree realpath check all pass.
+
 Every capture directory contains one JSON file per trial, a normalized matrix
 summary, SHA-256 checksums, a resource-monitor summary, controller version or
 commit, and invalid/discarded trial records. Its auditable environment metadata
 records the browser executable and version, viewport, renderer string, GPU
 device and driver, document focus and visibility, RAF advancement, commit and
-build mode, and host load, memory, swap, and storage pre/post state.
+build mode, artifact workspace/root realpaths and preservation owner, and host
+load, memory, swap, and storage pre/post state.
 
 Before/after comparisons use the same host, browser, hardware renderer,
 viewport, build mode, profile definition, warmup, duration, and aggregation

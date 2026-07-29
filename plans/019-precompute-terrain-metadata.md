@@ -6,6 +6,9 @@
 > [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) without
 > weakening either. Preserve terrain, passability, path-selection, and FOV
 > semantics exactly. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -33,7 +36,7 @@ repeatedly search immutable tileset slots and allocate short-lived flag
 collections. A shared immutable numeric metadata cache removes that work
 without changing which tiles are land, buildable, harvestable, or opaque.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, the post-Plan-018 implementation has these exact
 seams:
@@ -95,7 +98,7 @@ accepted concrete SHA and new exact excerpts before Plan 019 begins.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Terrain parity | `node scripts/verify-terrain-metadata-cache.mjs` | every slot/flag, fallback, cache, and diagnostic case passes |
+| New terrain-parity verifier (created in Step 1) | `node scripts/verify-terrain-metadata-cache.mjs` | every slot/flag, fallback, cache, and diagnostic case passes |
 | Pathfinding | `npm run verify:source-pathfinding` | exit 0 |
 | Fog/FOV | `npm run verify:source-fov-fog` | exit 0 |
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick state and save comparison passes |
@@ -103,9 +106,12 @@ accepted concrete SHA and new exact excerpts before Plan 019 begins.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 rows `army-100` at 1280×720 and `command-18` at both viewports | three valid trials per row; every assigned budget passes |
 
-Run baseline commands before implementation. Run performance captures serially
-under the shared contracts; do not start a browser or capture alongside another
-performance executor.
+Before implementation, run only the pre-existing typecheck, pathfinding,
+fog/FOV, determinism, asset, and build gates. The new terrain verifier does not
+exist at the Wave 2 base; a missing script/import is not red evidence. Create it
+in Step 1, record a meaningful failing assertion against accepted legacy
+behavior, then make that same assertion green. Run performance captures
+serially; do not start a browser or capture alongside another executor.
 
 ## Scope
 
@@ -164,14 +170,22 @@ Confirm Plan 018 is `DONE-VERIFIED`, its acceptance commit is integrated, and
 its durable matrix and checksums resolve on Halla. Record the accepted
 `army-100` and both `command-18` baseline row artifacts, environment identity,
 profile-definition hash, initial entity/effect fingerprint, per-trial results,
-and worst-trial results. Run the drift checks and all non-browser baseline
-commands.
+and worst-trial results. Run the drift checks and all pre-existing non-browser
+baseline commands. Record `scripts/verify-terrain-metadata-cache.mjs` as absent
+and not run; if it already exists without an accepted plan refresh, STOP.
 
 **Verify:** dependency, ancestry, drift, checksums, fingerprints, host policy,
-and baseline gates are green. STOP rather than using historical Plan 018
+and pre-existing baseline gates are green. STOP rather than using historical Plan 018
 diagnostic or `/tmp`-only evidence.
 
 ### Step 1: Add an immutable terrain metadata cache
+
+Create a loadable terrain-metadata API shell and
+`scripts/verify-terrain-metadata-cache.mjs` first. At least one cache-reuse,
+allocation, or raw-versus-normalized tile-126 fixture must execute and fail for
+the intended legacy/no-cache reason; `MODULE_NOT_FOUND`, an import error, or a
+missing file is not acceptable RED evidence. Preserve that output, then
+implement until the same fixture and the full focused verifier are green.
 
 Create numeric bits for exactly the flags consumed by the named passability,
 forest, and opacity callers. Build one `Map<number, number>` per immutable
@@ -240,6 +254,8 @@ long-task, scheduler, input, and terrain-diagnostic results where applicable.
 
 ## Test plan
 
+- A recorded meaningful RED followed by GREEN for the new verifier; load/import
+  failure does not qualify.
 - Every manifest tileset slot and every caller-consumed source flag.
 - Missing tileset, unknown slot, and legacy fallback classifications.
 - Three explicit removed-tree tile `126` fixtures: passability receives the
@@ -275,14 +291,17 @@ Store raw artifacts outside Git at:
 Include the accepted Plan 018 baseline directory and checksum references,
 environment comparison, profile-definition and initial entity/effect
 fingerprints, one JSON per trial, normalized row summary, diagnostics,
-determinism/focused-test results, controller identity, resource-monitor and
-invalid/replacement records, and SHA-256 checksums. Independently recompute the
+determinism/focused-test results, the focused verifier's meaningful RED/GREEN
+output, controller identity, resource-monitor and invalid/replacement records,
+and SHA-256 checksums. Independently recompute the
 new checksums and verify baseline references resolve. Commit only the concise
 normalized result to `plans/evidence/019.md`; it must not rely on `/tmp`.
 
 ## Done criteria
 
 - [ ] Accepted Plan 018 integration and durable baseline handoff are verified.
+- [ ] The new verifier has a recorded behavior-level RED and GREEN; no missing
+  file/import result is counted as RED.
 - [ ] Hot terrain lookups no longer use `.slots.find` or allocate `Set`
   instances.
 - [ ] Removed-tree tile `126` uses the legacy land-only override for
@@ -313,6 +332,7 @@ normalized result to `plans/evidence/019.md`; it must not rely on `/tmp`.
   save data.
 - A runtime import cycle appears or an owned edit reaches `orders.ts`,
   `renderWorld.ts`, a shared verifier, `package.json`, or `plans/README.md`.
+- The new verifier cannot produce a meaningful behavior-level RED before GREEN.
 - Any parity, focused, type, determinism, asset, or build gate fails twice.
 - Halla or browser qualification fails, another capture is active, a trial
   exhausts its replacement, an assigned budget fails, or frame p95 regresses

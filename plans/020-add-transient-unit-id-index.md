@@ -6,6 +6,9 @@
 > [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) unchanged.
 > Preserve `world.units` as the authoritative ordered array and exclude the
 > derived index from saves and renderer APIs. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -33,7 +36,7 @@ resolve stable unit IDs with full `world.units.find` scans. A transient
 per-world index makes exact ID lookup constant-time while preserving array
 order wherever iteration or first-match behavior is semantically significant.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, the post-Plan-018 hot wrapper is:
 
@@ -102,7 +105,7 @@ inventory before Plan 020 begins.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Index parity | `node scripts/verify-unit-index.mjs` | lookup, lifecycle, mutation, duplicate, diagnostics, and independent-world cases pass |
+| New index-parity verifier (created in Step 1) | `node scripts/verify-unit-index.mjs` | lookup, lifecycle, mutation, duplicate, diagnostics, and independent-world cases pass |
 | Save schema | `npm run verify:save-schema` | exact save schema unchanged |
 | Combat | `npm run verify:source-attack-action` | exit 0 |
 | Browser combat | `npm run verify:browser-combat-session` | exit 0 under the Halla policy |
@@ -111,8 +114,12 @@ inventory before Plan 020 begins.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `combat-100` at 1280×720 | three valid trials; every assigned budget passes |
 
-Run baseline commands before implementation. Performance captures are serial
-and must not overlap another plan's capture.
+Before implementation, run only the pre-existing typecheck, save, combat,
+determinism, asset, and build gates. The new unit-index verifier does not exist
+at the Wave 2 base; a missing script/import is not red evidence. Create it in
+Step 1, record a meaningful failing assertion against accepted legacy behavior,
+then make that same assertion green. Performance captures are serial and must
+not overlap another plan's capture.
 
 ## Scope
 
@@ -169,13 +176,22 @@ Confirm Plan 018 is `DONE-VERIFIED`, its acceptance commit is integrated, and
 the durable `combat-100` baseline artifact and checksums resolve on Halla.
 Record its environment identity, profile-definition hash, initial entity/effect
 fingerprint, per-trial results, and worst-trial result. Run the drift and
-mutation inventory plus every non-browser baseline gate.
+mutation inventory plus every pre-existing non-browser baseline gate. Record
+`scripts/verify-unit-index.mjs` as absent and not run; if it already exists
+without an accepted plan refresh, STOP.
 
 **Verify:** dependency, ancestry, inventory, baseline checksums/fingerprints,
-host policy, and baseline gates are green. STOP rather than substituting a
+host policy, and pre-existing baseline gates are green. STOP rather than substituting a
 historical diagnostic capture.
 
 ### Step 1: Add the transient first-match index
+
+First add a loadable exact-ID API shell that preserves legacy `.find` behavior
+and create `scripts/verify-unit-index.mjs`. A stable-reuse, invalidation, or
+namespaced-diagnostic fixture must execute and fail because no transient index
+behavior exists yet; `MODULE_NOT_FOUND`, an import error, or a missing file is
+not acceptable RED evidence. Preserve that output, then implement until the
+same fixture and the full verifier are green.
 
 Add `findWorldUnitById(world, unitId)` backed by a
 `WeakMap<WorldState, Cache>`. `world.units` remains authoritative. Rebuild when
@@ -249,6 +265,8 @@ and evidence is durable and checksum-verified.
 
 ## Test plan
 
+- A recorded meaningful RED followed by GREEN for the new verifier; load/import
+  failure does not qualify.
 - Stable cache reuse and rebuild on tick, array identity, and length changes.
 - Every rewrite-base runtime mutation family and a refreshed exact inventory.
 - Explicit same-tick/same-reference/same-length mutation invalidation owned by
@@ -282,7 +300,7 @@ Include accepted Plan 018 baseline directory/checksum references, environment
 comparison, profile-definition and initial entity/effect fingerprints, one
 JSON per trial, normalized summary, lookup/rebuild/invalidation/duplicate
 diagnostics, mutation inventory, save/determinism/focused-test results,
-controller/resource records, invalid/replacement records, and SHA-256
+the focused verifier's meaningful RED/GREEN output, controller/resource records, invalid/replacement records, and SHA-256
 checksums. Independently recompute new checksums and verify baseline references.
 Commit only concise normalized results to `plans/evidence/020.md`; `/tmp` is
 not durable evidence.
@@ -291,6 +309,8 @@ not durable evidence.
 
 - [ ] Accepted Plan 018 integration and durable `combat-100` baseline are
   verified.
+- [ ] The new verifier has a recorded behavior-level RED and GREEN; no missing
+  file/import result is counted as RED.
 - [ ] Hot exact-ID simulation resolution uses the transient first-match index.
 - [ ] The exact runtime mutation inventory is current and every undetectable
   mutation has mutation-site-owned explicit invalidation.
@@ -319,6 +339,7 @@ not durable evidence.
   renderer/UI consumers, terrain, occupancy, or another plan's files.
 - The index rebuilds per lookup in stable state, an undetectable mutation lacks
   an explicit owner, or duplicate handling changes the returned entry.
+- The new verifier cannot produce a meaningful behavior-level RED before GREEN.
 - Any focused, type, save, combat, determinism, asset, or build gate fails
   twice.
 - Halla/browser qualification fails, another capture is active, a trial

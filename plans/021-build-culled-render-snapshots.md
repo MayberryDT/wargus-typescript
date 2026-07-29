@@ -7,6 +7,9 @@
 > This plan is render preparation only. Preserve Plan 018 display-object
 > create/destroy instrumentation and do not consume Plan 020's simulation
 > index. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -38,7 +41,7 @@ ID scans. A pure snapshot prepared independently for each viewport can cull
 before sort and share render-only indexes without altering simulation or Pixi
 object lifecycle.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, the post-Plan-018 renderer has these exact seams:
 
@@ -110,7 +113,7 @@ accepted concrete SHA and refreshed exact excerpts before Plan 021 begins.
 |---|---|---|
 | Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Preparation parity | `node scripts/verify-render-preparation.mjs` | IDs, order, strata, viewports, indexes, counters, and diagnostics pass |
+| New preparation-parity verifier (created in Step 1) | `node scripts/verify-render-preparation.mjs` | IDs, order, strata, viewports, indexes, counters, and diagnostics pass |
 | Runtime smoke | `npm run verify:browser-runtime-smoke` | exit 0 under the Halla policy |
 | Native viewport | `npm run verify:browser-native-viewport` | single/split viewport behavior passes |
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick simulation/save output unchanged |
@@ -118,8 +121,12 @@ accepted concrete SHA and refreshed exact excerpts before Plan 021 begins.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; every assigned budget passes |
 
-Run baseline commands before implementation. Performance captures run serially
-under the shared contracts and never overlap another plan's capture.
+Before implementation, run only the pre-existing typecheck, determinism, asset,
+and build gates. The new preparation verifier does not exist at the Wave 2
+base; a missing script/import is not red evidence. Create it in Step 1, record a
+meaningful failing assertion against accepted immediate rendering, then make
+that same assertion green. Browser gates run after implementation; performance
+captures run serially and never overlap another plan's capture.
 
 ## Scope
 
@@ -179,13 +186,22 @@ the durable `army-100`, `army-200`, and `combat-100` baseline artifacts and
 checksums resolve on Halla. Record environment identity, profile-definition
 hash, initial entity/effect fingerprint, per-trial/worst-trial results, visual
 reference artifacts, and `trackedCreated`/`trackedDestroyed`/
-`windowLiveDelta` values. Run drift and all non-browser baseline gates.
+`windowLiveDelta` values. Run drift and all pre-existing non-browser baseline
+gates. Record `scripts/verify-render-preparation.mjs` as absent and not run; if
+it already exists without an accepted plan refresh, STOP.
 
 **Verify:** dependency, ancestry, drift, checksums, fingerprints, display-object
-scope, host policy, and baseline gates are green. Plan 020 is neither integrated
+scope, host policy, and pre-existing baseline gates are green. Plan 020 is neither integrated
 nor required for this entry gate.
 
 ### Step 1: Build a pure per-viewport snapshot
+
+Create a loadable preparation API shell and
+`scripts/verify-render-preparation.mjs` first. A cull-before-sort, sort-count, or
+repeated-key first-match fixture must execute and fail against the immediate
+legacy path for the intended behavior-level reason; `MODULE_NOT_FOUND`, an
+import error, or a missing file is not acceptable RED evidence. Preserve that
+output, then implement until the same fixture and the full verifier are green.
 
 Create `prepareWorldRenderSnapshot(world, manifest, viewport)` that does not
 mutate source arrays or world state. For each invocation:
@@ -275,6 +291,8 @@ evidence is durable and checksum-verified.
 
 ## Test plan
 
+- A recorded meaningful RED followed by GREEN for the new verifier; load/import
+  failure does not qualify.
 - Exact current ordering parity for units, corpses, projectiles, effects, and
   both draw strata, including stable equal-key ties.
 - Cull-before-sort proof for hidden, fogged, off-viewport, and edge candidates.
@@ -317,8 +335,8 @@ Include accepted Plan 018 baseline directory/checksum references, environment
 comparison, profile-definition and initial entity/effect fingerprints, one
 JSON per trial, normalized summaries, source/retained/sort diagnostics,
 render-preparation distributions, before/after visual artifacts and pixel
-results, display-object counter comparison, determinism/focused-test results,
-controller/resource records, invalid/replacement records, and SHA-256
+results, display-object counter comparison, determinism/focused-test results, the
+focused verifier's meaningful RED/GREEN output, controller/resource records, invalid/replacement records, and SHA-256
 checksums. Independently recompute new checksums and verify baseline references.
 Commit only concise normalized results to `plans/evidence/021.md`; `/tmp` is
 not durable evidence.
@@ -327,6 +345,8 @@ not durable evidence.
 
 - [ ] Accepted Plan 018 integration and durable assigned baselines are
   verified; Plan 020 is not an entry dependency.
+- [ ] The new verifier has a recorded behavior-level RED and GREEN; no missing
+  file/import result is counted as RED.
 - [ ] Hidden/fogged/off-viewport candidates are culled before sorting.
 - [ ] Each entity list is sorted once per viewport and partitions preserve
   exact draw order and level-39/40 behavior.
@@ -361,6 +381,7 @@ not durable evidence.
 - An owned edit reaches `orders.ts`, `world.ts`, `passability.ts`,
   `displayObjectPerformance.ts`, an existing shared verifier, `package.json`,
   or `plans/README.md`.
+- The new verifier cannot produce a meaningful behavior-level RED before GREEN.
 - Any focused, type, browser, determinism, asset, or build gate fails twice.
 - Halla/browser qualification fails, another capture is active, a trial
   exhausts its replacement, an assigned budget fails, or frame p95 regresses

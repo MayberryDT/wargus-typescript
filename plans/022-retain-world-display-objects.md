@@ -7,6 +7,9 @@
 > This plan owns renderer-only Pixi retention and cache lifecycle. Extend Plan
 > 018's existing tracked create/destroy counters; do not add a competing
 > display-object telemetry system. Stop on every STOP condition.
+>
+> **Drift check:** Run every command and inventory in `Current state` first.
+> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
 
 ## Status
 
@@ -37,7 +40,7 @@ unchanged. Plan 021 removes unnecessary preparation work; this plan consumes
 that accepted prepared snapshot and retains renderer objects without changing
 simulation state, visibility, view independence, or draw order.
 
-## Current state and drift checks
+## Current state
 
 At the concrete rewrite base, Plan 018's existing tracker is the only
 display-object lifecycle telemetry:
@@ -107,6 +110,9 @@ git diff --stat d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
 rg -n "prepareWorldRenderSnapshot|destroyLayerChildren|createTracked|destroyTracked|trackedCreated|trackedDestroyed|windowLiveDelta|sourceViewportPaneRenderers" \
   src/view/renderWorld.ts src/view/renderPreparation.ts \
   src/performance/displayObjectPerformance.ts src/main.ts
+! git diff -U0 d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
+  src/view/renderWorld.ts src/view/worldRenderCache.ts | \
+  rg '^\+.*(new (Container|Graphics|Sprite|Text|BitmapText)|\.destroy\()'
 ```
 
 Expected: the rewrite base is an ancestor; later changes are accepted Plans
@@ -120,9 +126,10 @@ excerpts/inventory before Plan 022 begins.
 
 | Purpose | Command | Expected result |
 |---|---|---|
-| Host/worktree | `test "$(hostname)" = halla && git status --short --branch` | Halla, assigned isolated branch, understood status |
+| Host/worktree | `test "$(hostname)" = halla && case "$(pwd -P)" in /home/halla/workspaces/*) ;; *) exit 1 ;; esac && test -f "$(git rev-parse --show-toplevel)/.git" && git status --short --branch` | Halla, linked isolated worktree path, assigned branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
-| Cache lifecycle | `node scripts/verify-world-render-cache.mjs` | ownership, identity, reuse, ordering, bounds, invalidation, disposal, and tracked-counter cases pass |
+| New cache-lifecycle verifier (created in Step 1) | `node scripts/verify-world-render-cache.mjs` | ownership, identity, reuse, ordering, bounds, invalidation, disposal, and tracked-counter cases pass |
+| Direct Pixi lifecycle additions | `! git diff -U0 d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- src/view/renderWorld.ts src/view/worldRenderCache.ts \| rg '^\+.*(new (Container\|Graphics\|Sprite\|Text\|BitmapText)\|\.destroy\()'` | no Plan 022-added direct Pixi constructor or `.destroy()` call bypasses Plan 018 wrappers |
 | Preparation parity | `node scripts/verify-render-preparation.mjs` | accepted Plan 021 IDs, order, strata, indexes, and view independence remain exact |
 | Runtime smoke | `npm run verify:browser-runtime-smoke` | exit 0 under the Halla policy |
 | Playable session | `npm run verify:browser-playable-session` | world replacement and gameplay rendering pass |
@@ -132,8 +139,13 @@ excerpts/inventory before Plan 022 begins.
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; every unchanged shared budget passes |
 
-Run baseline commands before implementation. Performance captures run serially
-under the shared contracts and never overlap another executor's capture.
+Before implementation, run only the pre-existing typecheck, preparation,
+direct-Pixi diff, determinism, asset, and build gates. The new render-cache
+verifier does not exist at the Wave 3 base; a missing script/import is not red
+evidence. Create it in Step 1, record a meaningful failing assertion against
+accepted immediate rendering, then make that same assertion green. Browser
+gates run after implementation; captures run serially and never overlap another
+executor's capture.
 
 ## Scope
 
@@ -242,9 +254,14 @@ view's objects.
 Confirm Plans 018 and 021 are `DONE-VERIFIED`, their acceptance commits are
 integrated, and durable assigned-row baselines, checksums, fingerprints,
 visual references, preparation results, and tracked display-object values
-resolve on Halla. Run the refreshed drift checks and all non-browser baseline
-commands. Inventory every tracked constructor/destructor in the accepted
-renderer.
+resolve on Halla. Run the refreshed drift checks and all pre-existing
+non-browser baseline commands. Record `scripts/verify-world-render-cache.mjs`
+as absent and not run; if it already exists without an accepted plan refresh,
+STOP. Inventory every tracked constructor/destructor in the accepted renderer.
+
+The direct-lifecycle diff scan must return no matches; the wrapper-name
+inventory alone is not evidence that bypass calls are absent. Preserve both
+outputs in the baseline record.
 
 **Verify:** dependency, ancestry, drift, preparation API, stable IDs,
 checksums/fingerprints, display-object scope, visual reference, host policy,
@@ -252,12 +269,24 @@ and baseline gates are green.
 
 ### Step 1: Add a per-view cache and focused lifecycle oracle
 
+Create a loadable renderer-cache decision shell and
+`scripts/verify-world-render-cache.mjs` first. A stable-identity,
+zero-steady-state-creation, bound, or disposal fixture must execute and fail
+against accepted immediate rendering for the intended behavior-level reason;
+`MODULE_NOT_FOUND`, an import error, or a missing file is not acceptable RED
+evidence. Preserve that output, then implement until the same fixture and the
+full verifier are green.
+
 Create the renderer-local cache and a pure reconciliation decision layer.
 Given a prior cache and Plan 021 prepared IDs/order, it returns create, reuse,
 detach, reattach, retire, reorder, and destroy actions. Apply the ownership,
 bounds, invalidation, and disposal table exactly. Use only Plan 018 tracked
 constructors and `destroyTrackedDisplayObject`; direct Pixi construction and
 direct `.destroy()` are forbidden.
+
+The focused verifier must also scan the final Plan 022-owned renderer/cache
+sources and fail on any direct Pixi constructor or direct `.destroy()` outside
+the accepted Plan 018 wrapper module.
 
 Add focused fixtures for independent worlds/views, stable identity, ID reuse
 after world replacement, LRU eviction, pool reset/overflow, complete disposal,
@@ -334,6 +363,8 @@ hold; assigned budgets pass; evidence is durable and checksum-verified.
 
 ## Test plan
 
+- A recorded meaningful RED followed by GREEN for the new verifier; load/import
+  failure does not qualify.
 - Reconcile create/reuse/update/detach/reattach/retire/reorder/destroy actions.
 - Exact Plan 021 IDs/order/strata/first-match preparation and view independence.
 - One-, 300-, and many-frame unchanged identity/zero-creation fixtures.
@@ -344,6 +375,8 @@ hold; assigned budgets pass; evidence is durable and checksum-verified.
 - Primary/split view closure, world replacement/restart/teardown disposal.
 - Plan 018 aggregate and namespaced per-kind reset/snapshot parity; every Pixi
   constructor/destructor stays tracked and textures remain excluded.
+- Static final-source and added-line checks rejecting direct Pixi construction
+  or `.destroy()` in Plan 022-owned renderer/cache paths.
 - Screenshot/pixel, browser, fixed-tick/save, heap, and performance parity.
 
 ## Performance acceptance
@@ -368,8 +401,10 @@ Include accepted Plan 018/021 artifact/checksum references, environment,
 profile-definition and initial entity/effect fingerprints, one JSON per trial,
 normalized summaries, preparation/visual parity, per-kind active/dormant/pool
 high-water marks, eviction/reset/disposal, existing aggregate and namespaced
-counter results, determinism/focused tests, controller/resource records,
-invalid/replacement records, and SHA-256 checksums. Independently recompute new
+counter results, determinism/focused tests, the focused verifier's meaningful
+RED/GREEN output, controller/resource records, invalid/replacement records, and SHA-256 checksums. Include the wrapper
+inventory and negative direct-Pixi added-line/final-source scan outputs;
+wrapper-name presence alone is insufficient. Independently recompute new
 checksums and verify every baseline reference.
 
 Commit only concise normalized results to the single evidence file
@@ -379,6 +414,8 @@ on `/tmp` as durable evidence.
 ## Done criteria
 
 - [ ] Accepted Plans 018/021 and durable handoffs are integrated and verified.
+- [ ] The new verifier has a recorded behavior-level RED and GREEN; no missing
+  file/import result is counted as RED.
 - [ ] Every viewport has an independent world-identity cache consuming one
   accepted Plan 021 snapshot.
 - [ ] Stable IDs retain object identity and exact draw order/strata.
@@ -389,6 +426,8 @@ on `/tmp` as durable evidence.
   competing telemetry exists.
 - [ ] Preparation, visual/pixel, focused lifecycle, browser, determinism,
   assets, build, heap, and disposal parity pass.
+- [ ] Added-line and final-source scans prove no direct Pixi constructor or
+  `.destroy()` bypass exists in Plan 022-owned renderer/cache paths.
 - [ ] Every assigned row passes unchanged budgets with durable,
   checksum-verified evidence in `plans/evidence/022.md`.
 - [ ] The branch contains only Plan 022-owned files; coordinator
@@ -411,6 +450,7 @@ on `/tmp` as durable evidence.
   untracked, or competing create/destroy counters appear.
 - An owned edit reaches simulation, `main`, performance schema, `package.json`,
   `plans/README.md`, or a shared verifier before coordinator integration.
+- The new verifier cannot produce a meaningful behavior-level RED before GREEN.
 - Any focused, preparation, type, browser, determinism, asset, or build gate
   fails twice.
 - Halla/browser qualification fails, another capture is active, a trial
