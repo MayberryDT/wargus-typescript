@@ -75,7 +75,11 @@ The Wave coordinator owns shared `package.json`, `plans/README.md`, and any
 cross-plan verifier integration.
 
 Wave 3 has a strict coordinator start barrier: Plans 019, 020, and 021 must all
-pass their Wave 2 exit gates and integrate before either Wave 3 executor starts.
+pass their Wave 2 exit gates and integrate, then the coordinator must run the
+Wave 2 post-integration gate from `HALLA-EXECUTION-POLICY.md` against the exact
+combined SHA and commit `plans/evidence/WAVE-2-INTEGRATION.md` with a combined
+`READY` verdict before either Wave 3 executor starts. Individual exit packets
+and integration without that coordinator-owned packet do not open Wave 3.
 After that barrier opens, the technical dependency edges remain narrower: Plan
 022 consumes accepted Plan 021 and owns renderer-only retained objects and
 per-view caches; Plan 023 consumes accepted Plans 019 and 020 and owns
@@ -92,10 +96,14 @@ The Wave coordinator owns shared `src/main.ts`, performance-schema,
 counter extensions must use the plan namespaces frozen in the detailed plans.
 
 Wave 4 has a strict coordinator start barrier: Plans 022 and 023 must both pass
-every Wave 3 exit gate and integrate before either Wave 4 executor starts. Plan
-024 then consumes accepted Plans 018, 019, 020, and 023; Plan 022 is a wave
-barrier rather than its API dependency. Plan 025 consumes accepted Plans 018,
-019, 022, and 023. After Wave 3 integration, the coordinator compares the
+every Wave 3 exit gate and integrate, then the coordinator must run the Wave 3
+post-integration gate against the exact combined SHA and commit
+`plans/evidence/WAVE-3-INTEGRATION.md` with a combined `READY` verdict before
+either Wave 4 executor starts. Individual exit packets and integration without
+that coordinator-owned packet do not open Wave 4. Plan 024 then consumes
+accepted Plans 018, 019, 020, and 023; Plan 022 is a wave barrier rather than
+its API dependency. Plan 025 consumes accepted Plans 018, 019, 022, and 023.
+After the Wave 3 combined packet is `READY`, the coordinator compares the
 integrated seams with concrete drift base
 `0993cdd55818aa015c42e3e71e18d4b57ab016ea` and refreshes either detailed plan
 with a new concrete accepted SHA, excerpts, and inventories if a cited seam
@@ -113,6 +121,13 @@ The Wave coordinator owns shared `src/main.ts`, performance-schema,
 `package.json`, and `plans/README.md` integration. Plan-local diagnostics use
 the namespaces frozen in the detailed plans. Performance captures stay serial
 even when implementation and focused checks run in parallel.
+
+Wave 5 has a strict coordinator start barrier: Plans 024 and 025 must pass
+every Wave 4 exit gate and integrate, then the coordinator must run the Wave 4
+post-integration gate against the exact combined SHA and commit
+`plans/evidence/WAVE-4-INTEGRATION.md` with a combined `READY` verdict. Combined
+release verification, review, preview, and production work may not start from
+individual exit packets or integration alone.
 
 ## Plan status and dependencies
 

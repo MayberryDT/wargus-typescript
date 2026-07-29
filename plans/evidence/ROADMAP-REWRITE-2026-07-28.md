@@ -76,6 +76,7 @@ contains no product, tooling, or ignore-rule implementation change; the future
 | Plans 022/023 needed explicit integration barriers, cache/index ownership, timing, and lifecycle proof. | Wave 3 has a strict all-Wave-2 barrier, then independent retained-renderer and ordered-occupancy work, including negative direct-Pixi lifecycle evidence. |
 | Pathfinding and visibility/fog proposals were underspecified high-risk changes. | Plans 024/025 freeze deterministic resumable scheduling/save restoration and transient contribution/fog-cache behavior, with disjoint ownership, bounds, parity, rollback, and direct timing. |
 | Shared-file collisions and execution authority were ambiguous. | README wave tables, each plan's ownership section, coordinator-only shared integration, and the roadmap rewrite approval gate freeze concurrency and require explicit user approval. |
+| Later-wave barriers could open from individual exit packets and integration without combined proof on the exact integrated result. | `plans/HALLA-EXECUTION-POLICY.md` now requires coordinator-owned post-integration gates for Waves 2–4: exact combined SHA/environment/fingerprints, every combined focused and relevant shared gate, the serial full canonical Plan 018 matrix, durable checksummed artifacts, and a committed combined `READY` packet. README makes those packets mandatory for the Wave 2→3, Wave 3→4, and Wave 4→5 barriers. |
 
 ## Deferred findings and ruling adjudication
 
@@ -97,16 +98,21 @@ contains no product, tooling, or ignore-rule implementation change; the future
 |---|---|---|---|
 | 0 — Foundation repair | 026, 027 | Plan 026 and Plan 027's two-script checkpoints may run in parallel; approve 026 checkpoint, integrate its shared entries, then run 026 final verification and 027 browser revalidation/closeout; captures remain serial | Controller/artifact gate and Plan 026 accepted, Plan 027 focused/browser evidence accepted, both integrated |
 | 1 — Measurement foundation | 018 | Single closeout after Wave 0 | Fixed-tick determinism plus complete hardware-qualified matrix accepted, whether baseline budgets pass or fail |
-| 2 — Independent hot paths | 019, 020, 021 | Parallel isolated worktrees after Plan 018 | All focused parity, direct timing, shared budgets, browser/determinism, review, and evidence gates accepted |
-| 3 — Structural optimization | 022, 023 | Strict all-Wave-2 start barrier, then parallel isolated slices | Both focused/lifecycle/parity/budget/evidence gates accepted and integrated |
-| 4 — High-risk scheduling | 024, 025 | Strict all-Wave-3 start barrier; parallel only while ownership stays disjoint; captures serial | X12, save/determinism, visibility/fog, direct timing, shared budgets, review, and evidence pass |
-| 5 — Release | Combined result | Serial integrated verification/review/preview/deployment after roadmap approval and all predecessor gates | Full gate and preview smoke pass; prior user authorization then permits final production deploy and production smoke, never an early deploy |
+| 2 — Independent hot paths | 019, 020, 021 | Parallel isolated worktrees after Plan 018 | Individual gates accepted; coordinator integrates all branches, reruns the combined focused/shared gates and serial full canonical matrix on the exact combined SHA, and commits `WAVE-2-INTEGRATION.md` as `READY` before Wave 3 |
+| 3 — Structural optimization | 022, 023 | Starts only from the Wave 2 combined `READY` packet, then parallel isolated slices | Individual gates accepted; coordinator integrates both branches and commits the exact-SHA combined focused/shared/matrix packet `WAVE-3-INTEGRATION.md` as `READY` before Wave 4 |
+| 4 — High-risk scheduling | 024, 025 | Starts only from the Wave 3 combined `READY` packet; parallel only while ownership stays disjoint; captures serial | Individual X12/save/determinism/visibility/fog/timing/budget gates accepted; coordinator integrates both branches and commits the exact-SHA combined focused/shared/matrix packet `WAVE-4-INTEGRATION.md` as `READY` before Wave 5 |
+| 5 — Release | Combined result | Starts only from the Wave 4 combined `READY` packet; serial integrated verification/review/preview/deployment after roadmap approval | Full gate and preview smoke pass; prior user authorization then permits final production deploy and production smoke, never an early deploy |
 
 Wave barriers are intentionally stronger than API edges. The active technical
 DAG is: 026 and Plan 027's two-script implementation may start in parallel;
 026 → Plan 027 browser revalidation/closeout; accepted 026+027 → 018 →
 019/020/021; 022 consumes 018/021; 023 consumes 018/019/020; 024 consumes
-018/019/020/023; 025 consumes 018/019/022/023. The graph is acyclic and README records these exact narrower dependencies.
+018/019/020/023; 025 consumes 018/019/022/023. The graph is acyclic and README
+records these exact narrower dependencies. The acceptance barriers add Wave 2
+combined `READY` → Wave 3, Wave 3 combined `READY` → Wave 4, and Wave 4 combined
+`READY` → Wave 5; the coordinator owns all three durable packets. No combined
+matrix is required between the Wave 0 branches or before Plan 018 establishes
+the accepted baseline.
 
 ## Shared-file ownership
 
@@ -183,16 +189,19 @@ Independent review completed with the following documentation-only verdicts:
 |---|---|---|
 | Standards reviewer `/root/task8_final_standards_review` | **READY** | All seven prior blockers are resolved and no new blocker was found. The absent/unignored `.artifacts/` root is not a documentation-review blocker: Plan 026 freezes creation of the ignore rule, retained root, survival proof, and pre-capture STOP. It remains a red future Plan 026/capture gate. |
 | Architecture reviewer `/root/task8_final_architecture_review` | All architecture/evidence axes passed: spec completeness, historical-status honesty, dependency DAG, wave concurrency, shared ownership, Plan 018 statistics/heap, Plan 024 save/resumable search, Plan 025 transient-cache ownership, docs-only scope, and evidence truthfulness. | The wave barriers, explicit ownership, coordinator integration points, and acceptance/evidence gates are architecture strengths. Its only blocker was the contradiction in which the README and optimizer said `READY` while this packet said review pending. This readiness-text correction resolves that contradiction. |
+| Whole-range final gate review | **READY after correction** | Found one Important gap: the approved design's combined post-integration proof was not executable in policy or consumed by later-wave barriers. The coordinator-owned exact-SHA focused/shared/full-matrix `READY` packets for Waves 2–4 now close it without changing Wave 0 or pre-baseline execution. |
 
 The review verdict does not authorize execution. The future Plan 026
 artifact-ignore/retained-root setup, all integration SHAs, Plan 018 evidence,
-and the Plan 024/025 implementation risks remain governed by their stated
-future gates.
+the three combined post-integration packets, and the Plan 024/025
+implementation risks remain governed by their stated future gates.
 
 ## Unresolved non-blocking risks
 
-- Future integrated acceptance SHAs do not exist. Every downstream plan must
-  refresh its concrete base/excerpts/inventories or STOP when its wave opens.
+- Future integrated acceptance SHAs and Wave 2–4 combined `READY` packets do
+  not exist. Every downstream plan must refresh its concrete
+  base/excerpts/inventories or STOP when its wave opens; the coordinator must
+  create each packet only from the exact future combined SHA and real evidence.
 - Plan 018 still lacks the accepted fixed-tick proof and 21 valid
   hardware-qualified trials. Its current `BLOCKED` state is intentional until
   explicit roadmap approval and accepted Wave 0 open the entry gate.

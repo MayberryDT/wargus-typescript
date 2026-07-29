@@ -42,6 +42,47 @@ and whether it is owned.
 - Later performance captures run one at a time.
 - Broad integration verification runs after all wave branches integrate.
 
+## Coordinator post-integration gate
+
+After the coordinator integrates every accepted branch in Wave 2, Wave 3, or
+Wave 4, it runs one post-integration gate on the exact integrated SHA (the
+combined commit):
+
+| Completed wave | Blocked successor until the gate is `READY` |
+|---|---|
+| Wave 2 | Wave 3 |
+| Wave 3 | Wave 4 |
+| Wave 4 | Wave 5 |
+
+For each gate, the coordinator must:
+
+1. record the exact combined SHA, host, branch/worktree, build mode, browser
+   executable/version, controller version or commit, renderer/GPU/driver,
+   viewports, profile-definition hashes, initial entity/effect fingerprints,
+   artifact-root realpath, and pre/post host resource state;
+2. run against that same combined SHA every focused verifier owned by the
+   completed wave, all upstream parity gates those plans consume, and the
+   relevant shared typecheck, build, asset, fixed-tick determinism, save-schema,
+   and browser gates required by the completed wave's plan exit gates;
+3. run the full seven-row canonical Plan 018 matrix, with three valid trials per
+   row, exactly as defined by `plans/PERFORMANCE-ACCEPTANCE.md`; all captures
+   and replacements run serially with no overlapping project benchmark;
+4. retain the raw trials, normalized matrix summary, environment and
+   fingerprint metadata, invalid/replacement records, resource-monitor
+   summaries, and SHA-256 checksums under the policy's durable artifact root;
+   and
+5. commit `plans/evidence/WAVE-<N>-INTEGRATION.md`, naming the exact combined
+   SHA, every command and result, durable artifact path and checksums,
+   individual-plan evidence inputs, residual risks, and a combined `READY` or
+   `NOT READY` verdict.
+
+An individual plan's exit packet, branch-local capture, or successful merge is
+not a substitute. Any missing, invalid, failed, overlapping, or SHA-mismatched
+gate makes the combined verdict `NOT READY` and keeps the successor wave
+blocked. This gate does not run between the parallel Wave 0 branches and does
+not run before Plan 018 establishes the accepted baseline; Plan 018 acceptance
+itself governs the Wave 1-to-Wave 2 barrier.
+
 ## Browser qualification
 
 - Prefer the in-app Browser when it provides continuously advancing RAF and

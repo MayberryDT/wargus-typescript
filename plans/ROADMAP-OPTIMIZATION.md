@@ -323,10 +323,12 @@ Independent review then challenged evidence behind already-scored criteria. The
 final candidate incorporates its corrections: truthful Plan 018 status and
 GBrain context, complete active headings, Wave 0 ownership/closeout ordering,
 meaningful RED/GREEN creation for Plans 019–023, rendered table integrity,
-complete rewrite inventory, and the Wave 0 ignored retained-artifact gate. A
-fresh frozen-rubric re-anchor remains **97/100**: these fixes make the claimed
-criterion evidence true but do not award points for unexecuted future results,
-so they do not add a post-plateau optimizer round or alter the trajectory.
+complete rewrite inventory, the Wave 0 ignored retained-artifact gate, and
+coordinator-owned exact-SHA combined post-integration `READY` packets before
+Waves 3–5. A fresh frozen-rubric re-anchor remains **97/100**: these fixes make
+the claimed criterion evidence true but do not award points for unexecuted
+future results, so they do not add a post-plateau optimizer round or alter the
+trajectory.
 
 The missing three points are deliberately withheld: one repository-grounding
 point requires future integrated-base drift refreshes, and two verification
