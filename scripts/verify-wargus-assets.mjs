@@ -70,7 +70,7 @@ const worldSource = readFileSync("src/simulation/world.ts", "utf8");
 const atlasSource = readFileSync("src/view/unitTextureAtlas.ts", "utf8");
 const lazyAtlasSource = readFileSync("src/view/unitAtlasLazyLoad.ts", "utf8");
 const ordersSource = readFileSync("src/simulation/orders.ts", "utf8");
-const renderSource = readFileSync("src/view/renderWorld.ts", "utf8");
+const renderSource = readFileSync(process.env.WARGUS_RENDER_SOURCE_PATH ?? "src/view/renderWorld.ts", "utf8");
 for (const fragment of [
   "export function imageForTileset",
   "function sourceTilesetFamilyName",
@@ -92,13 +92,26 @@ for (const fragment of [
 
 for (const fragment of [
   "numDirections: Math.max(0, unit.numDirections",
-  "getAnimatedFrameNumber(unit, manifest, world, atlas.numDirections)",
   "spriteDirectionForFacing(unit.facing ?? 4, atlas.numDirections)",
   "if (numDirections <= 1)"
 ]) {
   const source = fragment.startsWith("numDirections:") ? atlasSource : renderSource;
   if (!source.includes(fragment)) {
     errors.push(`Unit NumDirections runtime support is missing fragment: ${fragment}`);
+  }
+}
+
+const preparedFrameCall = "const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);";
+const preparedFrameCallCount = renderSource.split(preparedFrameCall).length - 1;
+if (preparedFrameCallCount !== 2) {
+  errors.push(`Prepared render snapshot wiring must contain exactly two active/source-pane calls; found ${preparedFrameCallCount}: ${preparedFrameCall}`);
+}
+for (const removedImmediateCall of [
+  "getAnimatedFrameNumber(unit, manifest, world, atlas.numDirections)",
+  "getAnimatedFrameNumber(unit, world, atlas.numDirections)"
+]) {
+  if (renderSource.includes(removedImmediateCall)) {
+    errors.push(`Removed immediate-render call is still present: ${removedImmediateCall}`);
   }
 }
 
