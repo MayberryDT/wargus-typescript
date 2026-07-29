@@ -1,18 +1,18 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   connectDevTools,
   removeProfile,
   startChrome,
-  startViteServer,
   stopProcess,
   waitForExpression,
   waitForHttp,
   waitForPageTarget
 } from "./browser-smoke-harness.mjs";
 
-const PORT = 5198;
-const DEBUG_PORT = 9225;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const serverMode = process.env.WARGUS_BROWSER_MAP_SERVER === "preview" ? "preview" : "dev";
@@ -26,13 +26,13 @@ if (pathFilter && maps.length === 0) {
   console.error(`No setup-backed map matched WARGUS_BROWSER_MAP_PATH=${pathFilter}`);
   process.exit(1);
 }
-const server = startViteServer({ port: PORT, mode: serverMode });
+const server = await execution.startViteServer({ port: PORT, mode: serverMode });
 let chrome = null;
 let chromeProfile = null;
 
 try {
   await waitForHttp(URL, 20_000);
-  const chromeStart = startChrome({ chromeBin: CHROME, debugPort: DEBUG_PORT, profilePrefix: "wargus-map-smoke-chrome-" });
+  const chromeStart = await startChrome({ controller: execution, chromeBin: CHROME, debugPort: DEBUG_PORT, profilePrefix: "wargus-map-smoke-chrome-" });
   chrome = chromeStart.child;
   chromeProfile = chromeStart.profilePath;
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
@@ -107,8 +107,7 @@ try {
   const mode = process.env.WARGUS_BROWSER_MAP_LOADS === "all" ? "all" : "representative";
   console.log(`Browser map-load smoke verified (${serverMode}, ${loaded} ${mode} setup-backed maps loaded and save/load roundtripped through the browser runtime; run npm run verify:browser-map-loads:all for ${setupMaps.length}).`);
 } finally {
-  await stopProcess(chrome);
-  await stopProcess(server);
+  await execution.cleanup();
   removeProfile(chromeProfile);
 }
 

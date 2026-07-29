@@ -1,10 +1,11 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const PORT = 5227;
-const DEBUG_PORT = 9241;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
@@ -14,8 +15,8 @@ const VIEWPORTS = [
   { width: 900, height: 640 }
 ];
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-modern-hud-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
+await execution.releasePort(PORT);
+const server = execution.spawnOwned("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   stdio: ["ignore", "pipe", "pipe"]
 });
 let serverOutput = "";
@@ -30,7 +31,8 @@ let client = null;
 
 try {
   await waitForHttp(URL, 20_000, () => serverOutput);
-  chrome = spawn(CHROME, [
+  await execution.releasePort(DEBUG_PORT);
+  chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
@@ -38,7 +40,7 @@ try {
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  ], { stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl);
@@ -75,8 +77,7 @@ try {
   console.log(`Modern HUD layout verified (${summaries.join("; ")}).`);
 } finally {
   client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
+  await execution.cleanup();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -409,22 +410,6 @@ async function connectDevTools(url) {
   };
 }
 
-async function stopProcess(child) {
-  if (!child?.pid) {
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  await delay(250);
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    // Already stopped.
-  }
-}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

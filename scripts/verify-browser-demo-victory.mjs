@@ -1,16 +1,17 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const PORT = 5205;
-const DEBUG_PORT = 9232;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-demo-victory-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
+await execution.releasePort(PORT);
+const server = execution.spawnOwned("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   stdio: ["pipe", "ignore", "ignore"]
 });
 let chrome = null;
@@ -18,7 +19,8 @@ let client = null;
 
 try {
   await waitForHttp(URL, 20_000);
-  chrome = spawn(CHROME, [
+  await execution.releasePort(DEBUG_PORT);
+  chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
@@ -26,7 +28,7 @@ try {
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  ], { stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl);
@@ -80,8 +82,7 @@ try {
   console.log(`Browser fixed demo victory verified (${MAP_PATH}, economy/final-assault flow, presentedSpeed=${normalSpeedState.gameSpeed.toFixed(1)}x/source ${normalSpeedState.sourceGameSpeedDefault}, verifierSpeed=${verifierSpeedState.gameSpeed.toFixed(1)}x/source ${verifierSpeedState.sourceGameSpeedDefault}, attackers=${issued.attackerIds.length}, target=${beforeTarget.id}, hp=${beforeTarget.hitPoints}->${victory.targetHitPoints ?? 0}, status=${victory.matchStatus}, tick=${victory.tick}).`);
 } finally {
   client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
+  await execution.cleanup();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -287,32 +288,6 @@ async function connectDevTools(url) {
   };
 }
 
-async function stopProcess(process) {
-  if (!process || process.exitCode !== null || process.signalCode !== null) {
-    return;
-  }
-  try {
-    globalThis.process.kill(-process.pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill("SIGTERM");
-    } catch {
-      // Already stopped.
-    }
-  }
-  await delay(600);
-  if (process.exitCode === null && process.signalCode === null) {
-    try {
-      globalThis.process.kill(-process.pid, "SIGKILL");
-    } catch {
-      try {
-        process.kill("SIGKILL");
-      } catch {
-        // Already stopped.
-      }
-    }
-  }
-}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

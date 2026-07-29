@@ -1,16 +1,17 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 
-const PORT = 5200;
-const DEBUG_PORT = 9227;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
 const MAP_PATH = process.env.WARGUS_BROWSER_HARVEST_MAP ?? "maps/ladder/Garden of war BNE.pud.smp.gz";
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-harvest-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
+await execution.releasePort(PORT);
+const server = execution.spawnOwned("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   stdio: ["pipe", "ignore", "ignore"]
 });
 let chrome = null;
@@ -18,7 +19,8 @@ let client = null;
 
 try {
   await waitForHttp(URL, 20_000);
-  chrome = spawn(CHROME, [
+  await execution.releasePort(DEBUG_PORT);
+  chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
@@ -26,7 +28,7 @@ try {
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  ], { stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl);
@@ -103,9 +105,7 @@ try {
   }
 } finally {
   client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
-  cleanupDedicatedProcesses();
+  await execution.cleanup();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -295,43 +295,7 @@ async function connectDevTools(url) {
   };
 }
 
-async function stopProcess(process) {
-  if (!process || process.exitCode !== null || process.signalCode !== null) {
-    return;
-  }
-  try {
-    globalThis.process.kill(-process.pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill("SIGTERM");
-    } catch {
-      // Already exited.
-    }
-  }
-  await delay(750);
-  if (process.exitCode !== null || process.signalCode !== null) {
-    return;
-  }
-  try {
-    globalThis.process.kill(-process.pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Already exited.
-    }
-  }
-}
 
-function cleanupDedicatedProcesses() {
-  for (const pattern of [`--remote-debugging-port=${DEBUG_PORT}`, `--port ${PORT} --strictPort`]) {
-    try {
-      execFileSync("pkill", ["-f", pattern], { stdio: "ignore" });
-    } catch {
-      // Best-effort cleanup.
-    }
-  }
-}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

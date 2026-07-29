@@ -1,10 +1,11 @@
-import { execFileSync, spawn } from "node:child_process";
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { writeFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
-import { connect } from "node:net";
 import { assertMinimapRuntimeSmoke } from "./lib/browser-runtime-smoke-assertions.mjs";
 
-const PORT = Number(process.env.WARGUS_BROWSER_RUNTIME_PORT ?? 54314);
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const requestedPort = process.env.WARGUS_BROWSER_RUNTIME_PORT;
+const { serverPort: PORT } = await execution.allocatePorts({ requestedServerPort: requestedPort === undefined ? undefined : Number(requestedPort) });
 const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=ai-staged-pressure`;
 const SESSION_LIMIT_MS = 25_000;
 const MODE = process.env.WARGUS_BROWSER_RUNTIME_MODE ?? "plan014";
@@ -17,13 +18,13 @@ const EXPECTED_FIXED_DEMO_MOVEMENT_PACE_MULTIPLIER = 1;
 let server = null;
 let browserServer = null;
 let browser = null;
-let browserPids = [];
 let wallTimeMs = 0;
 
 try {
   const { chromium } = await loadPlaywright();
   const browserExecutablePath = process.env.CHROME_BIN ?? chromium.executablePath();
-  server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", ...(SERVER_MODE === "preview" ? ["preview"] : []), "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
+  await execution.releasePort(PORT);
+  server = execution.spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", ...(SERVER_MODE === "preview" ? ["preview"] : []), "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
     cwd: process.cwd(),
     stdio: "ignore"
   });
@@ -35,7 +36,7 @@ try {
     headless: true,
     args: ["--disable-background-networking", "--disable-extensions", "--disable-dev-shm-usage", "--no-proxy-server"]
   });
-  browserPids = processTreePids(browserServer.process().pid);
+  execution.trackOwnedPid(browserServer.process().pid);
   browser = await chromium.connect(browserServer.wsEndpoint());
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
@@ -50,14 +51,11 @@ try {
   }
   console.log(`Browser runtime smoke verified (${MODE}, one tab, port ${PORT}, wall ${(wallTimeMs / 1000).toFixed(1)}s; canvas ${result.canvas.width}x${result.canvas.height}/${result.screenshot.uniqueColors} colors; ${modeSummary(result)}, update ${Number(result.performance.averageUpdateMs).toFixed(2)}ms).`);
 } finally {
-  if (browserServer?.process()?.pid) browserPids = [...new Set([...browserPids, ...processTreePids(browserServer.process().pid)])];
   try { await Promise.race([browser?.close(), delay(1_500)]); } catch { /* Exact PID cleanup follows. */ }
   try { await Promise.race([browserServer?.close(), delay(1_500)]); } catch { /* Exact PID cleanup follows. */ }
-  stopExactPids(browserPids);
-  if (server?.pid) stopExactPids(processTreePids(server.pid));
-  await delay(300);
-  if (await isPortOpen(PORT)) throw new Error(`Verifier cleanup left port ${PORT} open.`);
-  console.log(`Browser runtime smoke cleanup verified (exact PID trees stopped; port ${PORT} clear).`);
+  const cleanup = await execution.cleanup();
+  if (cleanup.openPorts.includes(PORT)) throw new Error(`Verifier cleanup left port ${PORT} open.`);
+  console.log(`Browser runtime smoke cleanup verified (exact owned PIDs stopped; port ${PORT} clear).`);
 }
 
 async function runRuntimeSmoke(page) {
@@ -320,17 +318,6 @@ async function loadPlaywright() {
   return await import("playwright");
 }
 
-function processTreePids(rootPid) {
-  const rows = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n").map((line) => line.trim().split(/\s+/).map(Number)).filter(([pid, parentPid]) => Number.isInteger(pid) && Number.isInteger(parentPid));
-  const result = [rootPid];
-  for (let index = 0; index < result.length; index += 1) for (const [pid, parentPid] of rows) if (parentPid === result[index] && !result.includes(pid)) result.push(pid);
-  return result;
-}
-
-function stopExactPids(pids) {
-  for (const pid of [...pids].reverse()) try { process.kill(pid, "SIGTERM"); } catch { /* Already exited. */ }
-}
-
 async function waitForHttp(url, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -338,15 +325,6 @@ async function waitForHttp(url, timeoutMs) {
     await delay(100);
   }
   throw new Error(`Timed out waiting for ${url}.`);
-}
-
-async function isPortOpen(port) {
-  return new Promise((resolve) => {
-    const socket = connect({ host: "127.0.0.1", port });
-    socket.once("connect", () => { socket.destroy(); resolve(true); });
-    socket.once("error", () => resolve(false));
-    socket.setTimeout(500, () => { socket.destroy(); resolve(false); });
-  });
 }
 
 async function withTimeout(promise, timeoutMs, message) {

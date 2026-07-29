@@ -1,10 +1,11 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const PORT = 5203;
-const DEBUG_PORT = 9230;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CHROME = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
@@ -26,8 +27,8 @@ const MAX_CAMERA_MAP_DISPLAY_OBJECTS = 2600;
 const MAX_ROUTE_SEMANTICS_UPDATE_MS = 20;
 const MAX_ROUTE_SEMANTICS_RENDER_MS = 24;
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-fixed-demo-input-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
+await execution.releasePort(PORT);
+const server = execution.spawnOwned("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   stdio: ["pipe", "ignore", "ignore"]
 });
 let chrome = null;
@@ -35,7 +36,8 @@ let client = null;
 
 try {
   await waitForHttp(URL, 20_000);
-  chrome = spawn(CHROME, [
+  await execution.releasePort(DEBUG_PORT);
+  chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
     "--no-sandbox",
     "--disable-dev-shm-usage",
@@ -46,7 +48,7 @@ try {
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  ], { stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl);
@@ -312,8 +314,7 @@ try {
   console.log(`Browser fixed demo input verified (${MAP_PATH}, M02 exact=${routeSemantics.m02.retainedExactTarget}/moving=${routeSemantics.m02.movingBlockerReady}/blocked=${routeSemantics.dynamicM02.blockedTicks}/complete=${routeSemantics.dynamicM02.completionTick}/retry=${formatTiming(routeSemantics.dynamicM02.maximumRetryUpdateMs)}ms, stack path=${routeSemantics.stack.immediatePathLength}/complete=${routeSemantics.stack.completionTick}, M03 tile=${routeSemantics.m03.selectedTile.x},${routeSemantics.m03.selectedTile.y}/range=${routeSemantics.m03.goalRange}, M04 complete=${routeSemantics.m04.completionCount}/issue=${formatTiming(routeSemantics.m04.issueDurationMs)}ms/update=${formatTiming(routeSemantics.m04.maximumUpdateMs)}ms, route=${formatTiming(Math.max(routeSemantics.performance.blockedPathfindingMs, routeSemantics.performance.expansionPathfindingMs))}ms/update=${formatTiming(routeSemantics.performance.averageUpdateMs)}ms/render=${formatTiming(routeSemantics.performance.averageRenderMs)}ms, isolated ${isolatedTiming}, 2x2 ${liveFootprintSummary}, speed ${moved.gameSpeed.toFixed(1)}x/source ${moved.sourceGameSpeedDefault}, pace=${moved.fixedDemoMovementPaceMultiplier.toFixed(2)}x, camera panned ${cameraPan.distance.toFixed(1)}px with ${formatTiming(cameraPan.frames.averageMs)}ms RAF avg/${formatTiming(cameraPan.frames.maxMs)}ms max${cameraPan.rafChoppy ? " (headless RAF slow; internal timings passed)" : ""}, blur stayed running, ${selectionSummary}, paused move resumed=${moved.pausedAfterIssue === false}, moved ${first.id} visually ${moved.visualDistance.toFixed(1)}px / actual ${moved.actualDistance.toFixed(1)}px across ${moved.smoothSteps} smooth steps, max visual step ${moved.maxVisualStep.toFixed(1)}px, render=${formatTiming(moved.performance?.averageRenderMs)}ms avg, update=${formatTiming(moved.performance?.averageUpdateMs)}ms avg, smoke=${formatTiming(moved.performance?.averageSmokeMs)}ms avg, frame=${formatTiming(moved.performance?.averageFrameMs)}ms avg, order=${moved.orderKind ?? "cleared"}, tick ${moved.beforeTick}->${moved.afterTick}).`);
 } finally {
   client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
+  await execution.cleanup();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -693,32 +694,6 @@ async function connectDevTools(url) {
   };
 }
 
-async function stopProcess(process) {
-  if (!process || process.exitCode !== null || process.signalCode !== null) {
-    return;
-  }
-  try {
-    globalThis.process.kill(-process.pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill("SIGTERM");
-    } catch {
-      // Already stopped.
-    }
-  }
-  await delay(600);
-  if (process.exitCode === null && process.signalCode === null) {
-    try {
-      globalThis.process.kill(-process.pid, "SIGKILL");
-    } catch {
-      try {
-        process.kill("SIGKILL");
-      } catch {
-        // Already stopped.
-      }
-    }
-  }
-}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

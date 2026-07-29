@@ -1,3 +1,4 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -5,8 +6,8 @@ import { spawn } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import { connectDevTools } from "./lib/browser-devtools-client.mjs";
 
-const PORT = 5199;
-const DEBUG_PORT = 9226;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const CDP_REQUEST_TIMEOUT_MS = 30_000;
 const MAP_LOAD_TIMEOUT_MS = 20_000;
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
@@ -18,8 +19,8 @@ const representativeMaps = representativeSetupMaps((manifest.maps ?? []).filter(
 const maps = REQUESTED_MAP ? representativeMaps.filter((map) => map.path === REQUESTED_MAP) : representativeMaps;
 if (REQUESTED_MAP && maps.length !== 1) throw new Error(`Requested playable-session map is not representative: ${REQUESTED_MAP}`);
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-playable-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
+await execution.releasePort(PORT);
+const server = execution.spawnOwned("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   stdio: "ignore"
 });
 let chrome = null;
@@ -28,7 +29,8 @@ let activeAuditMapPath = null;
 
 try {
   await waitForHttp(URL, 20_000);
-  chrome = spawn(CHROME, [
+  await execution.releasePort(DEBUG_PORT);
+  chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
@@ -36,7 +38,7 @@ try {
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  ], { stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl, {
@@ -123,8 +125,7 @@ try {
   console.log(`Browser playable session audit verified (${completed} maps selected, commanded, tick-advanced, rendered, and save/load roundtripped after input).`);
 } finally {
   client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
+  await execution.cleanup();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -376,29 +377,6 @@ function paeth(a, b, c) {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
-async function stopProcess(process) {
-  if (!process || process.exitCode !== null || process.signalCode !== null) return;
-  try {
-    globalThis.process.kill(-process.pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill("SIGTERM");
-    } catch {
-      // Already exited.
-    }
-  }
-  await delay(750);
-  if (process.exitCode !== null || process.signalCode !== null) return;
-  try {
-    globalThis.process.kill(-process.pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Already exited.
-    }
-  }
-}
 
 
 function delay(ms) {

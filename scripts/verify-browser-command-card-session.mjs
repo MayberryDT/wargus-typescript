@@ -1,10 +1,11 @@
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const PORT = 5211;
-const DEBUG_PORT = 9235;
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const { serverPort: PORT, debugPort: DEBUG_PORT } = await execution.allocatePorts();
 const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=construction-lifecycle`;
 const MAP_PATH = "maps/ladder/Garden of war BNE.pud.smp.gz";
 const CONSTRUCTION_ONLY = process.env.WARGUS_CONSTRUCTION_LIFECYCLE_ONLY === "1";
@@ -65,8 +66,8 @@ const SOURCE_TRAIN_PREREQUISITE_FIXTURES = [
 ];
 const SOURCE_RESEARCH_TYPES_BY_UPGRADE = buildSourceResearchTypesByUpgrade(manifest);
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-command-card-chrome-"));
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  detached: true,
+await execution.releasePort(PORT);
+const server = execution.spawnOwned("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
   stdio: ["pipe", "ignore", "ignore"]
 });
 let chrome = null;
@@ -74,7 +75,8 @@ let client = null;
 
 try {
   await waitForHttp(URL, 20_000);
-  chrome = spawn(CHROME, [
+  await execution.releasePort(DEBUG_PORT);
+  chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
     "--disable-gpu",
     "--disable-background-networking",
@@ -86,7 +88,7 @@ try {
     `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  ], { stdio: "ignore" });
   await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl);
@@ -279,8 +281,7 @@ try {
   console.log(completionMessage);
 } finally {
   client?.close();
-  await stopProcess(chrome);
-  await stopProcess(server);
+  await execution.cleanup();
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
@@ -1948,22 +1949,6 @@ async function connectDevTools(url) {
   };
 }
 
-async function stopProcess(child) {
-  if (!child?.pid) {
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  await delay(250);
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    // Already stopped.
-  }
-}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -149,13 +149,13 @@ expect(!runtimeSmokeSource.includes("window.__WARGUS_TS_RUN_AI_SCRIPT_FIXTURE__(
 expect(!runtimeSmokeSource.includes("window.__WARGUS_TS_RUN_AI_KNOWLEDGE_FIXTURE__()"), "Plan 014 browser smoke must not label the synthetic AI knowledge fixture as live progression.");
 expect(!runtimeSmokeSource.includes("AI launches"), "Plan 014 browser smoke summary must not claim fixture launch milestones as live progression.");
 expect(mapLoadSource.includes('from "./browser-smoke-harness.mjs"'), "Browser map-load smoke should use the shared browser smoke harness.");
-expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGTERM\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGTERM.");
-expect(browserHarnessSource.includes("globalThis.process.kill(-child.pid, \"SIGKILL\")"), "Browser smoke harness process cleanup should terminate the child process group with SIGKILL.");
+expect(browserHarnessSource.includes("BrowserExecutionController"), "Browser smoke harness should delegate lifecycle ownership to the shared controller.");
+expect(!browserHarnessSource.includes("detached: true"), "Browser smoke harness should not create detached process groups.");
 expect(!mapLoadSource.includes("function waitForHttp"), "Browser map-load smoke should rely on the shared harness waitForHttp helper.");
 expect(!mapLoadSource.includes("function connectDevTools"), "Browser map-load smoke should rely on the shared harness DevTools helper.");
 expect(!mapLoadSource.includes("async function stopProcess"), "Browser map-load smoke should rely on the shared harness process cleanup helper.");
 expect(!browserHarnessSource.includes("async function stopProcess(process)"), "Browser smoke harness should avoid shadowing the Node process global.");
-expect(!browserHarnessSource.includes("process.kill(-process.pid"), "Browser smoke harness should not call process-group kill through a shadowed child variable.");
+expect(!browserHarnessSource.includes("process.kill(-"), "Browser smoke harness should not call process-group cleanup.");
 
 for (const fragment of [
   "?smoke=1&demoSeed=ai-staged-pressure",
@@ -175,9 +175,9 @@ for (const fragment of [
   "firstSelectedOrderKind",
   "sameScreenshotStats(result?.inputStats, result?.commandStats)",
   "pngColorStats",
-  "processTreePids",
-  "stopExactPids",
-  "isPortOpen",
+  "BrowserExecutionController",
+  "execution.trackOwnedPid",
+  "execution.cleanup",
   "Browser runtime smoke verified"
 ]) {
   expect(runtimeSmokeSource.includes(fragment), `Browser runtime smoke verifier missing fragment: ${fragment}`);

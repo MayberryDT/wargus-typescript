@@ -1,27 +1,19 @@
-import { spawn } from "node:child_process";
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-export function startViteServer({ port, mode = "dev", stdio = "ignore" }) {
-  const serverArgs = mode === "preview"
-    ? ["node_modules/vite/bin/vite.js", "preview", "--host", "127.0.0.1", "--port", String(port), "--strictPort"]
-    : ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(port), "--strictPort"];
-  return spawn(process.execPath, serverArgs, { detached: true, stdio });
+export function createBrowserExecutionController(options) {
+  return new BrowserExecutionController(options);
 }
 
-export function startChrome({ chromeBin, debugPort, profilePrefix, extraArgs = [] }) {
+export async function startViteServer({ controller, port, mode = "dev", stdio = "ignore" }) {
+  return controller.startViteServer({ port, mode, stdio });
+}
+
+export async function startChrome({ controller, chromeBin, debugPort, profilePrefix, extraArgs = [] }) {
   const profilePath = mkdtempSync(path.join(tmpdir(), profilePrefix));
-  const child = spawn(chromeBin, [
-    "--headless=new",
-    "--disable-gpu",
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    ...extraArgs,
-    `--user-data-dir=${profilePath}`,
-    `--remote-debugging-port=${debugPort}`,
-    "about:blank"
-  ], { detached: true, stdio: "ignore" });
+  const child = await controller.startChrome({ chromeBin, debugPort, profilePath, extraArgs });
   return { child, profilePath };
 }
 
@@ -148,39 +140,6 @@ export async function readSmokeState(client) {
 
 export function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function stopProcess(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) {
-    return;
-  }
-  try {
-    globalThis.process.kill(-child.pid, "SIGTERM");
-  } catch {
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      // Already stopped.
-    }
-  }
-  await new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      try {
-        globalThis.process.kill(-child.pid, "SIGKILL");
-      } catch {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // Already stopped.
-        }
-      }
-      resolve();
-    }, 2000);
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
 }
 
 export function removeProfile(profilePath) {

@@ -1,17 +1,19 @@
-import { execFileSync, spawn } from "node:child_process";
+import { BrowserExecutionController } from "./lib/browser-execution-controller.mjs";
 import { pathToFileURL } from "node:url";
 
-const PORT = Number(process.env.WARGUS_BROWSER_COMBAT_PORT ?? 54252);
+const execution = new BrowserExecutionController({ name: import.meta.url });
+const requestedPort = process.env.WARGUS_BROWSER_COMBAT_PORT;
+const { serverPort: PORT } = await execution.allocatePorts({ requestedServerPort: requestedPort === undefined ? undefined : Number(requestedPort) });
 const URL = `http://127.0.0.1:${PORT}/?smoke=1`;
 const SESSION_LIMIT_MS = 25_000;
 let server = null;
 let browserServer = null;
 let browser = null;
-let browserPids = [];
 
 try {
   const { chromium } = await loadPlaywright();
-  server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
+  await execution.releasePort(PORT);
+  server = execution.spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
     cwd: process.cwd(),
     stdio: "ignore"
   });
@@ -21,7 +23,7 @@ try {
     headless: true,
     args: ["--disable-background-networking", "--disable-extensions", "--disable-dev-shm-usage", "--no-proxy-server"]
   });
-  browserPids = processTreePids(browserServer.process().pid);
+  execution.trackOwnedPid(browserServer.process().pid);
   browser = await chromium.connect(browserServer.wsEndpoint());
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
@@ -32,15 +34,9 @@ try {
   assertCombatScenarios(result);
   console.log(`Browser combat session verified (one tab; M05 unreachable=${result.m05.unreachable.rejectedUnreachable}, auto-return=${result.m05.automatic.finalReturnDistance.toFixed(1)}, hold=${result.m05.hold.movedDistance.toFixed(1)}; M06 projectile=${result.m06.committedProjectile.directDamage}, ground=${result.m06.fixedGroundControl.impactOccupantDamage}, area=${JSON.stringify(result.m06.areaThroughFog.deltas)}, demolish=${JSON.stringify(result.m06.demolishOwnership)}, audio=${result.m06.audio.visibleEnemyPlaybackStarts}/${result.m06.audio.hiddenEnemyPlaybackStarts}; M07 target=${result.m07.automatic.targetId}, return=${result.m07.automatic.returnDistance.toFixed(1)}, explicit=${String(result.m07.explicit.autoReturn)}).`);
 } finally {
-  if (browserServer?.process()?.pid) {
-    browserPids = [...new Set([...browserPids, ...processTreePids(browserServer.process().pid)])];
-  }
   try { await Promise.race([browser?.close(), delay(1_500)]); } catch { /* Exact PID cleanup follows. */ }
   try { await Promise.race([browserServer?.close(), delay(1_500)]); } catch { /* Exact PID cleanup follows. */ }
-  stopExactPids(browserPids);
-  if (server?.pid) {
-    stopExactPids(processTreePids(server.pid));
-  }
+  await execution.cleanup();
 }
 
 async function loadPlaywright() {
@@ -80,25 +76,6 @@ function assertCombatScenarios({ m05, m06, m07 }) {
   if (!m07?.ok || !m07.automatic?.targetId || !m07.automatic?.autoReturn || !(m07.automatic?.returnDistance <= 32) || m07.explicit?.autoReturn !== null) failures.push(`M07 saved return/explicit attack: ${JSON.stringify(m07)}`);
   if (failures.length > 0) {
     throw new Error(failures.join("\n"));
-  }
-}
-
-function processTreePids(rootPid) {
-  const rows = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .filter(([pid, parentPid]) => Number.isInteger(pid) && Number.isInteger(parentPid));
-  const result = [rootPid];
-  for (let index = 0; index < result.length; index += 1) {
-    for (const [pid, parentPid] of rows) {
-      if (parentPid === result[index] && !result.includes(pid)) result.push(pid);
-    }
-  }
-  return result;
-}
-
-function stopExactPids(pids) {
-  for (const pid of [...pids].reverse()) {
-    try { process.kill(pid, "SIGTERM"); } catch { /* Already exited. */ }
   }
 }
 
