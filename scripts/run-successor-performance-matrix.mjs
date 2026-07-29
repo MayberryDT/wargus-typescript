@@ -22,6 +22,7 @@ const ROW_IDS = parseAssignedRows(PLAN_ID, process.env.WARGUS_MATRIX_ROWS);
 const ROWS = ROW_IDS.map((row) => ALL_ROWS[row - 1]);
 const OFFSETS_MS = [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
+const ATTACK_COMMAND_OFFSET_MS = 250;
 const COMMAND_PAIR_DEADLINE_MS = 1000;
 const SUMMARY_PUBLISHER_SOURCE = new URL("./lib/checksummed-summary-publisher.mjs", import.meta.url);
 const FIXED_TICK_OFFSET = 600;
@@ -555,14 +556,19 @@ async function realPair(page, pairIndex, scheduledIssueOffsetMs, previousRaf, me
     throw error;
   }
   const moveOutcome = { pairIndex, kind: "move", scheduledIssueOffsetMs, issueOffsetMs: move.actualIssueOffsetMs, queueModifier: false, ...move };
+  const attackScheduledIssueOffsetMs = scheduledIssueOffsetMs + ATTACK_COMMAND_OFFSET_MS;
+  if (measurementT0 !== null) {
+    const waitMs = attackScheduledIssueOffsetMs - measurementOffsetMs(measurementT0);
+    if (waitMs > 0) await sleep(waitMs);
+  }
   let attack;
   try {
     attack = await realCommand(page, "attack-move", true, { x: box.x + box.width * .35, y: box.y + box.height * .65 }, move.rafTimestamp, measurementT0);
   } catch (error) {
-    if (error instanceof InvalidTrialError && error.commandOutcome) error.commandOutcomes = [moveOutcome, { pairIndex, kind: "attack-move", scheduledIssueOffsetMs, issueOffsetMs: error.commandOutcome.actualIssueOffsetMs, queueModifier: true, ...error.commandOutcome }];
+    if (error instanceof InvalidTrialError && error.commandOutcome) error.commandOutcomes = [moveOutcome, { pairIndex, kind: "attack-move", scheduledIssueOffsetMs: attackScheduledIssueOffsetMs, issueOffsetMs: error.commandOutcome.actualIssueOffsetMs, queueModifier: true, ...error.commandOutcome }];
     throw error;
   }
-  return { outcomes: [moveOutcome, { pairIndex, kind: "attack-move", scheduledIssueOffsetMs, issueOffsetMs: attack.actualIssueOffsetMs, queueModifier: true, ...attack }], lastRaf: attack.rafTimestamp };
+  return { outcomes: [moveOutcome, { pairIndex, kind: "attack-move", scheduledIssueOffsetMs: attackScheduledIssueOffsetMs, issueOffsetMs: attack.actualIssueOffsetMs, queueModifier: true, ...attack }], lastRaf: attack.rafTimestamp };
 }
 function measurementOffsetMs(t0) { return t0 === null ? null : Number(process.hrtime.bigint() - t0) / 1e6; }
 function withTimeout(promiseFactory, timeoutMs, label) {

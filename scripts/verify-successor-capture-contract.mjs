@@ -8,7 +8,7 @@ import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/c
 
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
 const helpers = loadHelpers(source, [
-  "commandPairReady", "withTimeout", "awaitCommandPair", "commandOutcomeRecord",
+  "commandPairReady", "withTimeout", "awaitCommandPair", "realPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
   "targetedVerifierPaths", "acceptedBaselineIdentity", "validateCaptureAttribution",
   "successorAcceptance", "errorRecord"
@@ -164,6 +164,71 @@ assert.equal(diagnostics.inputToCommandSampleCount, 4);
 assert.equal(diagnostics.inputToNextRenderSampleCount, 3);
 assert.equal(diagnostics.scheduleInvalid, false);
 assert.equal(JSON.stringify(diagnostics.outcomes), JSON.stringify(outcomes), "Per-outcome sample deltas must be retained unchanged.");
+
+const lateFirstPair = await exerciseRealPair({
+  pairIndex: 0, pairOffsetMs: 250, moveIssueOffsetMs: 341.16, movePairingCompletedAtMs: 608.41
+});
+assert.equal(lateFirstPair.outcomes[0].scheduledIssueOffsetMs, 250);
+assert.equal(lateFirstPair.outcomes[1].scheduledIssueOffsetMs, 500, "Attack-move must have its own pair-offset-plus-250 target.");
+assert.equal(lateFirstPair.outcomes[1].actualIssueOffsetMs, 608.41);
+assert.equal(helpers.commandTrialDiagnostics(lateFirstPair.outcomes, {
+  inputToCommandSamples: Array(40), inputToNextRenderSamples: Array(40)
+}).scheduleInvalid, false, "The enriched 341.16/608.41 ms evidence must be valid against 250/500 ms targets.");
+
+const earlyCompletedPair = await exerciseRealPair({
+  pairIndex: 1, pairOffsetMs: 1250, moveIssueOffsetMs: 1366.06, movePairingCompletedAtMs: 1452.10
+});
+assert.equal(earlyCompletedPair.outcomes[0].actualIssueOffsetMs, 1366.06);
+assert.equal(earlyCompletedPair.outcomes[1].scheduledIssueOffsetMs, 1500);
+assert.equal(earlyCompletedPair.outcomes[1].actualIssueOffsetMs, 1500, "Attack-move must wait until its own target when move pairing completes early.");
+
+const allIssueTargets = [];
+for (const pairOffsetMs of [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250]) {
+  const pair = await exerciseRealPair({
+    pairIndex: allIssueTargets.length / 2, pairOffsetMs,
+    moveIssueOffsetMs: pairOffsetMs, movePairingCompletedAtMs: pairOffsetMs + 250
+  });
+  allIssueTargets.push(...pair.outcomes.map((outcome) => outcome.scheduledIssueOffsetMs));
+}
+assert.equal(JSON.stringify(allIssueTargets), JSON.stringify([
+  250, 500, 1250, 1500, 2250, 2500, 3250, 3500, 4250, 4500,
+  5250, 5500, 6250, 6500, 7250, 7500, 8250, 8500, 9250, 9500
+]), "The measured command profile must derive exactly 20 issue targets within its first 10 seconds.");
+
+for (const [actualIssueOffsetMs, expectedInvalid] of [[499.99, true], [500, false], [750, false], [750.01, true]]) {
+  const boundary = helpers.commandTrialDiagnostics([
+    { success: true, scheduledIssueOffsetMs: 500, actualIssueOffsetMs }
+  ], { inputToCommandSamples: [], inputToNextRenderSamples: [] });
+  assert.equal(boundary.scheduleInvalid, expectedInvalid, `One-sided target lateness classification failed for ${actualIssueOffsetMs} ms.`);
+}
+assert.equal(helpers.commandTrialDiagnostics([
+  { success: true, scheduledIssueOffsetMs: 250, actualIssueOffsetMs: 400 },
+  { success: true, scheduledIssueOffsetMs: 250, actualIssueOffsetMs: 300 }
+], { inputToCommandSamples: [], inputToNextRenderSamples: [] }).scheduleInvalid, true, "Issue timestamps must remain ordered.");
+
+const disposablePair = await exerciseRealPair({
+  pairIndex: -1, pairOffsetMs: 0, moveIssueOffsetMs: 10, movePairingCompletedAtMs: 20, measurementT0: null
+});
+assert.equal(disposablePair.outcomes[1].actualIssueOffsetMs, 20, "Disposable qualification must issue immediately without measured scheduling waits.");
+
+async function exerciseRealPair({ pairIndex, pairOffsetMs, moveIssueOffsetMs, movePairingCompletedAtMs, measurementT0 = 0 }) {
+  let currentOffsetMs = moveIssueOffsetMs;
+  let rafTimestamp = 100;
+  helpers.measurementOffsetMs = () => currentOffsetMs;
+  helpers.sleep = async (milliseconds) => { currentOffsetMs += milliseconds; };
+  helpers.realCommand = async (_page, kind) => {
+    const actualIssueOffsetMs = currentOffsetMs;
+    if (kind === "move") currentOffsetMs = movePairingCompletedAtMs;
+    rafTimestamp += 1;
+    return {
+      actualIssueOffsetMs, success: true, inputToCommandDelta: 2, inputToNextRenderDelta: 2,
+      rawInputToCommandSliceMs: [1, 2], rawInputToNextRenderSliceMs: [1, 2], rafTimestamp
+    };
+  };
+  return helpers.realPair({
+    locator: () => ({ boundingBox: async () => ({ x: 0, y: 0, width: 100, height: 100 }) })
+  }, pairIndex, pairOffsetMs, 100, measurementT0);
+}
 
 const expectedRows = {
   "019": [3, 5, 7], "020": [6], "021": [3, 4, 6], "022": [3, 4, 6],
@@ -369,8 +434,13 @@ function loadHelpers(moduleSource, names) {
   const assignments = names.map((name) => `this.${name} = ${name};`).join("\n");
   const context = {
     COMMAND_OFFSET_TOLERANCE_MS: 250,
+    ATTACK_COMMAND_OFFSET_MS: 250,
     COMMAND_PAIR_DEADLINE_MS: 1000,
     RAF_AWAIT_TIMEOUT_MS: 100,
+    realCommand: null,
+    measurementOffsetMs: null,
+    sleep: null,
+    InvalidTrialError: class InvalidTrialError extends Error {},
     path,
     process,
     setTimeout,
