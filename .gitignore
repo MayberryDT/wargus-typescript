@@ -5,6 +5,7 @@ dist/
 .git-local/
 .worktrees/
 .superpowers/
+/.artifacts/
 *.log
 
 # Local Netlify folder
