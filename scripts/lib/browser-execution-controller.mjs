@@ -91,6 +91,10 @@ export class BrowserExecutionController {
     });
   }
 
+  async runCapture(options) {
+    return runCapture(options);
+  }
+
   async startViteServer({ port, mode = "dev", stdio = "ignore" }) {
     await this.releasePort(port);
     const args = mode === "preview"

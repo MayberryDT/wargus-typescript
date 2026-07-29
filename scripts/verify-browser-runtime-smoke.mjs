@@ -40,6 +40,10 @@ try {
   browser = await chromium.connect(browserServer.wsEndpoint());
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
+  await execution.runCapture({
+    readFrame: () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve({ rafAdvanced: true })))),
+    shouldStop: () => true
+  });
   if (context.pages().length !== 1) throw new Error(`Expected one browser tab, found ${context.pages().length}.`);
   const startedAt = Date.now();
   const result = await withTimeout(runRuntimeSmoke(page), SESSION_LIMIT_MS, "Plan 014 browser runtime smoke exceeded 25 seconds from page load");

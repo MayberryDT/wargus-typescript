@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -16,6 +16,10 @@ import {
 } from "./lib/browser-execution-controller.mjs";
 
 const failures = [];
+const runtimeSmokeSource = readFileSync("scripts/verify-browser-runtime-smoke.mjs", "utf8");
+expect(runtimeSmokeSource.includes("execution.runCapture"), "runtime smoke must enter the controller capture lifecycle");
+expect(runtimeSmokeSource.includes("rafAdvanced"), "runtime smoke capture lifecycle must require advancing RAF");
+expect(runtimeSmokeSource.includes("shouldStop"), "runtime smoke capture lifecycle must use an explicit verifier stop callback");
 
 function expect(condition, message) {
   if (!condition) failures.push(message);
