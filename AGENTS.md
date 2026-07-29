@@ -13,6 +13,18 @@ All future implementation, build, test, verifier, game-runtime, and browser work
 - Track every project process started on Halla by its exact PID, and clean up only those exact PIDs. Never use broad `pkill`, `killall`, container-wide cleanup, or port-owner termination.
 - If Halla is unavailable, stop and report the blocker instead of falling back to resource-intensive local execution.
 
+## Automation First
+
+- Resolve routine, safe, in-scope prerequisites autonomously when the required
+  information or host-local access is already available.
+- Do not pause for confirmation on reversible actions already authorized by an
+  approved plan. Exhaust safe remedies before reporting a STOP condition.
+- Use credentials only transiently for their intended host-local action. Never
+  write credential values to Git, plans, evidence, logs, or generated artifacts.
+- Ask the user only when progress requires unavailable external input, a
+  destructive or security-sensitive choice, or authority beyond the approved
+  task.
+
 ## Browser Automation
 
 When browser automation is needed, use the Codex in-app Browser plugin with the `iab` backend first.
