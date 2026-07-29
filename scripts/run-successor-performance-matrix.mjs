@@ -17,11 +17,12 @@ const ALL_ROWS = [
   ["army-200", 1280, 720], ["command-18", 1280, 720], ["combat-100", 1280, 720],
   ["command-18", 1024, 768]
 ].map(([profile, width, height], index) => ({ row: index + 1, profile, viewport: { width, height } }));
-const ROW_IDS = (process.env.WARGUS_MATRIX_ROWS ?? "1,2,3,4,5,6,7").split(",").map((value) => Number(value));
-if (ROW_IDS.some((value) => !Number.isInteger(value) || value < 1 || value > ALL_ROWS.length) || new Set(ROW_IDS).size !== ROW_IDS.length) throw new Error("WARGUS_MATRIX_ROWS must contain unique canonical row IDs 1-7.");
+const ROW_IDS = parseAssignedRows(PLAN_ID, process.env.WARGUS_MATRIX_ROWS);
 const ROWS = ROW_IDS.map((row) => ALL_ROWS[row - 1]);
 const OFFSETS_MS = [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
+const COMMAND_PAIR_DEADLINE_MS = 1000;
+const RAF_AWAIT_TIMEOUT_MS = 100;
 const FIXED_TICK_OFFSET = 600;
 const FIXED_PROOF_PROFILE_IDS = ["idle-25", "army-100", "army-200", "command-18", "combat-100"];
 const FIXED_PROOF_COMPARED_FIELDS = [
@@ -29,15 +30,6 @@ const FIXED_PROOF_COMPARED_FIELDS = [
   "orders", "command targets", "scheduler requested/processed tick counts", "canonical save serialization"
 ];
 const BUDGETS = { frameP95: 33.3, frameP99: 50, over50Percent: 1, dropped: 0, backlog: .25, heap: 15, command: 50, render: 100 };
-const TARGETED_WORK_REDUCTION_VERIFIERS = {
-  "019": "scripts/verify-terrain-metadata-cache.mjs",
-  "020": "scripts/verify-unit-index.mjs",
-  "021": "scripts/verify-render-preparation.mjs",
-  "022": "scripts/verify-world-render-cache.mjs",
-  "023": "scripts/verify-occupancy-index.mjs",
-  "024": "scripts/verify-pathfinding-budget.mjs",
-  "025": "scripts/verify-visibility-fog-incremental.mjs"
-};
 const AMD_VULKAN_FLAGS = [
   "--use-gl=angle", "--use-angle=vulkan", "--enable-features=Vulkan", "--disable-vulkan-surface",
   "--enable-gpu", "--ignore-gpu-blocklist", "--enable-gpu-rasterization", "--disable-background-timer-throttling",
@@ -46,6 +38,43 @@ const AMD_VULKAN_FLAGS = [
 ];
 const full = process.env.WARGUS_RUN_FULL_MATRIX === "1";
 const preflightOnly = process.env.WARGUS_MATRIX_PREFLIGHT_ONLY === "1";
+
+function canonicalRowsForPlan(planId) {
+  const rows = {
+    "019": [3, 5, 7],
+    "020": [6],
+    "021": [3, 4, 6],
+    "022": [3, 4, 6],
+    "023": [3, 4, 5, 6, 7],
+    "024": [4, 5, 6],
+    "025": [3, 4, 6]
+  }[planId];
+  if (!rows) throw new Error("No canonical successor rows are registered for Plan " + planId + ".");
+  return [...rows];
+}
+
+function parseAssignedRows(planId, raw) {
+  const expected = canonicalRowsForPlan(planId);
+  const requested = (raw ?? expected.join(",")).split(",").map((value) => Number(value));
+  if (requested.length !== expected.length || requested.some((row, index) => row !== expected[index])) {
+    throw new Error(`WARGUS_MATRIX_ROWS must equal the exact canonical rows for Plan ${planId}: ${expected.join(",")}.`);
+  }
+  return requested;
+}
+
+function targetedVerifierPaths(planId) {
+  const verifiers = {
+    "019": ["scripts/verify-terrain-metadata-cache.mjs"],
+    "020": ["scripts/verify-unit-index.mjs"],
+    "021": ["scripts/verify-render-preparation.mjs"],
+    "022": ["scripts/verify-world-render-cache.mjs"],
+    "023": ["scripts/verify-occupancy-index.mjs"],
+    "024": ["scripts/verify-pathfinding-budget.mjs", "scripts/verify-x12-first-tick.mjs"],
+    "025": ["scripts/verify-visibility-fog-incremental.mjs"]
+  }[planId];
+  if (!verifiers) throw new Error("No targeted work-reduction verifier is registered for Plan " + planId + ".");
+  return [...verifiers];
+}
 
 async function main(mode) {
   const run = createRunDirectory();
@@ -62,6 +91,11 @@ async function main(mode) {
   let mainError = null;
   try {
     monitor.record("pre"); monitor.assertStart();
+    if (mode === "full") {
+      assertCleanCaptureAttribution(run.captureSha);
+      run.targetedWorkReductionProof = runTargetedWorkReductionProof(run.directory, run.captureSha);
+    }
+    assertCleanCaptureAttribution(run.captureSha);
     allocation = await controller.allocatePorts();
     const playwright = await import("playwright");
     const executable = process.env.CHROME_BIN ?? "/usr/bin/google-chrome";
@@ -108,11 +142,36 @@ async function main(mode) {
     finalize("controller-lifecycle", () => writeJson(run.directory, "controller-lifecycle.json", { allocation, lifecycle: controller.lifecycleLedger, cleanup: state.cleanup, cleanupError: state.cleanupError, pageCloseErrors: state.pageCloseErrors }));
     finalize("capture-lock-record", () => writeJson(run.directory, "capture-lock.json", { path: captureLock.path, acquiredAt: captureLock.acquiredAt, releasedAt: captureLock.releasedAt, releaseError: state.lockReleaseError }));
     if (mode === "full" && state.validTrials.length === ROWS.length * 3) {
-      state.matrixSummary = matrixSummary(state, run, monitor, environment);
-      finalize("matrix-summary", () => writeJson(run.directory, "matrix-summary.json", state.matrixSummary));
+      const baseSummary = matrixSummary(state, run, monitor, environment);
+      try {
+        const result = finalizeChecksummedSummary(baseSummary, {
+          writeSummary: (summary) => writeJson(run.directory, "matrix-summary.json", summary),
+          writeManifest: () => { writeChecksums(run.directory); verifyChecksums(run.directory); },
+          writeFailure: (failure) => {
+            state.finalizationErrors.push(failure);
+            try { writeJson(run.directory, "finalization-errors.json", state.finalizationErrors); }
+            catch (error) { state.finalizationErrors.push({ step: "checksum-failure-record", ...errorRecord(error) }); }
+          }
+        });
+        state.matrixSummary = result.summary;
+      } catch (error) {
+        state.matrixSummary = withManifestIntegrity(baseSummary, false);
+        state.finalizationErrors.push({ step: "matrix-summary-finalization", ...errorRecord(error) });
+        let downgradeWritten = false;
+        try { writeJson(run.directory, "matrix-summary.json", state.matrixSummary); downgradeWritten = true; }
+        catch (writeError) { state.finalizationErrors.push({ step: "matrix-summary-downgrade", ...errorRecord(writeError) }); }
+        finalize("finalization-errors", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
+        if (downgradeWritten) finalize("sha256-manifest-after-downgrade", () => { writeChecksums(run.directory); verifyChecksums(run.directory); });
+      }
+    } else {
+      if (state.finalizationErrors.length > 0) finalize("finalization-errors", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
+      try { writeChecksums(run.directory); verifyChecksums(run.directory); }
+      catch (error) {
+        state.finalizationErrors.push({ step: "sha256-manifest", ...errorRecord(error) });
+        finalize("finalization-errors", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
+        finalize("sha256-manifest-retry", () => { writeChecksums(run.directory); verifyChecksums(run.directory); });
+      }
     }
-    if (state.finalizationErrors.length > 0) finalize("finalization-errors", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
-    try { writeChecksums(run.directory); } catch (error) { state.finalizationErrors.push({ step: "sha256-manifest", ...errorRecord(error) }); }
   }
   const terminalErrors = [];
   if (mainError) terminalErrors.push(mainError);
@@ -128,7 +187,7 @@ async function main(mode) {
 function createRunDirectory() {
   const captureSha = process.env.WARGUS_CAPTURE_SHA?.trim();
   if (!captureSha) throw new Error("WARGUS_CAPTURE_SHA is required.");
-  if (command("git", ["rev-parse", "HEAD"]) !== captureSha) throw new Error("WARGUS_CAPTURE_SHA must equal the checked-out capture SHA.");
+  assertCleanCaptureAttribution(captureSha);
   const preflight = preflightArtifactRoot({ disposableWorktree: process.cwd(), preservationOwner: process.env.WARGUS_ARTIFACT_PRESERVATION_OWNER });
   const configured = process.env.WARGUS_PERF_ARTIFACT_DIR;
   const stamp = configured ? path.basename(path.resolve(configured)) : new Date().toISOString().replace(/[-:.]/g, "");
@@ -142,47 +201,39 @@ function createRunDirectory() {
   const sourceHash = applyPerformanceProfileSourceHash();
   validateFixedProof(fixedProof, captureSha, sourceHash);
   const baseline = loadAcceptedBaseline(preflight);
-  const targetedWorkReductionProof = full ? runTargetedWorkReductionProof(created.directory, captureSha) : null;
-  return { ...created, preflight, captureSha, stamp, baseline, targetedWorkReductionProof, fixedProof: { file: "fixed-tick-proof.json", sha256: sha(readFileSync(path.join(created.directory, "fixed-tick-proof.json"))), commit: fixedProof.commit, applyPerformanceProfileSourceHash: sourceHash, value: fixedProof } };
+  return { ...created, preflight, captureSha, stamp, baseline, targetedWorkReductionProof: null, fixedProof: { file: "fixed-tick-proof.json", sha256: sha(readFileSync(path.join(created.directory, "fixed-tick-proof.json"))), commit: fixedProof.commit, applyPerformanceProfileSourceHash: sourceHash, value: fixedProof } };
 }
 
 function runTargetedWorkReductionProof(directory, captureSha) {
-  const verifier = TARGETED_WORK_REDUCTION_VERIFIERS[PLAN_ID];
-  if (!verifier) throw new Error("No targeted work-reduction verifier is registered for Plan " + PLAN_ID + ".");
-  const startedAt = new Date().toISOString();
-  const workingVerifier = existsSync(verifier) ? readFileSync(verifier) : null;
-  let captureVerifier = null;
-  try { captureVerifier = execFileSync("git", ["show", `${captureSha}:${verifier}`], { cwd: process.cwd(), timeout: 5000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }); } catch { }
-  const verifierSha256 = workingVerifier ? sha(workingVerifier) : null;
-  const captureVerifierSha256 = captureVerifier ? sha(captureVerifier) : null;
-  const exactCaptureVerifier = verifierSha256 !== null && verifierSha256 === captureVerifierSha256;
-  const result = exactCaptureVerifier
-    ? spawnSync(process.execPath, [verifier], { cwd: process.cwd(), encoding: "utf8", timeout: 300000, maxBuffer: 16 * 1024 * 1024 })
-    : { status: null, signal: null, stdout: "", stderr: "", error: new Error("Targeted verifier is missing, untracked, or differs from the capture SHA: " + verifier) };
-  const proof = {
-    schemaVersion: 1,
-    planId: PLAN_ID,
-    captureSha,
-    command: `node ${verifier}`,
-    verifier,
-    verifierSha256,
-    captureVerifierSha256,
-    startedAt,
-    completedAt: new Date().toISOString(),
-    exitStatus: result.status,
-    signal: result.signal ?? null,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    error: result.error ? errorRecord(result.error) : null,
-    verdict: exactCaptureVerifier && !result.error && result.status === 0 ? "pass" : "fail"
-  };
+  const verifiers = targetedVerifierPaths(PLAN_ID);
+  const results = verifiers.map((verifier) => {
+    const startedAt = new Date().toISOString();
+    const workingVerifier = existsSync(verifier) ? readFileSync(verifier) : null;
+    let captureVerifier = null;
+    try { captureVerifier = execFileSync("git", ["show", `${captureSha}:${verifier}`], { cwd: process.cwd(), timeout: 5000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }); } catch { }
+    const verifierSha256 = workingVerifier ? sha(workingVerifier) : null;
+    const captureVerifierSha256 = captureVerifier ? sha(captureVerifier) : null;
+    const exactCaptureVerifier = verifierSha256 !== null && verifierSha256 === captureVerifierSha256;
+    const result = exactCaptureVerifier
+      ? spawnSync(process.execPath, [verifier], { cwd: process.cwd(), encoding: "utf8", timeout: 300000, maxBuffer: 16 * 1024 * 1024 })
+      : { status: null, signal: null, stdout: "", stderr: "", error: new Error("Targeted verifier is missing, untracked, or differs from the capture SHA: " + verifier) };
+    return {
+      command: `node ${verifier}`, verifier, verifierSha256, captureVerifierSha256, startedAt, completedAt: new Date().toISOString(),
+      exitStatus: result.status, signal: result.signal ?? null, stdout: result.stdout ?? "", stderr: result.stderr ?? "",
+      error: result.error ? errorRecord(result.error) : null,
+      verdict: exactCaptureVerifier && !result.error && result.status === 0 ? "pass" : "fail"
+    };
+  });
+  const proof = { schemaVersion: 2, planId: PLAN_ID, captureSha, verifiers: results, verdict: results.every((result) => result.verdict === "pass") ? "pass" : "fail" };
   writeJson(directory, "targeted-work-reduction-proof.json", proof);
-  if (proof.verdict !== "pass") throw new Error("Targeted work-reduction proof failed for Plan " + PLAN_ID + ": " + (proof.error?.message ?? (proof.stderr || "nonzero verifier exit")));
+  if (proof.verdict !== "pass") {
+    const failed = results.filter((result) => result.verdict !== "pass").map((result) => `${result.verifier}: ${result.error?.message ?? (result.stderr || "nonzero verifier exit")}`);
+    throw new Error("Targeted work-reduction proof failed for Plan " + PLAN_ID + ": " + failed.join("; "));
+  }
   return { file: "targeted-work-reduction-proof.json", sha256: sha(readFileSync(path.join(directory, "targeted-work-reduction-proof.json"))), value: proof };
 }
-
 function validateFixedProof(fixedProof, captureSha, sourceHash) {
-  const expectedCommand = `WARGUS_PERF_PLAN=${PLAN_ID} WARGUS_PERF_FIXED_TICK_OFFSET=${FIXED_TICK_OFFSET} node scripts/verify-successor-fixed-tick.mjs`;
+  const expectedCommand = `WARGUS_PERF_PLAN=${PLAN_ID} WARGUS_CAPTURE_SHA=${captureSha} WARGUS_PERF_FIXED_TICK_OFFSET=${FIXED_TICK_OFFSET} node scripts/verify-successor-fixed-tick.mjs`;
   if (fixedProof.commit !== captureSha) throw new Error("fixed-tick-proof.json capture SHA does not match WARGUS_CAPTURE_SHA.");
   if (fixedProof.equalityVerdict !== "pass") throw new Error("fixed-tick-proof.json equality verdict must be pass.");
   if (fixedProof.fixedTickOffset !== FIXED_TICK_OFFSET) throw new Error("fixed-tick-proof.json must use the accepted 600-tick offset.");
@@ -211,14 +262,40 @@ function environmentRecord(run, executable, allocation, monitor, captureLock) {
   };
 }
 
+function acceptedBaselineIdentity(artifactRoot, environment = process.env) {
+  const accepted = {
+    captureSha: "033629474959122749f6acb013ed6c2a0c0d2556",
+    stamp: "20260729T051148Z",
+    manifestSha256: "657dec5af935823fc27beaf16034b78813b4090244f22146effefc430040bed1"
+  };
+  accepted.directory = path.join(artifactRoot, "performance", "018", accepted.captureSha, accepted.stamp);
+  if (environment.WARGUS_BASELINE_CAPTURE_SHA !== undefined && environment.WARGUS_BASELINE_CAPTURE_SHA.trim() !== accepted.captureSha) throw new Error("WARGUS_BASELINE_CAPTURE_SHA must match the accepted Plan 018 capture.");
+  if (environment.WARGUS_BASELINE_MATRIX_DIR !== undefined && environment.WARGUS_BASELINE_MATRIX_DIR.trim() !== accepted.directory) throw new Error("WARGUS_BASELINE_MATRIX_DIR must match the accepted Plan 018 directory.");
+  if (environment.WARGUS_BASELINE_MANIFEST_SHA256 !== undefined && environment.WARGUS_BASELINE_MANIFEST_SHA256.trim() !== accepted.manifestSha256) throw new Error("WARGUS_BASELINE_MANIFEST_SHA256 must match the accepted Plan 018 manifest.");
+  return accepted;
+}
+
+function validateCaptureAttribution(captureSha, head, status) {
+  if (!captureSha || captureSha !== head) throw new Error("WARGUS_CAPTURE_SHA must equal the checked-out capture SHA.");
+  if (status !== "") throw new Error("Performance proof requires a clean worktree including tracked and untracked files; git status was: " + status);
+  return { captureSha, head, clean: true };
+}
+
+function assertCleanCaptureAttribution(captureSha) {
+  return validateCaptureAttribution(
+    captureSha,
+    command("git", ["rev-parse", "HEAD"]),
+    command("git", ["status", "--porcelain", "--untracked-files=all"])
+  );
+}
+
 function loadAcceptedBaseline(preflight) {
-  const captureSha = process.env.WARGUS_BASELINE_CAPTURE_SHA?.trim();
-  const configured = process.env.WARGUS_BASELINE_MATRIX_DIR;
-  const acceptedManifestSha256 = process.env.WARGUS_BASELINE_MANIFEST_SHA256?.trim();
-  if (!captureSha || !configured || !acceptedManifestSha256) throw new Error("WARGUS_BASELINE_CAPTURE_SHA, WARGUS_BASELINE_MATRIX_DIR, and WARGUS_BASELINE_MANIFEST_SHA256 are required.");
-  const parent = realpathSync(path.join(preflight.artifactRoot, "performance", "018", captureSha));
-  const directory = realpathSync(configured);
-  if (path.dirname(directory) !== parent) throw new Error("Baseline directory must be one direct retained stamp below " + parent);
+  const accepted = acceptedBaselineIdentity(preflight.artifactRoot);
+  const captureSha = accepted.captureSha;
+  const acceptedManifestSha256 = accepted.manifestSha256;
+  const expectedDirectory = path.resolve(accepted.directory);
+  const directory = realpathSync(expectedDirectory);
+  if (directory !== expectedDirectory) throw new Error("Accepted Plan 018 baseline directory must resolve exactly to " + expectedDirectory);
   const manifestFile = path.join(directory, "sha256.json");
   if (sha(readFileSync(manifestFile)) !== acceptedManifestSha256) throw new Error("Plan 018 baseline manifest does not match the independently accepted SHA-256.");
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
@@ -497,28 +574,53 @@ async function realPair(page, pairIndex, scheduledIssueOffsetMs, previousRaf, me
   return { outcomes: [moveOutcome, { pairIndex, kind: "attack-move", scheduledIssueOffsetMs, issueOffsetMs: attack.actualIssueOffsetMs, queueModifier: true, ...attack }], lastRaf: attack.rafTimestamp };
 }
 function measurementOffsetMs(t0) { return t0 === null ? null : Number(process.hrtime.bigint() - t0) / 1e6; }
+function withTimeout(promiseFactory, timeoutMs, label) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve().then(promiseFactory),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms.`)), timeoutMs); })
+  ]).finally(() => { if (timer !== null) clearTimeout(timer); });
+}
+
+async function awaitCommandPair({ before, previousRaf, readRaf, readSummary, nowMs = () => Number(process.hrtime.bigint()) / 1e6, delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)), deadlineMs = COMMAND_PAIR_DEADLINE_MS, rafTimeoutMs = RAF_AWAIT_TIMEOUT_MS, intervalMs = 25 }) {
+  const deadlineAt = nowMs() + deadlineMs;
+  let after = before;
+  let rafTimestamp = previousRaf;
+  for (;;) {
+    let remainingMs = deadlineAt - nowMs();
+    if (remainingMs <= 0) return { ready: false, after, rafTimestamp, error: new Error(`Real command pairing exceeded its absolute ${deadlineMs} ms deadline.`) };
+    try {
+      const frame = await withTimeout(readRaf, Math.max(1, Math.min(rafTimeoutMs, remainingMs)), "RAF");
+      rafTimestamp = frame.timestamp;
+      remainingMs = deadlineAt - nowMs();
+      if (remainingMs <= 0) return { ready: false, after, rafTimestamp, error: new Error(`Real command pairing exceeded its absolute ${deadlineMs} ms deadline.`) };
+      after = await withTimeout(readSummary, Math.max(1, remainingMs), "performance summary");
+    } catch (error) {
+      return { ready: false, after, rafTimestamp, error };
+    }
+    const inputToCommandDelta = after.inputToCommandSamples.length - before.inputToCommandSamples.length;
+    const inputToNextRenderDelta = after.inputToNextRenderSamples.length - before.inputToNextRenderSamples.length;
+    if (commandPairReady({ inputToCommandDelta, inputToNextRenderDelta, rafTimestamp, previousRaf })) return { ready: true, after, rafTimestamp, error: null };
+    remainingMs = deadlineAt - nowMs();
+    if (remainingMs <= 0) return { ready: false, after, rafTimestamp, error: new Error(`Real command pairing exceeded its absolute ${deadlineMs} ms deadline.`) };
+    await delay(Math.min(intervalMs, remainingMs));
+  }
+}
+
 async function realCommand(page, kind, queueModifier, point, previousRaf, measurementT0 = null) {
   const before = await summary(page);
   const actualIssueOffsetMs = measurementOffsetMs(measurementT0);
   await page.keyboard.press(kind === "move" ? "m" : "a");
   if (queueModifier) await page.keyboard.down("Shift");
   try { await page.mouse.click(point.x, point.y); } finally { if (queueModifier) await page.keyboard.up("Shift"); }
-  let after = before; let rafTimestamp = previousRaf;
-  try {
-    await waitForReadiness({ intervalMs: 25, probe: async () => {
-      const frame = await raf(page); rafTimestamp = frame.timestamp; after = await summary(page);
-      const inputToCommandDelta = after.inputToCommandSamples.length - before.inputToCommandSamples.length;
-      const inputToNextRenderDelta = after.inputToNextRenderSamples.length - before.inputToNextRenderSamples.length;
-      return { ready: commandPairReady({ inputToCommandDelta, inputToNextRenderDelta, rafTimestamp, previousRaf }), progress: `${rafTimestamp}:${inputToCommandDelta}:${inputToNextRenderDelta}` };
-    }});
-  } catch (error) {
-    const invalid = new InvalidTrialError("Missing required real-input outcome or next-render sample pairing.", error);
-    invalid.commandOutcome = commandOutcomeRecord({ actualIssueOffsetMs, before, after, rafTimestamp, previousRaf });
+  const pair = await awaitCommandPair({ before, previousRaf, readRaf: () => raf(page), readSummary: () => summary(page) });
+  if (!pair.ready) {
+    const invalid = new InvalidTrialError("Missing required real-input outcome or next-render sample pairing.", pair.error);
+    invalid.commandOutcome = commandOutcomeRecord({ actualIssueOffsetMs, before, after: pair.after, rafTimestamp: pair.rafTimestamp, previousRaf });
     throw invalid;
   }
-  return commandOutcomeRecord({ actualIssueOffsetMs, before, after, rafTimestamp, previousRaf });
+  return commandOutcomeRecord({ actualIssueOffsetMs, before, after: pair.after, rafTimestamp: pair.rafTimestamp, previousRaf });
 }
-
 function commandOutcomeRecord({ actualIssueOffsetMs, before, after, rafTimestamp, previousRaf }) {
   const inputToCommandDelta = after.inputToCommandSamples.length - before.inputToCommandSamples.length;
   const inputToNextRenderDelta = after.inputToNextRenderSamples.length - before.inputToNextRenderSamples.length;
@@ -636,9 +738,61 @@ function sha(value) { return createHash("sha256").update(value).digest("hex"); }
 function shaText(value) { return sha(Buffer.from(value)); }
 function errorRecord(error) { return { name: error?.name ?? "Error", message: String(error?.message ?? error), stack: error?.stack ?? null }; }
 function writeJson(directory, name, value) { writeFileSync(path.join(directory, name), `${JSON.stringify(value, null, 2)}\n`, "utf8"); }
+function withManifestIntegrity(summary, pass) {
+  return {
+    ...summary,
+    ready: summary.ready === true && pass === true,
+    acceptance: {
+      ...summary.acceptance,
+      incrementalAccepted: summary.acceptance?.incrementalAccepted === true && pass === true,
+      absoluteReleaseAccepted: summary.acceptance?.absoluteReleaseAccepted === true && pass === true,
+      accepted: summary.acceptance?.accepted === true && pass === true
+    },
+    lifecycle: { ...summary.lifecycle, finalizationPass: summary.lifecycle?.finalizationPass !== false && pass === true, checksumManifestPass: pass === true }
+  };
+}
+
+function finalizeChecksummedSummary(summary, { writeSummary, writeManifest, writeFailure }) {
+  const candidate = withManifestIntegrity(summary, true);
+  writeSummary(candidate);
+  try {
+    writeManifest();
+    return { summary: candidate, error: null, retryError: null, retentionErrors: [] };
+  } catch (error) {
+    const failure = { step: "sha256-manifest", name: error?.name ?? "Error", message: String(error?.message ?? error), stack: error?.stack ?? null };
+    const downgraded = withManifestIntegrity(summary, false);
+    const retentionErrors = [];
+    try { writeSummary(downgraded); }
+    catch (downgradeError) { retentionErrors.push({ step: "matrix-summary-downgrade", name: downgradeError?.name ?? "Error", message: String(downgradeError?.message ?? downgradeError), stack: downgradeError?.stack ?? null }); }
+    try { writeFailure(failure); }
+    catch (retentionError) { retentionErrors.push({ step: "checksum-failure-record", name: retentionError?.name ?? "Error", message: String(retentionError?.message ?? retentionError), stack: retentionError?.stack ?? null }); }
+    if (retentionErrors.some((retentionError) => retentionError.step === "matrix-summary-downgrade")) {
+      const fatal = new AggregateError([error, ...retentionErrors.map((record) => new Error(record.step + ": " + record.message))], "Checksum failure occurred and the authoritative summary downgrade could not be retained.");
+      fatal.summary = downgraded;
+      throw fatal;
+    }
+    try {
+      writeManifest();
+      return { summary: downgraded, error: failure, retryError: null, retentionErrors };
+    } catch (retryError) {
+      const retryFailure = { step: "sha256-manifest-retry", name: retryError?.name ?? "Error", message: String(retryError?.message ?? retryError), stack: retryError?.stack ?? null };
+      try { writeFailure(retryFailure); }
+      catch (retentionError) { retentionErrors.push({ step: "checksum-retry-failure-record", name: retentionError?.name ?? "Error", message: String(retentionError?.message ?? retentionError), stack: retentionError?.stack ?? null }); }
+      return { summary: downgraded, error: failure, retryError: retryFailure, retentionErrors };
+    }
+  }
+}
+
 function writeChecksums(directory) { writeJson(directory, "sha256.json", readdirSync(directory).filter((name) => name !== "sha256.json").sort().map((name) => ({ name, sha256: sha(readFileSync(path.join(directory, name))) }))); }
+function verifyChecksums(directory) {
+  const manifest = JSON.parse(readFileSync(path.join(directory, "sha256.json"), "utf8"));
+  const expectedNames = readdirSync(directory).filter((name) => name !== "sha256.json").sort();
+  if (stableJson(manifest.map((record) => record.name)) !== stableJson(expectedNames)) throw new Error("sha256.json does not cover the exact retained artifact set.");
+  for (const record of manifest) if (record.sha256 !== sha(readFileSync(path.join(directory, record.name)))) throw new Error("sha256.json verification failed for " + record.name + ".");
+}
 
 if (process.env.WARGUS_MATRIX_GUARD_CHECK === "1") {
+  if (process.env.WARGUS_CAPTURE_SHA?.trim()) assertCleanCaptureAttribution(process.env.WARGUS_CAPTURE_SHA.trim());
   if (full && preflightOnly) throw new Error("Set only one Plan " + PLAN_ID + " matrix mode.");
   console.log("Plan " + PLAN_ID + " matrix guard check passed.");
 } else if (full || preflightOnly) {

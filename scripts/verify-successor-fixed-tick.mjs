@@ -10,8 +10,11 @@ const root = process.cwd();
 const fixedTickOffset = parseFixedTickOffset(process.env.WARGUS_PERF_FIXED_TICK_OFFSET ?? "600");
 const planId = process.env.WARGUS_PERF_PLAN?.trim();
 if (!/^\d{3}$/.test(planId ?? "")) throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID.");
+const captureSha = process.env.WARGUS_CAPTURE_SHA?.trim();
+if (!captureSha) throw new Error("WARGUS_CAPTURE_SHA is required for fixed-tick proof attribution.");
+assertCleanCaptureAttribution(captureSha);
 let output = null;
-const command = [`WARGUS_PERF_PLAN=${planId}`, `WARGUS_PERF_FIXED_TICK_OFFSET=${fixedTickOffset}`, "node", "scripts/verify-successor-fixed-tick.mjs"];
+const command = [`WARGUS_PERF_PLAN=${planId}`, `WARGUS_CAPTURE_SHA=${captureSha}`, `WARGUS_PERF_FIXED_TICK_OFFSET=${fixedTickOffset}`, "node", "scripts/verify-successor-fixed-tick.mjs"];
 const comparedFields = [
   "canonicalStateHash",
   "entity/effect counts and IDs",
@@ -48,7 +51,7 @@ try {
   const equal = profileResults.every((profile) => profile.equal);
   const result = {
     command: command.join(" "),
-    commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+    commit: captureSha,
     fixedTickOffset,
     profiles: profileResults,
     comparedFields,
@@ -300,6 +303,19 @@ function sha256(value) {
 
 function byId(left, right) {
   return String(left.id).localeCompare(String(right.id));
+}
+
+function validateCaptureAttribution(expectedCaptureSha, head, status) {
+  if (expectedCaptureSha !== head) throw new Error(`WARGUS_CAPTURE_SHA ${expectedCaptureSha} does not equal checked-out commit ${head}.`);
+  if (status !== "") throw new Error("Fixed-tick proof requires a clean worktree including tracked and untracked files; git status was: " + status);
+}
+
+function assertCleanCaptureAttribution(expectedCaptureSha) {
+  validateCaptureAttribution(
+    expectedCaptureSha,
+    execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 5000 }).trim(),
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root, encoding: "utf8", timeout: 5000 }).trim()
+  );
 }
 
 function parseFixedTickOffset(value) {
