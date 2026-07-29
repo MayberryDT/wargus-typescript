@@ -13,7 +13,7 @@
 
 ## Status
 
-- **Status:** BLOCKED
+- **Status:** IN PROGRESS
 - **Wave:** 1 — Measurement foundation
 - **Priority:** P1
 - **Effort:** M remaining acceptance work
