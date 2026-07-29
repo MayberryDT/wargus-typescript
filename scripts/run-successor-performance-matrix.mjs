@@ -6,6 +6,7 @@ import {
   BrowserExecutionController, collectHostMetrics, createArtifactDirectory,
   preflightArtifactRoot, qualifyRenderer, waitForReadiness
 } from "./lib/browser-execution-controller.mjs";
+import { publishChecksummedSummary } from "./lib/checksummed-summary-publisher.mjs";
 
 // Successor runner derived from the audited Plan 018 protocol; raw packets preserve this exact source.
 const PLAN_ID = process.env.WARGUS_PERF_PLAN?.trim();
@@ -23,6 +24,7 @@ const OFFSETS_MS = [250, 1250, 2250, 3250, 4250, 5250, 6250, 7250, 8250, 9250];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
 const COMMAND_PAIR_DEADLINE_MS = 1000;
 const RAF_AWAIT_TIMEOUT_MS = 100;
+const SUMMARY_PUBLISHER_SOURCE = new URL("./lib/checksummed-summary-publisher.mjs", import.meta.url);
 const FIXED_TICK_OFFSET = 600;
 const FIXED_PROOF_PROFILE_IDS = ["idle-25", "army-100", "army-200", "command-18", "combat-100"];
 const FIXED_PROOF_COMPARED_FIELDS = [
@@ -142,26 +144,15 @@ async function main(mode) {
     finalize("controller-lifecycle", () => writeJson(run.directory, "controller-lifecycle.json", { allocation, lifecycle: controller.lifecycleLedger, cleanup: state.cleanup, cleanupError: state.cleanupError, pageCloseErrors: state.pageCloseErrors }));
     finalize("capture-lock-record", () => writeJson(run.directory, "capture-lock.json", { path: captureLock.path, acquiredAt: captureLock.acquiredAt, releasedAt: captureLock.releasedAt, releaseError: state.lockReleaseError }));
     if (mode === "full" && state.validTrials.length === ROWS.length * 3) {
-      const baseSummary = matrixSummary(state, run, monitor, environment);
-      try {
-        const result = finalizeChecksummedSummary(baseSummary, {
-          writeSummary: (summary) => writeJson(run.directory, "matrix-summary.json", summary),
-          writeManifest: () => { writeChecksums(run.directory); verifyChecksums(run.directory); },
-          writeFailure: (failure) => {
-            state.finalizationErrors.push(failure);
-            try { writeJson(run.directory, "finalization-errors.json", state.finalizationErrors); }
-            catch (error) { state.finalizationErrors.push({ step: "checksum-failure-record", ...errorRecord(error) }); }
-          }
-        });
-        state.matrixSummary = result.summary;
-      } catch (error) {
-        state.matrixSummary = withManifestIntegrity(baseSummary, false);
-        state.finalizationErrors.push({ step: "matrix-summary-finalization", ...errorRecord(error) });
-        let downgradeWritten = false;
-        try { writeJson(run.directory, "matrix-summary.json", state.matrixSummary); downgradeWritten = true; }
-        catch (writeError) { state.finalizationErrors.push({ step: "matrix-summary-downgrade", ...errorRecord(writeError) }); }
-        finalize("finalization-errors", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
-        if (downgradeWritten) finalize("sha256-manifest-after-downgrade", () => { writeChecksums(run.directory); verifyChecksums(run.directory); });
+      const result = publishChecksummedSummary(run.directory, matrixSummary(state, run, monitor, environment), {
+        writeFailure: (failures) => writeJson(run.directory, "finalization-errors.json", [...state.finalizationErrors, ...failures])
+      });
+      state.matrixSummary = result.summary;
+      if (!result.published) {
+        state.finalizationErrors.push(...result.failures);
+        if (result.failures.some((failure) => failure.step === "checksummed-summary-failure-record")) {
+          finalize("checksummed-summary-failure-record-retry", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
+        }
       }
     } else {
       if (state.finalizationErrors.length > 0) finalize("finalization-errors", () => writeJson(run.directory, "finalization-errors.json", state.finalizationErrors));
@@ -197,6 +188,7 @@ function createRunDirectory() {
   const existing = readdirSync(created.directory);
   if (existing.some((name) => name !== "fixed-tick-proof.json")) throw new Error("Successor artifact stamp must be fresh except for fixed-tick-proof.json; found " + existing.join(", "));
   copyFileSync(new URL(import.meta.url), path.join(created.directory, "capture-harness.mjs"));
+  copyFileSync(SUMMARY_PUBLISHER_SOURCE, path.join(created.directory, "checksummed-summary-publisher.mjs"));
   const fixedProof = JSON.parse(readFileSync(path.join(created.directory, "fixed-tick-proof.json"), "utf8"));
   const sourceHash = applyPerformanceProfileSourceHash();
   validateFixedProof(fixedProof, captureSha, sourceHash);
@@ -258,7 +250,7 @@ function environmentRecord(run, executable, allocation, monitor, captureLock) {
     controllerCommit: command("git", ["log", "-1", "--format=%H", "--", "scripts/lib/browser-execution-controller.mjs"]),
     artifacts: { logicalPath: run.logicalPath, directory: run.directory, workspace: run.preflight.artifactWorkspace, root: run.preflight.artifactRoot, owner: run.preflight.preservationOwner },
     acceptedBaseline: run.baseline, captureLock: { path: captureLock.path, acquiredAt: captureLock.acquiredAt },
-    harnessChecksum: sha(readFileSync(new URL(import.meta.url))), fixedProof: run.fixedProof, targetedWorkReductionProof: run.targetedWorkReductionProof, hostAtStart: monitor.snapshot()
+    harnessChecksum: sha(readFileSync(new URL(import.meta.url))), summaryPublisherChecksum: sha(readFileSync(SUMMARY_PUBLISHER_SOURCE)), fixedProof: run.fixedProof, targetedWorkReductionProof: run.targetedWorkReductionProof, hostAtStart: monitor.snapshot()
   };
 }
 
@@ -738,51 +730,6 @@ function sha(value) { return createHash("sha256").update(value).digest("hex"); }
 function shaText(value) { return sha(Buffer.from(value)); }
 function errorRecord(error) { return { name: error?.name ?? "Error", message: String(error?.message ?? error), stack: error?.stack ?? null }; }
 function writeJson(directory, name, value) { writeFileSync(path.join(directory, name), `${JSON.stringify(value, null, 2)}\n`, "utf8"); }
-function withManifestIntegrity(summary, pass) {
-  return {
-    ...summary,
-    ready: summary.ready === true && pass === true,
-    acceptance: {
-      ...summary.acceptance,
-      incrementalAccepted: summary.acceptance?.incrementalAccepted === true && pass === true,
-      absoluteReleaseAccepted: summary.acceptance?.absoluteReleaseAccepted === true && pass === true,
-      accepted: summary.acceptance?.accepted === true && pass === true
-    },
-    lifecycle: { ...summary.lifecycle, finalizationPass: summary.lifecycle?.finalizationPass !== false && pass === true, checksumManifestPass: pass === true }
-  };
-}
-
-function finalizeChecksummedSummary(summary, { writeSummary, writeManifest, writeFailure }) {
-  const candidate = withManifestIntegrity(summary, true);
-  writeSummary(candidate);
-  try {
-    writeManifest();
-    return { summary: candidate, error: null, retryError: null, retentionErrors: [] };
-  } catch (error) {
-    const failure = { step: "sha256-manifest", name: error?.name ?? "Error", message: String(error?.message ?? error), stack: error?.stack ?? null };
-    const downgraded = withManifestIntegrity(summary, false);
-    const retentionErrors = [];
-    try { writeSummary(downgraded); }
-    catch (downgradeError) { retentionErrors.push({ step: "matrix-summary-downgrade", name: downgradeError?.name ?? "Error", message: String(downgradeError?.message ?? downgradeError), stack: downgradeError?.stack ?? null }); }
-    try { writeFailure(failure); }
-    catch (retentionError) { retentionErrors.push({ step: "checksum-failure-record", name: retentionError?.name ?? "Error", message: String(retentionError?.message ?? retentionError), stack: retentionError?.stack ?? null }); }
-    if (retentionErrors.some((retentionError) => retentionError.step === "matrix-summary-downgrade")) {
-      const fatal = new AggregateError([error, ...retentionErrors.map((record) => new Error(record.step + ": " + record.message))], "Checksum failure occurred and the authoritative summary downgrade could not be retained.");
-      fatal.summary = downgraded;
-      throw fatal;
-    }
-    try {
-      writeManifest();
-      return { summary: downgraded, error: failure, retryError: null, retentionErrors };
-    } catch (retryError) {
-      const retryFailure = { step: "sha256-manifest-retry", name: retryError?.name ?? "Error", message: String(retryError?.message ?? retryError), stack: retryError?.stack ?? null };
-      try { writeFailure(retryFailure); }
-      catch (retentionError) { retentionErrors.push({ step: "checksum-retry-failure-record", name: retentionError?.name ?? "Error", message: String(retentionError?.message ?? retentionError), stack: retentionError?.stack ?? null }); }
-      return { summary: downgraded, error: failure, retryError: retryFailure, retentionErrors };
-    }
-  }
-}
-
 function writeChecksums(directory) { writeJson(directory, "sha256.json", readdirSync(directory).filter((name) => name !== "sha256.json").sort().map((name) => ({ name, sha256: sha(readFileSync(path.join(directory, name))) }))); }
 function verifyChecksums(directory) {
   const manifest = JSON.parse(readFileSync(path.join(directory, "sha256.json"), "utf8"));

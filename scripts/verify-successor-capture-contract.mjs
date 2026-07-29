@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
+import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/checksummed-summary-publisher.mjs";
 
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
 const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
   "targetedVerifierPaths", "acceptedBaselineIdentity", "validateCaptureAttribution",
-  "successorAcceptance", "withManifestIntegrity", "finalizeChecksummedSummary"
+  "successorAcceptance"
 ]);
 
 assert.equal(helpers.commandPairReady({
@@ -223,36 +226,78 @@ assert.deepEqual(
 assert.equal(absoluteClean.absoluteReleaseAccepted, true, "Absolute release must pass when incremental gates and all absolute budgets pass.");
 assert.equal(absoluteClean.accepted, true, "Selected absolute-release mode must accept the clean verdict.");
 
-const summaryBeforeManifest = { ready: true, acceptance: { incrementalAccepted: true, absoluteReleaseAccepted: true, accepted: true }, lifecycle: {} };
-const summaryWrites = [];
-const manifestFailures = [];
-let manifestWriteCount = 0;
-const failedFinalization = helpers.finalizeChecksummedSummary(summaryBeforeManifest, {
-  writeSummary: (summary) => summaryWrites.push(summary),
-  writeManifest: () => { manifestWriteCount += 1; if (manifestWriteCount === 1) throw new Error("injected checksum write failure"); },
-  writeFailure: (failure) => manifestFailures.push(failure)
-});
-assert.equal(failedFinalization.summary.ready, false, "Checksum failure must downgrade authoritative readiness.");
-assert.equal(failedFinalization.summary.acceptance.accepted, false, "Checksum failure must downgrade the selected verdict.");
-assert.equal(failedFinalization.summary.lifecycle.checksumManifestPass, false);
-assert.equal(summaryWrites.at(-1).ready, false, "The last retained summary must be the downgraded summary.");
-assert.equal(manifestFailures.length, 1, "Checksum failure evidence must be retained where writable.");
-assert.equal(manifestWriteCount, 2, "Finalization must retry a manifest over the downgraded summary.");
+const summaryBeforeManifest = { ready: true, acceptance: { incrementalAccepted: true, absoluteReleaseAccepted: true, accepted: true }, lifecycle: { finalizationPass: true } };
+const publicationDirectories = [];
 
-const retainedDowngrade = helpers.finalizeChecksummedSummary(summaryBeforeManifest, {
-  writeSummary: (summary) => summaryWrites.push(summary),
-  writeManifest: (() => { let count = 0; return () => { count += 1; if (count === 1) throw new Error("injected manifest failure"); }; })(),
-  writeFailure: () => { throw new Error("injected failure-record write failure"); }
-});
-assert.equal(retainedDowngrade.summary.ready, false, "Failure-record errors must not prevent the summary downgrade.");
-assert.equal(retainedDowngrade.retentionErrors[0].step, "checksum-failure-record");
+function publicationFixture(label) {
+  const directory = mkdtempSync(path.join(tmpdir(), `wargus-summary-${label}-`));
+  publicationDirectories.push(directory);
+  writeFileSync(path.join(directory, "artifact.json"), "{\"retained\":true}\n", "utf8");
+  return directory;
+}
 
-let downgradeWriteCount = 0;
-assert.throws(() => helpers.finalizeChecksummedSummary(summaryBeforeManifest, {
-  writeSummary: () => { downgradeWriteCount += 1; if (downgradeWriteCount === 2) throw new Error("injected downgrade write failure"); },
-  writeManifest: () => { throw new Error("injected manifest failure"); },
-  writeFailure: () => {}
-}), /authoritative summary downgrade/i, "A failed downgrade write must escape to the outer finalization path.");
+function retainedSummary(directory) {
+  const file = path.join(directory, "matrix-summary.json");
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
+
+function assertNoReadySummary(directory, label) {
+  const stored = retainedSummary(directory);
+  assert.notEqual(stored?.ready, true, `${label} must not retain ready=true.`);
+  assert.notEqual(stored?.acceptance?.accepted, true, `${label} must not retain accepted=true.`);
+  assert.notEqual(stored?.lifecycle?.checksumManifestPass, true, `${label} must not retain checksumManifestPass=true.`);
+}
+
+function runPublicationFailure(label, mutateOperations, { staleTemp = false, failFailureWriter = false } = {}) {
+  const directory = publicationFixture(label);
+  if (staleTemp) writeFileSync(path.join(directory, ".wargus-summary-publish-stale.tmp"), "stale", "utf8");
+  const operations = mutateOperations({ ...summaryPublicationOperations });
+  const result = publishChecksummedSummary(directory, summaryBeforeManifest, {
+    operations,
+    writeFailure: (failures) => {
+      if (failFailureWriter) throw new Error("injected failure-record writer failure");
+      writeFileSync(path.join(directory, "finalization-errors.json"), `${JSON.stringify(failures, null, 2)}\n`, "utf8");
+    }
+  });
+  assert.equal(result.published, false, `${label} must report failed publication.`);
+  assertNoReadySummary(directory, label);
+  return { directory, result };
+}
+
+const successfulDirectory = publicationFixture("success");
+const successfulPublication = publishChecksummedSummary(successfulDirectory, summaryBeforeManifest);
+assert.equal(successfulPublication.published, true);
+assert.equal(retainedSummary(successfulDirectory).ready, true);
+assert.deepEqual(readdirSync(successfulDirectory).sort(), ["artifact.json", "matrix-summary.json", "sha256.json"]);
+const successfulManifest = JSON.parse(readFileSync(path.join(successfulDirectory, "sha256.json"), "utf8"));
+assert.deepEqual(successfulManifest.map((record) => record.name), ["artifact.json", "matrix-summary.json"]);
+for (const record of successfulManifest) {
+  const actual = createHash("sha256").update(readFileSync(path.join(successfulDirectory, record.name))).digest("hex");
+  assert.equal(record.sha256, actual, `Successful manifest hash must match ${record.name}.`);
+}
+
+runPublicationFailure("manifest-construction", (operations) => ({ ...operations, constructManifest: () => { throw new Error("injected manifest construction failure"); } }));
+runPublicationFailure("manifest-write", (operations) => ({ ...operations, writeTemp: (request) => { if (request.phase === "manifest") throw new Error("injected manifest temp write failure"); return summaryPublicationOperations.writeTemp(request); } }));
+runPublicationFailure("manifest-verification", (operations) => ({ ...operations, verifyManifest: () => { throw new Error("injected projected manifest verification failure"); } }));
+const manifestRenameFailure = runPublicationFailure("manifest-rename", (operations) => ({ ...operations, renameTemp: (request) => { if (request.phase === "manifest") { summaryPublicationOperations.renameTemp(request); throw new Error("injected post-manifest-rename failure"); } return summaryPublicationOperations.renameTemp(request); } }));
+assert.equal(existsSync(path.join(manifestRenameFailure.directory, "sha256.json")), true, "A post-rename failure may leave the manifest published, but the retained summary must remain non-ready.");
+const readyRenameFailure = runPublicationFailure("ready-summary-rename", (operations) => ({ ...operations, renameTemp: (request) => { if (request.phase === "ready-summary") throw new Error("injected ready-summary rename failure"); return summaryPublicationOperations.renameTemp(request); } }));
+assert.equal(existsSync(path.join(readyRenameFailure.directory, "sha256.json")), true, "Ready rename failure occurs after manifest publication.");
+const invalidReadyManifest = JSON.parse(readFileSync(path.join(readyRenameFailure.directory, "sha256.json"), "utf8"));
+const projectedSummaryHash = invalidReadyManifest.find((record) => record.name === "matrix-summary.json").sha256;
+const retainedSummaryHash = createHash("sha256").update(readFileSync(path.join(readyRenameFailure.directory, "matrix-summary.json"))).digest("hex");
+assert.notEqual(projectedSummaryHash, retainedSummaryHash, "A manifest published before a failed ready rename must be invalid against the retained non-ready summary.");
+const failureWriterFailure = runPublicationFailure("failure-record-writer", (operations) => ({ ...operations, constructManifest: () => { throw new Error("injected manifest construction failure"); } }), { failFailureWriter: true });
+assert.ok(failureWriterFailure.result.failures.some((failure) => failure.step === "checksummed-summary-failure-record"));
+const cleanupFailure = runPublicationFailure("cleanup", (operations) => ({ ...operations, cleanupTemp: () => { throw new Error("injected owned-temp cleanup failure"); } }), { staleTemp: true });
+assert.ok(cleanupFailure.result.failures.some((failure) => failure.step === "checksummed-summary-temp-cleanup"));
+const fatalCombinedFailure = runPublicationFailure("fatal-combined", (operations) => ({ ...operations, cleanupTemp: () => { throw new Error("injected cleanup failure"); }, renameTemp: (request) => { if (request.phase === "ready-summary") throw new Error("injected ready-summary rename failure"); return summaryPublicationOperations.renameTemp(request); } }), { failFailureWriter: true });
+assert.equal(existsSync(path.join(fatalCombinedFailure.directory, "sha256.json")), true, "The fatal combined probe must reach manifest publication.");
+assertNoReadySummary(fatalCombinedFailure.directory, "fatal combined reviewer probe");
+assert.ok(fatalCombinedFailure.result.failures.some((failure) => failure.step === "checksummed-summary-temp-cleanup"));
+assert.ok(fatalCombinedFailure.result.failures.some((failure) => failure.step === "checksummed-summary-failure-record"));
+
+for (const directory of publicationDirectories) rmSync(directory, { recursive: true, force: true });
 
 assert.throws(() => helpers.successorAcceptance({
   mode: "wrong",
