@@ -165,7 +165,8 @@ for (const fragment of [
   "sourceScreenPointIsInPlayableViewport(event.clientX, event.clientY)",
   "function sourceScreenPointIsInPlayableViewport",
   "sourceScreenPointIsInViewport(world, app.screen.width, app.screen.height, screenX, screenY)",
-  "handleWorldPointerDown(world, point.worldPoint.x, point.worldPoint.y",
+  "dispatchWorldPointerInput(point.worldPoint.x, point.worldPoint.y",
+  "handleWorldPointerDown(world, x, y, input, selectedUnitIds, pendingWorldCommand)",
   "pointerWorldPosition = pointerScreenPosition ? worldPointForScreenPosition"
 ]) {
   expect(main.includes(fragment), `main missing viewport pointer fragment: ${fragment}`);
