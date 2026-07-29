@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const manifest = JSON.parse(readFileSync("public/wargus/manifest.json", "utf8"));
@@ -91,10 +91,27 @@ for (const fragment of [
   }
 }
 
-const sourceRoot = "/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src";
-const mouseSource = readFileSync(path.join(sourceRoot, "ui/mouse.cpp"), "utf8");
-const interfaceSource = readFileSync(path.join(sourceRoot, "ui/interface.cpp"), "utf8");
-const mainScreenSource = readFileSync(path.join(sourceRoot, "ui/mainscr.cpp"), "utf8");
+const sourceRoot = process.env.WARGUS_ORIGINAL_SOURCE_ROOT;
+if (!sourceRoot?.trim()) {
+  console.error("WARGUS_ORIGINAL_SOURCE_ROOT must name a readable Stratagus source root.");
+  process.exit(1);
+}
+const sourceFiles = {
+  mouse: path.join(sourceRoot, "src/ui/mouse.cpp"),
+  interface: path.join(sourceRoot, "src/ui/interface.cpp"),
+  mainScreen: path.join(sourceRoot, "src/ui/mainscr.cpp")
+};
+for (const sourceFile of Object.values(sourceFiles)) {
+  try {
+    accessSync(sourceFile, constants.R_OK);
+  } catch {
+    console.error(`WARGUS_ORIGINAL_SOURCE_ROOT requires a readable source file: ${sourceFile}`);
+    process.exit(1);
+  }
+}
+const mouseSource = readFileSync(sourceFiles.mouse, "utf8");
+const interfaceSource = readFileSync(sourceFiles.interface, "utf8");
+const mainScreenSource = readFileSync(sourceFiles.mainScreen, "utf8");
 for (const fragment of [
   "UI.Resources[FreeWorkersCount].TextX != -1",
   "ButtonUnderCursor = ButtonUnderFreeWorkers",
