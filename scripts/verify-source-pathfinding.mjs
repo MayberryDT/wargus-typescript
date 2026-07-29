@@ -1,8 +1,27 @@
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
+import path from "node:path";
 
-const sourcePathfinder = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/pathfinder/pathfinder.cpp", "utf8");
-const sourceAstar = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/pathfinder/astar.cpp", "utf8");
-const sourceMove = readFileSync("/home/tyler/Documents/Codex/2026-04-24/files-mentioned-by-the-user-setup/stratagus-src/src/action/action_move.cpp", "utf8");
+const sourceRoot = process.env.WARGUS_ORIGINAL_SOURCE_ROOT;
+if (!sourceRoot?.trim()) {
+  console.error("WARGUS_ORIGINAL_SOURCE_ROOT must name a readable Stratagus source root.");
+  process.exit(1);
+}
+const sourceFiles = {
+  pathfinder: path.join(sourceRoot, "src/pathfinder/pathfinder.cpp"),
+  astar: path.join(sourceRoot, "src/pathfinder/astar.cpp"),
+  move: path.join(sourceRoot, "src/action/action_move.cpp")
+};
+for (const sourceFile of Object.values(sourceFiles)) {
+  try {
+    accessSync(sourceFile, constants.R_OK);
+  } catch {
+    console.error("WARGUS_ORIGINAL_SOURCE_ROOT requires a readable source file: " + sourceFile);
+    process.exit(1);
+  }
+}
+const sourcePathfinder = readFileSync(sourceFiles.pathfinder, "utf8");
+const sourceAstar = readFileSync(sourceFiles.astar, "utf8");
+const sourceMove = readFileSync(sourceFiles.move, "utf8");
 const pathfindingSource = readFileSync("src/simulation/pathfinding.ts", "utf8");
 const passabilitySource = readFileSync("src/simulation/passability.ts", "utf8");
 const ordersSource = readFileSync("src/simulation/orders.ts", "utf8");
