@@ -642,9 +642,10 @@ predecessor.
 
 ### Step 0: Prove the Wave 4 gate and freeze direct baselines
 
-Confirm Plans 022 and 023 passed all focused, shared-budget, browser,
-determinism, durability, and review exit gates and integrated. Verify technical
-Plans 018/019/020/023 and their accepted artifacts/checksums/fingerprints.
+Confirm Plans 022 and 023 satisfied `incrementalReady`, passed all focused,
+browser, determinism, durability, and review exit gates, and integrated.
+Verify technical Plans 018/019/020/023 and their accepted artifacts,
+checksums/fingerprints.
 Run refreshed drift checks and all pre-existing non-browser baseline commands.
 Do not invoke `verify-pathfinding-budget.mjs` or `verify-x12-first-tick.mjs`
 until its owning step has created a meaningful red fixture.

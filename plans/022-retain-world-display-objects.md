@@ -359,7 +359,7 @@ IDs is required after warm-up; creation may scale only with entrances, births,
 record-shape changes that cannot be updated, and bounded-pool misses.
 
 **Verify:** visual/preparation/determinism gates, bounds, and counter semantics
-hold; assigned budgets pass; evidence is durable and checksum-verified.
+hold; `incrementalReady` passes; evidence is durable and checksum-verified.
 
 ## Test plan
 
@@ -477,7 +477,8 @@ on `/tmp` as durable evidence.
 - Any focused, preparation, type, browser, determinism, asset, or build gate
   fails twice.
 - Halla/browser qualification fails, another capture is active, a trial
-  exhausts replacement, a budget fails, or frame p95 regresses over 5%.
+  exhausts replacement, a new budget-failure key appears, or frame p95
+  regresses over 5%.
 - Durable single-file evidence or checksums cannot be verified.
 
 ## Rollback

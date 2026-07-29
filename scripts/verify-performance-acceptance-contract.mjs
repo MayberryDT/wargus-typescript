@@ -32,7 +32,7 @@ assert.match(performanceContract, /absoluteReleaseReady =\n  incrementalReady\n 
 
 for (const [file, plan] of detailedPlans) {
   assert.match(plan, /incrementalReady =\n  captureComplete\n  && validityAndComparabilityPass\n  && fixedTickPass\n  && noNewBudgetFailuresPass\n  && frameP95RegressionPass\n  && targetedWorkReductionProofPass\n  && cleanupAndIntegrityPass/, `${file} must use the incremental algorithm verbatim.`);
-  assert.doesNotMatch(plan, /(?:every\s+(?:assigned|applicable|unchanged|shared)\s+budget(?:s)?\s+must\s+pass|shared budgets pass|assigned shared budget passes)/i, `${file} retains stale absolute-budget closure language.`);
+  assert.doesNotMatch(plan, /(?:every\s+(?:assigned|applicable|unchanged|shared)\s+budget(?:s)?\s+must\s+pass|shared budgets pass|assigned shared budget passes|assigned budgets pass|a budget fails)/i, `${file} retains stale absolute-budget closure language.`);
 }
 
 assert.match(hallaPolicy, /Wave 2.*incremental/i);
