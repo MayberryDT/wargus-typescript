@@ -25,7 +25,7 @@ let chrome = null;
 let client = null;
 
 try {
-  await waitForHttp(URL, 20_000);
+  await execution.waitForHttp(URL, 20_000);
   await execution.releasePort(DEBUG_PORT);
   chrome = execution.spawnOwned(CHROME, [
     "--headless=new",
@@ -36,7 +36,7 @@ try {
     `--remote-debugging-port=${DEBUG_PORT}`,
     "about:blank"
   ], { stdio: "ignore" });
-  await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
+  await execution.waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   client = await connectDevTools(target.webSocketDebuggerUrl);
   const pageErrors = [];

@@ -5,7 +5,6 @@ import {
   connectDevTools,
   removeProfile,
   startChrome,
-  stopProcess,
   waitForExpression,
   waitForHttp,
   waitForPageTarget
@@ -31,11 +30,11 @@ let chrome = null;
 let chromeProfile = null;
 
 try {
-  await waitForHttp(URL, 20_000);
+  await execution.waitForHttp(URL, 20_000);
   const chromeStart = await startChrome({ controller: execution, chromeBin: CHROME, debugPort: DEBUG_PORT, profilePrefix: "wargus-map-smoke-chrome-" });
   chrome = chromeStart.child;
   chromeProfile = chromeStart.profilePath;
-  await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
+  await execution.waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`, 10_000);
   const target = await waitForPageTarget(`http://127.0.0.1:${DEBUG_PORT}/json/list`, 10_000);
   const client = await connectDevTools(target.webSocketDebuggerUrl);
   const pageErrors = [];

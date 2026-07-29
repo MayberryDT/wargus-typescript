@@ -28,7 +28,7 @@ try {
     cwd: process.cwd(),
     stdio: "ignore"
   });
-  await waitForHttp(URL, 5_000);
+  await execution.waitForHttp(URL, 5_000);
   const manifestResponse = await fetch(`http://127.0.0.1:${PORT}/wargus/manifest.json`);
   if (!manifestResponse.ok) throw new Error(`Critical asset /wargus/manifest.json returned HTTP ${manifestResponse.status}.`);
   browserServer = await chromium.launchServer({

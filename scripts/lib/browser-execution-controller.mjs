@@ -1,15 +1,14 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createServer, connect } from "node:net";
 import { once } from "node:events";
-import { existsSync, realpathSync, statfsSync } from "node:fs";
+import { existsSync, realpathSync, statfsSync, statSync, mkdirSync, writeFileSync, accessSync, constants, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const DEFAULT_PORT_CANDIDATES = Array.from({ length: 1024 }, (_, index) => 55_000 + index);
-const SOFTWARE_RENDERER = /swiftshader|llvmpipe|software rasterizer|mesa offscreen/i;
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|software|mesa offscreen/i;
 
 export class BrowserExecutionController {
-  static validCaptureHasDurationCeiling = false;
-
   constructor({ name = "browser-verifier", portCandidates = DEFAULT_PORT_CANDIDATES, host = "127.0.0.1", now = () => Date.now() } = {}) {
     this.name = name;
     this.portCandidates = [...portCandidates];
@@ -76,11 +75,20 @@ export class BrowserExecutionController {
   }
 
   spawnOwned(command, args, options = {}) {
+    this.ensureResourceMonitoring();
     const child = spawn(command, args, { ...options, detached: false });
     this.ownedRoots.add(child.pid);
     this.ownedPids.add(child.pid);
     this.lifecycleLedger.push({ event: "spawn", pid: child.pid, command, at: this.now() });
     return child;
+  }
+
+  async waitForHttp(url) {
+    return waitForReadiness({
+      probe: async () => {
+        try { const response = await fetch(url); return { ready: response.ok, progress: `http-${response.status}` }; } catch { return { ready: false, progress: "connection" }; }
+      }
+    });
   }
 
   async startViteServer({ port, mode = "dev", stdio = "ignore" }) {
@@ -105,8 +113,15 @@ export class BrowserExecutionController {
     return this.spawnOwned(chromeBin, args, { stdio });
   }
 
+  ensureResourceMonitoring() {
+    if (!this.resourceMonitor) {
+      this.resourceMonitor = new ResourceMonitor({ controller: this });
+      this.resourceMonitor.start();
+    }
+  }
+
   trackOwnedPid(pid) {
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Invalid owned PID: .`);
+    if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Invalid owned PID: ${pid}.`);
     this.ownedRoots.add(pid);
     this.ownedPids.add(pid);
     this.lifecycleLedger.push({ event: "track", pid, at: this.now() });
@@ -146,8 +161,11 @@ export class BrowserExecutionController {
       await this.releasePort(port);
       if (await isPortOpen(port, this.host)) openPorts.push(port);
     }
-    const result = { terminated: orderedPids.filter((pid) => !isAlive(pid)), residualPids, openPorts };
+    const result = { terminationOrder: orderedPids, terminated: orderedPids.filter((pid) => !isAlive(pid)), residualPids, openPorts };
+    this.lastCleanup = result;
     this.lifecycleLedger.push({ event: "cleanup", ...result, at: this.now() });
+    await this.resourceMonitor?.stop({ cleanup: result });
+    if (residualPids.length > 0 || openPorts.length > 0) throw new Error(`Owned cleanup incomplete: residual PIDs=${residualPids.join(",") || "none"}; open ports=${openPorts.join(",") || "none"}.`);
     return result;
   }
 }
@@ -188,28 +206,54 @@ export function collectHostMetrics(workspace = process.cwd()) {
 }
 
 export class ResourceMonitor {
-  constructor({ controller, workspace = process.cwd(), sample = () => collectHostMetrics(workspace), writeRecord = () => {} } = {}) {
+  constructor({ controller, workspace = process.cwd(), sample = () => collectHostMetrics(workspace), writeRecord = () => {}, intervalMs = 5_000 } = {}) {
     this.controller = controller;
     this.sample = sample;
     this.writeRecord = writeRecord;
+    this.intervalMs = intervalMs;
     this.records = [];
+    this.timer = null;
+  }
+
+  start() {
+    if (this.timer) return;
+    this.record("pre");
+    this.timer = setInterval(() => { void this.poll(); }, this.intervalMs);
+    this.timer.unref?.();
+  }
+
+  async stop({ cleanup } = {}) {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    const record = this.record("post");
+    if (cleanup) this.writeRecord({ phase: "cleanup", cleanup, metrics: record.metrics });
+    return record;
+  }
+
+  record(phase) {
+    const metrics = this.sample();
+    const record = { phase, metrics };
+    this.records.push(record);
+    this.writeRecord(record);
+    return record;
   }
 
   async poll() {
-    const metrics = this.sample();
-    this.records.push(metrics);
+    const record = this.record("during");
+    const { metrics } = record;
     const reason = metrics.memory.availableBytes < 2 * 1024 ** 3 ? "MemAvailable below 2 GiB"
       : metrics.memory.swapUsedBytes > 8 * 1024 ** 3 ? "swap used above 8 GiB"
         : metrics.diskFreeBytes < 20 * 1024 ** 3 ? "workspace disk free below 20 GiB" : null;
     if (!reason) return { aborted: false, metrics };
     const cleanup = await this.controller.cleanup();
-    const record = { aborted: true, reason, metrics, cleanup };
-    this.writeRecord(record);
-    return record;
+    await this.stop({ cleanup });
+    const result = { aborted: true, reason, metrics, cleanup };
+    this.writeRecord(result);
+    return result;
   }
 }
 
-export function preflightArtifactRoot({ artifactWorkspace = process.env.WARGUS_ARTIFACT_WORKSPACE, artifactRoot = process.env.WARGUS_ARTIFACT_ROOT, disposableWorktree = process.cwd(), preservationOwner } = {}) {
+export function legacyPreflightArtifactRoot({ artifactWorkspace = process.env.WARGUS_ARTIFACT_WORKSPACE, artifactRoot = process.env.WARGUS_ARTIFACT_ROOT, disposableWorktree = process.cwd(), preservationOwner } = {}) {
   if (!artifactWorkspace || !artifactRoot || !preservationOwner) throw new Error("Artifact workspace, root, and preservation owner are required before capture.");
   if (!existsSync(artifactRoot)) throw new Error(`Artifact root does not exist: ${artifactRoot}`);
   const workspaceRealpath = realpathSync(artifactWorkspace);
@@ -250,4 +294,45 @@ function isPortOpen(port, host) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+export function preflightArtifactRoot({ artifactWorkspace = process.env.WARGUS_ARTIFACT_WORKSPACE, artifactRoot = process.env.WARGUS_ARTIFACT_ROOT, disposableWorktree = process.cwd(), preservationOwner } = {}) {
+  if (!artifactWorkspace || !artifactRoot || !preservationOwner) throw new Error("Artifact workspace, root, and preservation owner are required before capture.");
+  const workspaceRealpath = realpathSync(artifactWorkspace);
+  const expectedRoot = path.join(workspaceRealpath, ".artifacts");
+  if (path.resolve(artifactRoot) !== expectedRoot) throw new Error("Artifact root must be exactly the retained workspace .artifacts directory.");
+  if (!existsSync(expectedRoot) || !statSync(expectedRoot).isDirectory()) throw new Error("Artifact root must be an existing directory.");
+  accessSync(expectedRoot, constants.W_OK);
+  const stats = statfsSync(expectedRoot);
+  if (Number(stats.bavail) * Number(stats.bsize) < 20 * 1024 ** 3) throw new Error("Artifact root has less than 20 GiB free.");
+  const rootRealpath = realpathSync(expectedRoot);
+  if (!path.relative(realpathSync(disposableWorktree), rootRealpath).startsWith("..")) throw new Error("Artifact root must be outside the disposable worktree.");
+  execFileSync("git", ["-C", workspaceRealpath, "check-ignore", "-q", ".artifacts/performance/026/probe/file.json"], { stdio: "ignore" });
+  return { artifactWorkspace: workspaceRealpath, artifactRoot: rootRealpath, preservationOwner };
+}
+
+export function createArtifactDirectory({ preflight, plan, commit, stamp }) {
+  if (!preflight || !plan || !commit || !stamp) throw new Error("Artifact plan, commit, stamp, and preflight are required.");
+  const directory = path.join(preflight.artifactRoot, "performance", plan, commit, stamp);
+  mkdirSync(directory, { recursive: true });
+  return { directory, logicalPath: path.posix.join(".artifacts", "performance", plan, commit, stamp) };
+}
+
+export function writeArtifactRecord({ directory, name, record }) {
+  if (!directory || !name || !name.endsWith(".json")) throw new Error("Artifact JSON directory and name are required.");
+  const file = path.join(directory, name);
+  writeFileSync(file, JSON.stringify(record, null, 2) + "\n", "utf8");
+  return { file, sha256: createHash("sha256").update(readFileSync(file)).digest("hex") };
+}
+
+export async function runCapture({ readFrame, shouldStop, sleep = delay, intervalMs = 250 }) {
+  let frames = 0;
+  for (;;) {
+    const frame = await readFrame();
+    if (!frame?.rafAdvanced) throw new Error("Capture requires advancing RAF.");
+    frames += 1;
+    if (await shouldStop(frame, frames)) return { frames, stop: "protocol" };
+    await sleep(intervalMs);
+  }
 }

@@ -17,7 +17,7 @@ try {
     cwd: process.cwd(),
     stdio: "ignore"
   });
-  await waitForHttp(URL, 5_000);
+  await execution.waitForHttp(URL, 5_000);
   browserServer = await chromium.launchServer({
     executablePath: process.env.CHROME_BIN || undefined,
     headless: true,
