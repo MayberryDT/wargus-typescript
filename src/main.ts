@@ -3858,7 +3858,9 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (world && manifest && selectedUnitIds.length > 0) {
+    const selectionHotkeyInputToken = runtimePerformanceCollector.beginInput(performance.now());
     const result = executeSelectionHotkey(world, manifest, event.code, selectedUnitIds, commandPage, pendingWorldCommand, { shiftKey: event.shiftKey });
+    runtimePerformanceCollector.finishInput(selectionHotkeyInputToken, performance.now());
     if (result.handled) {
       event.preventDefault();
       commandPage = result.commandPage;
