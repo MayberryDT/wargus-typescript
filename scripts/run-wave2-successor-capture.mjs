@@ -7,7 +7,7 @@ import { cleanupDisposableWorktree } from "./lib/disposable-worktree-cleanup.mjs
 const CAPTURES = Object.freeze({
   "019": Object.freeze({ targetSha: "5935a17f456868051c2c16b2f0d8d2b4da56d115", rows: "3,5,7" }),
   "020": Object.freeze({ targetSha: "9bab6b0e3f7d260148cc1c0f5c1c231098046e19", rows: "6" }),
-  "021": Object.freeze({ targetSha: "28de0d62a14a4d84faa07727a79d624244bcf61a", rows: "3,4,6" })
+  "021": Object.freeze({ targetSha: "a97eae19fff6516eff7bb3b582d35923d9f67992", rows: "3,4,6" })
 });
 
 function canonicalSuccessorIdentity(planId, acceptanceMode = process.env.WARGUS_PERF_ACCEPTANCE_MODE) {
