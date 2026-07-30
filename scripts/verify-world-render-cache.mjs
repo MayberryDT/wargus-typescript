@@ -54,6 +54,10 @@ assert.match(rendererSource, /shapeKeyOf: \(building\) => unitAtlases\.has\(buil
 assert.match(rendererSource, /function drawLastSeenBuildingVisual[\s\S]*takeLastSeenBuildingSprite[\s\S]*takeLastSeenBuildingGraphics/, "Last-seen visuals must update retained Sprite and Graphics slots");
 assert.match(rendererSource, /function takeLastSeenBuildingGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Last-seen fallback Graphics must register for immediate-layer preservation");
 assert.match(rendererSource, /disposeRetainedWorldRenderCache\(layer: Container\)[\s\S]*retainedLastSeenBuildings\.delete\(layer\)/, "Exact cache disposal must clear the last-seen prepared-list memo");
+assert.equal((rendererSource.match(/kind: "corpse"/g) ?? []).length, 1, "Corpses must reconcile exactly once for both draw strata");
+assert.match(rendererSource, /kind: "corpse"[\s\S]*liveKeys: new Set\(world\.corpses\.map\(\(corpse\) => corpse\.id\)\)[\s\S]*keyOf: \(corpse\) => corpse\.id/, "Corpse lifecycle must use stable corpse IDs");
+assert.match(rendererSource, /function takeCorpseGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Corpse fallback Graphics must register for immediate-layer preservation");
+assert.match(rendererSource, /shapeKeyOf: \(corpse\) => \{[\s\S]*"corpse-sprite-v1" : "corpse-graphics-v1"/, "Corpse shape key must distinguish Sprite and fallback Graphics records");
 
 const sourceFile = ts.createSourceFile("worldRenderCache.ts", cacheSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const executableSource = sourceFile.statements
@@ -71,7 +75,11 @@ const retainedLastSeenFunctionNames = new Set([
   "drawLastSeenBuildings",
   "drawLastSeenBuildingVisual",
   "takeLastSeenBuildingGraphics",
-  "takeLastSeenBuildingSprite"
+  "takeLastSeenBuildingSprite",
+  "drawCorpses",
+  "drawCorpseVisual",
+  "takeCorpseGraphics",
+  "takeCorpseSprite"
 ]);
 const retainedLastSeenExecutable = rendererFile.statements
   .filter((statement) => ts.isFunctionDeclaration(statement) && statement.name && retainedLastSeenFunctionNames.has(statement.name.text))
@@ -86,11 +94,11 @@ const loadRetainedLastSeenRenderer = Function(
   `const { ${[
     "beginRetainedUnitRender", "circleIntersectsViewport", "compareLastSeenBuildingDrawOrder", "createRetainedWorldDisplayRecord",
     "createTrackedGraphics", "createTrackedSprite", "detachRetainedWorldDisplayRecord", "destroyRetainedWorldDisplayRecord",
-    "finishRetainedUnitRender", "getFrameTexture", "getLastSeenBuildingFrameNumber", "isLastSeenBuildingVisible",
-    "reconcileWorldRenderKind", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
+    "finishRetainedUnitRender", "getCorpseFrameNumber", "getFrameTexture", "getLastSeenBuildingFrameNumber", "isLastSeenBuildingVisible",
+    "reconcileWorldRenderKind", "retainedCorpseStrata", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
     "retainedWorldDisplayRoots", "retainedWorldRenderCacheFor", "sourceLastSeenFancyBuildingMirror", "spriteDirectionForFacing",
     "takeRetainedRenderSlot"
-  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawLastSeenBuildings };`
+  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawCorpses, drawLastSeenBuildings };`
 );
 
 const trackerFile = ts.createSourceFile("displayObjectPerformance.ts", trackerSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -254,12 +262,14 @@ tracked.setDisplayObjectPerformanceCapture(false);
 tracked.resetDisplayObjectPerformance();
 tracked.setDisplayObjectPerformanceCapture(true);
 const lastSeenPrepared = new WeakMap();
+const corpsePrepared = new WeakMap();
 const lastSeenRoots = new WeakSet();
 const lastSeenCaches = new WeakMap();
 const lastSeenResources = new WeakMap();
 let nextLastSeenResourceId = 1;
 let lastSeenReconciliations = 0;
 let currentLastSeenFrame = 0;
+let currentCorpseFrame = 0;
 const createLastSeenRecord = () => {
   const root = tracked.createTrackedContainer();
   lastSeenRoots.add(root);
@@ -299,6 +309,7 @@ const retainedLastSeen = loadRetainedLastSeenRenderer({
   detachRetainedWorldDisplayRecord: detachLastSeenRecord,
   destroyRetainedWorldDisplayRecord: destroyLastSeenRecord,
   finishRetainedUnitRender: finishLastSeenRender,
+  getCorpseFrameNumber: (corpse) => corpse.animation ? currentCorpseFrame : null,
   getFrameTexture: (_atlas, frame) => frame === 0 ? Texture.WHITE : Texture.EMPTY,
   getLastSeenBuildingFrameNumber: () => currentLastSeenFrame,
   isLastSeenBuildingVisible: (_world, building) => building.visible === true,
@@ -306,6 +317,7 @@ const retainedLastSeen = loadRetainedLastSeenRenderer({
     lastSeenReconciliations += 1;
     return reconcileWorldRenderKind(options);
   },
+  retainedCorpseStrata: corpsePrepared,
   retainedLastSeenBuildings: lastSeenPrepared,
   retainedRenderResourceId: (resource) => {
     if (!resource) return 0;
@@ -415,6 +427,109 @@ for (const [layer, cache] of [[primaryLastSeenLayer, lastSeenCaches.get(primaryL
 assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Production last-seen split/world-replacement disposal must return tracked live delta to zero");
 tracked.setDisplayObjectPerformanceCapture(false);
 
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const corpse = (id, drawLevel, typeId, overrides = {}) => ({
+  id, drawLevel, typeId, player: 0, x: drawLevel, y: drawLevel, radius: 12,
+  visibleUnderFog: true, facing: 4, animation: typeId === "sprite" ? "death" : null,
+  age: 0.25, duration: 1, ...overrides
+});
+let corpseBelow40 = [corpse("lower-corpse-sprite", 10, "sprite"), corpse("lower-corpse-fallback", 20, "fallback")];
+let corpseAtLeast40 = [corpse("upper-corpse-sprite", 40, "sprite"), corpse("upper-corpse-fallback", 50, "fallback")];
+const corpseWorld = { corpses: [...corpseBelow40, ...corpseAtLeast40], engineSettings: { gameSpeed: 30 } };
+const primaryCorpseLayer = new Container();
+const splitCorpseLayer = new Container();
+const corpseUnitSentinel = new Container();
+const drawCorpseFrame = (layer, world = corpseWorld, below40 = corpseBelow40, atLeast40 = corpseAtLeast40) => {
+  layer.removeChildren();
+  corpsePrepared.set(layer, { world, corpses: { below40, atLeast40 } });
+  retainedLastSeen.drawCorpses(layer, world, lastSeenAtlases, below40, new Map());
+  layer.addChild(corpseUnitSentinel);
+  retainedLastSeen.drawCorpses(layer, world, lastSeenAtlases, atLeast40, new Map());
+};
+const corpseReconciliationsBefore = lastSeenReconciliations;
+drawCorpseFrame(primaryCorpseLayer);
+assert.equal(lastSeenReconciliations, corpseReconciliationsBefore + 1, "Production corpse renderer must reconcile once across lower and upper calls");
+const primaryCorpseCache = lastSeenCaches.get(primaryCorpseLayer);
+const corpseRecords = primaryCorpseCache.kinds.corpse.active;
+const lowerCorpseSprite = corpseRecords.get("lower-corpse-sprite").value;
+const lowerCorpseFallback = corpseRecords.get("lower-corpse-fallback").value;
+const upperCorpseSprite = corpseRecords.get("upper-corpse-sprite").value;
+const upperCorpseFallback = corpseRecords.get("upper-corpse-fallback").value;
+assert.deepEqual(primaryCorpseLayer.children, [
+  lowerCorpseSprite.root, lowerCorpseFallback.root, lowerCorpseFallback.unitObjects.graphics[0], corpseUnitSentinel,
+  upperCorpseSprite.root, upperCorpseFallback.root, upperCorpseFallback.unitObjects.graphics[0]
+], "Production corpse renderer must preserve exact lower/unit/upper painter order");
+const retainedCorpseSprite = lowerCorpseSprite.unitObjects.sprites[0];
+assert.equal(retainedCorpseSprite.texture, Texture.WHITE, "Retained corpse Sprite must install the current frame texture");
+assert.equal(retainedCorpseSprite.anchor.x, 0.5);
+assert.equal(retainedCorpseSprite.anchor.y, 0.72);
+assert.equal(retainedCorpseSprite.position.x, 10);
+assert.equal(retainedCorpseSprite.position.y, 20);
+assert.equal(retainedCorpseSprite.scale.x, 0.72);
+assert.equal(retainedCorpseSprite.scale.y, 0.72);
+assert.equal(retainedCorpseSprite.alpha, 0.69, "Retained corpse Sprite must update age-based alpha");
+currentCorpseFrame = 1;
+corpseBelow40[0].age = 0.75;
+drawCorpseFrame(primaryCorpseLayer);
+assert.equal(corpseRecords.get("lower-corpse-sprite").value.unitObjects.sprites[0], retainedCorpseSprite, "Corpse frame change must retain Sprite identity");
+assert.equal(retainedCorpseSprite.texture, Texture.EMPTY, "Corpse frame change must update the retained Sprite texture");
+assert.ok(Math.abs(retainedCorpseSprite.alpha - 0.43) < 1e-12, "Changed corpse age must update retained Sprite alpha");
+const retainedCorpseFallback = lowerCorpseFallback.unitObjects.graphics[0];
+assert.equal(lastSeenRoots.has(retainedCorpseFallback), true, "Corpse fallback Graphics must register for immediate-layer preservation");
+assert.match(rendererSource, /shapeKeyOf: \(corpse\) => \{[\s\S]*"corpse-sprite-v1" : "corpse-graphics-v1"/, "Corpse shape key must distinguish Sprite and fallback Graphics records");
+const initialCorpseBounds = retainedCorpseFallback.getLocalBounds();
+assert.ok(initialCorpseBounds.width > 0 && initialCorpseBounds.height > 0, "Corpse fallback must draw non-empty geometry");
+Object.assign(corpseBelow40[1], { x: 80, y: 30, radius: 5, age: 0.75 });
+drawCorpseFrame(primaryCorpseLayer);
+assert.equal(corpseRecords.get("lower-corpse-fallback").value.unitObjects.graphics[0], retainedCorpseFallback, "Changed corpse fallback must retain Graphics identity");
+assert.ok(retainedCorpseFallback.getLocalBounds().minX > 70, "Changed corpse fallback must clear stale geometry before redraw");
+const corpseFallbackAlphas = retainedCorpseFallback.context.instructions.filter(({ action }) => action === "fill").map(({ data }) => data.style.alpha);
+assert.ok(Math.abs(corpseFallbackAlphas[0] - 0.265) < 1e-12 && Math.abs(corpseFallbackAlphas[1] - 0.212) < 1e-12, "Changed corpse age must update both fallback fill alphas");
+const corpseCreatedAfterWarmup = tracked.snapshotDisplayObjectPerformance().trackedCreated;
+for (let frame = 0; frame < 300; frame += 1) drawCorpseFrame(primaryCorpseLayer);
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, corpseCreatedAfterWarmup, "300 unchanged production corpse frames must create zero display objects");
+const shapeCorpseLayer = new Container();
+const shapeCorpse = corpse("shape-corpse", 10, "sprite");
+const shapeCorpseWorld = { corpses: [shapeCorpse], engineSettings: { gameSpeed: 30 } };
+drawCorpseFrame(shapeCorpseLayer, shapeCorpseWorld, [shapeCorpse], []);
+const shapeSpriteRecord = lastSeenCaches.get(shapeCorpseLayer).kinds.corpse.active.get("shape-corpse").value;
+shapeCorpse.animation = null;
+drawCorpseFrame(shapeCorpseLayer, shapeCorpseWorld, [shapeCorpse], []);
+const shapeGraphicsRecord = lastSeenCaches.get(shapeCorpseLayer).kinds.corpse.active.get("shape-corpse").value;
+assert.notEqual(shapeGraphicsRecord.root, shapeSpriteRecord.root, "Sprite-to-fallback shape transition must replace corpse record identity");
+assert.equal(shapeSpriteRecord.root.destroyed, true, "Sprite-to-fallback shape transition must destroy the incompatible record");
+shapeCorpse.animation = "death";
+drawCorpseFrame(shapeCorpseLayer, shapeCorpseWorld, [shapeCorpse], []);
+const shapeSpriteReentry = lastSeenCaches.get(shapeCorpseLayer).kinds.corpse.active.get("shape-corpse").value;
+assert.notEqual(shapeSpriteReentry.root, shapeGraphicsRecord.root, "Fallback-to-Sprite shape transition must replace corpse record identity");
+assert.equal(shapeGraphicsRecord.root.destroyed, true, "Fallback-to-Sprite shape transition must destroy the incompatible record");
+disposeWorldRenderCache(lastSeenCaches.get(shapeCorpseLayer), detachLastSeenRecord, destroyLastSeenRecord);
+lastSeenCaches.delete(shapeCorpseLayer);
+corpsePrepared.delete(shapeCorpseLayer);
+drawCorpseFrame(splitCorpseLayer);
+assert.notEqual(lastSeenCaches.get(splitCorpseLayer).kinds.corpse.active.get("lower-corpse-sprite").value.root, lowerCorpseSprite.root, "Split viewport must own independent corpse display objects");
+drawCorpseFrame(primaryCorpseLayer, corpseWorld, corpseBelow40.filter(({ id }) => id !== "lower-corpse-sprite"), corpseAtLeast40);
+assert.equal(primaryCorpseCache.kinds.corpse.dormant.get("lower-corpse-sprite").value.root, lowerCorpseSprite.root, "Culled corpse must detach to dormant");
+drawCorpseFrame(primaryCorpseLayer);
+assert.equal(primaryCorpseCache.kinds.corpse.active.get("lower-corpse-sprite").value.root, lowerCorpseSprite.root, "Corpse cull re-entry must retain identity");
+corpseWorld.corpses = corpseWorld.corpses.filter(({ id }) => id !== "upper-corpse-sprite");
+corpseAtLeast40 = corpseAtLeast40.filter(({ id }) => id !== "upper-corpse-sprite");
+drawCorpseFrame(primaryCorpseLayer);
+assert.equal(upperCorpseSprite.root.destroyed, true, "Corpse expiry/removal must destroy its exact record");
+const replacementCorpseBelow = [corpse("lower-corpse-sprite", 10, "sprite")];
+const replacementCorpseWorld = { corpses: replacementCorpseBelow, engineSettings: { gameSpeed: 30 } };
+drawCorpseFrame(primaryCorpseLayer, replacementCorpseWorld, replacementCorpseBelow, []);
+assert.notEqual(lastSeenCaches.get(primaryCorpseLayer).kinds.corpse.active.get("lower-corpse-sprite").value.root, lowerCorpseSprite.root, "World replacement with the same corpse ID must create a new identity");
+assert.equal(lowerCorpseSprite.root.destroyed, true, "Corpse world replacement must destroy the old record synchronously");
+for (const [layer, cache] of [[primaryCorpseLayer, lastSeenCaches.get(primaryCorpseLayer)], [splitCorpseLayer, lastSeenCaches.get(splitCorpseLayer)]]) {
+  disposeWorldRenderCache(cache, detachLastSeenRecord, destroyLastSeenRecord);
+  lastSeenCaches.delete(layer);
+  corpsePrepared.delete(layer);
+}
+assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Production corpse split/world-replacement disposal must return tracked live delta to zero");
+tracked.setDisplayObjectPerformanceCapture(false);
+
 let nextIdentity = 1;
 const created = [];
 const destroyed = [];
@@ -518,6 +633,20 @@ assert.deepEqual(
   [...lastSeenCache.kinds.lastSeenBuilding.dormant.keys()],
   Array.from({ length: 128 }, (_, index) => `last-seen-${index + 2}`),
   "Last-seen dormant cache must retain the newest 128 records"
+);
+
+const corpseDormantCache = createWorldRenderCache({});
+const corpseLiveKeys = new Set();
+for (let index = 0; index < 66; index += 1) {
+  const key = `corpse-${index}`;
+  corpseLiveKeys.add(key);
+  reconcileWorldRenderKind(options(corpseDormantCache, "corpse", [{ key, shape: "corpse-graphics-v1" }], new Set(corpseLiveKeys)));
+}
+reconcileWorldRenderKind(options(corpseDormantCache, "corpse", [], corpseLiveKeys));
+assert.deepEqual(
+  [...corpseDormantCache.kinds.corpse.dormant.keys()],
+  Array.from({ length: 64 }, (_, index) => `corpse-${index + 2}`),
+  "Corpse dormant cache must retain the newest 64 records"
 );
 
 for (const startingState of ["active", "dormant"]) {

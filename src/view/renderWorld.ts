@@ -14,7 +14,7 @@ import { getMissileFrameTexture, type MissileTextureAtlas } from "./missileTextu
 import { sourceCorpseAgeTicks } from "./sourceCorpseRendering";
 import { sourceMissileVisualRole } from "./sourceMissileVisuals";
 import { sourceSelectedOrderRenderState } from "./sourceSelectedOrders";
-import { prepareWorldRenderSnapshot, type WorldRenderSnapshot, type WorldViewport } from "./renderPreparation";
+import { prepareWorldRenderSnapshot, type PreparedRenderStrata, type WorldRenderSnapshot, type WorldViewport } from "./renderPreparation";
 import { getStatusBarTexture, getStatusDecorationTexture, type StatusDecorationAtlas } from "./statusDecorationAtlas";
 import { fogByteToAlpha, sourceCompletedBarColor, sourceCompletedBarShadow, sourceMapAreaRect, sourcePlayerColor, sourceViewportModeRects } from "./sourceUiHelpers";
 import { beginRetainedRenderSlots, createRetainedRenderSlots, disposeWorldRenderCache, finishRetainedRenderSlots, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot, type RetainedRenderSlots, type WorldRenderCache } from "./worldRenderCache";
@@ -33,6 +33,7 @@ const retainedLastSeenBuildings = new WeakMap<
   Container,
   { world: WorldState; buildings: readonly WorldState["lastSeenBuildings"][number][] }
 >();
+const retainedCorpseStrata = new WeakMap<Container, { world: WorldState; corpses: PreparedRenderStrata<WorldState["corpses"][number]> }>();
 const retainedRenderResourceIds = new WeakMap<object, number>();
 const createWorldRenderRecordRoot = createTrackedContainer;
 const destroyWorldRenderRecordRoot = destroyTrackedDisplayObject;
@@ -92,6 +93,7 @@ export function renderWorld(args: RenderWorldArgs): void {
 
   drawMap(mapLayer, world, tileAtlas, viewport);
   clearImmediateWorldLayer(unitLayer);
+  prepareRetainedCorpseStrata(unitLayer, world, prepared.corpses);
   drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
   drawLastSeenBuildings(unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
   drawProjectiles(unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -216,6 +218,7 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
     drawMap(renderer.mapLayer, world, tileAtlas, viewport);
     clearImmediateWorldLayer(renderer.unitLayer);
+    prepareRetainedCorpseStrata(renderer.unitLayer, world, prepared.corpses);
     drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
     drawLastSeenBuildings(renderer.unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
     drawProjectiles(renderer.unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -484,6 +487,7 @@ function retainedWorldRenderCacheFor(layer: Container, world: WorldState): World
 
 export function disposeRetainedWorldRenderCache(layer: Container): void {
   retainedLastSeenBuildings.delete(layer);
+  retainedCorpseStrata.delete(layer);
   const cache = retainedWorldRenderCaches.get(layer);
   if (!cache) return;
   disposeWorldRenderCache(cache, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
@@ -1685,37 +1689,97 @@ function sourceStableMirrorHash(value: string): number {
   return hash;
 }
 
-function drawCorpses(layer: Container, world: WorldState, unitAtlases: Map<string, UnitTextureAtlas>, corpses: readonly WorldState["corpses"][number][], animationById: WorldRenderSnapshot["animationById"]): void {
-  if (!world.corpses || world.corpses.length === 0) {
+function prepareRetainedCorpseStrata(layer: Container, world: WorldState, corpses: PreparedRenderStrata<WorldState["corpses"][number]>): void {
+  retainedCorpseStrata.set(layer, { world, corpses });
+}
+
+function drawCorpses(
+  layer: Container,
+  world: WorldState,
+  unitAtlases: Map<string, UnitTextureAtlas>,
+  corpses: readonly WorldState["corpses"][number][],
+  animationById: WorldRenderSnapshot["animationById"]
+): void {
+  const prepared = retainedCorpseStrata.get(layer);
+  if (!prepared || prepared.world !== world) throw new Error("Corpse render strata were not prepared for this view");
+  const cache = retainedWorldRenderCacheFor(layer, world);
+  if (corpses === prepared.corpses.below40) {
+    const preparedCorpses = [...prepared.corpses.below40, ...prepared.corpses.atLeast40];
+    reconcileWorldRenderKind({
+      cache,
+      worldIdentity: world,
+      kind: "corpse",
+      items: preparedCorpses,
+      liveKeys: new Set(world.corpses.map((corpse) => corpse.id)),
+      keyOf: (corpse) => corpse.id,
+      shapeKeyOf: (corpse) => {
+        const atlas = unitAtlases.get(corpse.typeId);
+        const frameNumber = getCorpseFrameNumber(corpse, world, atlas?.numDirections ?? 0, animationById);
+        return atlas && frameNumber !== null ? "corpse-sprite-v1" : "corpse-graphics-v1";
+      },
+      create: createRetainedWorldDisplayRecord,
+      update: (record, corpse) => {
+        const atlas = unitAtlases.get(corpse.typeId);
+        const frameNumber = getCorpseFrameNumber(corpse, world, atlas?.numDirections ?? 0, animationById);
+        const signature = JSON.stringify([corpse, world.engineSettings, frameNumber, retainedRenderResourceId(atlas)]);
+        if (record.signature === signature && record.unitAtlases === unitAtlases) return;
+        beginRetainedUnitRender(record);
+        drawCorpseVisual(record.root, corpse, atlas, frameNumber, record.unitObjects);
+        finishRetainedUnitRender(record);
+        record.signature = signature;
+        record.unitAtlases = unitAtlases;
+      },
+      attach: () => {},
+      detach: detachRetainedWorldDisplayRecord,
+      destroy: destroyRetainedWorldDisplayRecord,
+      reorder: () => {}
+    });
+  }
+  const records = corpses
+    .map((corpse) => cache.kinds.corpse.active.get(corpse.id)?.value)
+    .filter((record): record is RetainedWorldDisplayRecord => Boolean(record));
+  for (const object of retainedSceneOrder(records, (record) => record.root, (record) => record.unitObjects.graphics)) {
+    layer.addChild(object);
+  }
+}
+
+function drawCorpseVisual(
+  layer: Container,
+  corpse: WorldState["corpses"][number],
+  atlas: UnitTextureAtlas | undefined,
+  frameNumber: number | null,
+  objects: RetainedUnitRenderObjects
+): void {
+  const progress = Math.min(1, corpse.age / Math.max(0.01, corpse.duration));
+  if (atlas && frameNumber !== null) {
+    const sprite = takeCorpseSprite(getFrameTexture(atlas, frameNumber), objects);
+    const direction = spriteDirectionForFacing(corpse.facing ?? 4, atlas.numDirections);
+    sprite.anchor.set(0.5, 0.72);
+    sprite.position.set(corpse.x, corpse.y + 10);
+    sprite.scale.set(direction.mirror ? -0.72 : 0.72, 0.72);
+    sprite.alpha = Math.max(0.18, 0.82 - progress * 0.52);
+    layer.addChild(sprite);
     return;
   }
-  const graphics = createTrackedGraphics();
-  let drewFallbackGraphics = false;
-  for (const corpse of corpses) {
-    const progress = Math.min(1, corpse.age / Math.max(0.01, corpse.duration));
-    const atlas = unitAtlases.get(corpse.typeId);
-    const frameNumber = getCorpseFrameNumber(corpse, world, atlas?.numDirections ?? 0, animationById);
-    const texture = atlas && frameNumber !== null ? getFrameTexture(atlas, frameNumber) : null;
-    if (atlas && texture) {
-      const direction = spriteDirectionForFacing(corpse.facing ?? 4, atlas.numDirections);
-      const sprite = createTrackedSprite(texture);
-      sprite.anchor.set(0.5, 0.72);
-      sprite.position.set(corpse.x, corpse.y + 10);
-      sprite.scale.set(direction.mirror ? -0.72 : 0.72, 0.72);
-      sprite.alpha = Math.max(0.18, 0.82 - progress * 0.52);
-      layer.addChild(sprite);
-      continue;
-    }
-    drewFallbackGraphics = true;
-    const alpha = Math.max(0.12, 0.55 - progress * 0.38);
-    graphics.ellipse(corpse.x, corpse.y + corpse.radius * 0.25, corpse.radius * 0.85, corpse.radius * 0.38);
-    graphics.fill({ color: 0x4f3024, alpha });
-    graphics.ellipse(corpse.x - corpse.radius * 0.2, corpse.y, corpse.radius * 0.38, corpse.radius * 0.22);
-    graphics.fill({ color: 0x6e4a34, alpha: alpha * 0.8 });
-  }
-  if (drewFallbackGraphics) {
-    layer.addChild(graphics);
-  }
+  const graphics = takeCorpseGraphics(objects);
+  const alpha = Math.max(0.12, 0.55 - progress * 0.38);
+  graphics.ellipse(corpse.x, corpse.y + corpse.radius * 0.25, corpse.radius * 0.85, corpse.radius * 0.38);
+  graphics.fill({ color: 0x4f3024, alpha });
+  graphics.ellipse(corpse.x - corpse.radius * 0.2, corpse.y, corpse.radius * 0.38, corpse.radius * 0.22);
+  graphics.fill({ color: 0x6e4a34, alpha: alpha * 0.8 });
+  layer.addChild(graphics);
+}
+
+function takeCorpseGraphics(objects: RetainedUnitRenderObjects): Graphics {
+  return takeRetainedRenderSlot(objects, "graphics", () => {
+    const graphics = createTrackedGraphics();
+    retainedWorldDisplayRoots.add(graphics);
+    return graphics;
+  }, (graphics) => graphics.clear());
+}
+
+function takeCorpseSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
 }
 
 function getLastSeenBuildingFrameNumber(building: WorldState["lastSeenBuildings"][number], numDirections: number, animationById: WorldRenderSnapshot["animationById"]): number {
