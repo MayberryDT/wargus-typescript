@@ -359,7 +359,21 @@ state the new exact seven-trial arithmetic. Preserve all historical packets.
 - [ ] **Step 4: Capture a fresh Plan 018 baseline**
 
 Capture all seven rows with seven valid trials each under the amended reviewed
-harness. Independently verify and accept the new baseline before successors.
+harness. The capture path is
+`scripts/run-plan018-seven-trial-baseline.mjs`, invoked with:
+
+```bash
+npm run capture:plan018-seven-trial-baseline
+```
+
+It must create a disposable detached Halla worktree at exact target
+`5b7d9cc81072c8aeda1ce1a9c22602569e1a691b`, verify the target assets and
+build, run the fixed-tick verifier by its absolute reviewed path, and capture
+all canonical rows in explicit baseline mode. Baseline readiness depends on
+capture, qualification, comparability, fixed-tick, lifecycle, raw-evidence,
+and checksum integrity even when an absolute budget fails. Independently
+review this coordinator before running browser work, then independently verify
+and accept the new packet before successors.
 
 - [ ] **Step 5: Rerun Plans 019–021 serially**
 
@@ -393,4 +407,3 @@ the full combined incremental matrix.
 - [ ] **Step 3: Continue Waves 3–5**
 
 Resume the approved roadmap without changing deployment scope.
-

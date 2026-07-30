@@ -166,6 +166,28 @@ Preserve every historical baseline, failed successor packet, paired diagnostic
 packet, manifest, and report. Do not relabel schema-version 3 packets as
 schema-version 4 evidence.
 
+### Plan 018 seven-trial baseline capture
+
+The reviewed capture candidate is
+`scripts/run-plan018-seven-trial-baseline.mjs`, exposed as
+`npm run capture:plan018-seven-trial-baseline`. It requires a clean reviewed
+coordinator checkout on Halla and creates a disposable detached worktree at
+exact Plan 018 target `5b7d9cc81072c8aeda1ce1a9c22602569e1a691b`. The
+coordinator verifies the target asset pack and build, records a fixed-tick
+proof using the absolute reviewed verifier path, and invokes the reviewed
+matrix harness for all seven canonical rows with exactly seven valid trials
+per row.
+
+The baseline schema-version 4 readiness verdict is independent of absolute
+budget success. It requires complete qualified capture, internal environment
+and fingerprint comparability, fixed-tick proof, exact lifecycle cleanup, lock
+release, finalization, retained raw samples, and checksummed publication.
+Absolute failures are still recorded row by row. Baseline mode does not load
+an accepted predecessor baseline and does not require a successor targeted
+work-reduction proof. The packet is not an accepted baseline until independent
+review approves it and its exact manifest identity is pinned; existing
+three-trial and failed packets remain immutable.
+
 The absolute-release verdict is:
 
 ```text

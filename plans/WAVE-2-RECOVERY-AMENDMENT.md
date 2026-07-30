@@ -65,14 +65,26 @@ require both robust p95 components. Absolute budgets, no-new-failure checks,
 replacement limits, comparability, deterministic proof, cleanup, locking, raw
 evidence, and checksums remain unchanged.
 
-The repository currently tracks only the successor runner. Before a fresh
-seven-trial Plan 018 baseline can be captured, a baseline capture path must be
-added and independently reviewed. It must implement the same schema-version 4
-trial, lifecycle, raw-sample, lock, cleanup, and checksum contract. Until that
-path produces an independently accepted packet and its exact identity is
-pinned in the successor runner, successor browser capture is intentionally
-blocked. Preserve the accepted three-trial Plan 018 packet and every failed or
-diagnostic packet as immutable historical evidence.
+The repository now tracks the reviewed capture candidate
+`scripts/run-plan018-seven-trial-baseline.mjs`. It checks out exact Plan 018
+target `5b7d9cc81072c8aeda1ce1a9c22602569e1a691b` in a disposable Halla
+worktree, runs the target asset and build gates, creates the fixed-tick proof
+with the absolute reviewed verifier path, and invokes the reviewed matrix
+harness with `WARGUS_BASELINE_CAPTURE=1` for canonical rows `1,2,3,4,5,6,7`.
+Baseline mode omits successor baseline and targeted-proof gates, but fails
+closed on capture completeness, seven qualified trials per row, comparability,
+fixed-tick integrity, cleanup, lock release, finalization, raw evidence, and
+checksums. Absolute budget failures remain truthfully reported but do not
+invalidate baseline readiness.
+
+The coordinator can be inspected without browser work by running
+`WARGUS_BASELINE_COORDINATOR_GUARD_CHECK=1 node scripts/run-plan018-seven-trial-baseline.mjs`.
+After an independent review accepts this capture path, run
+`npm run capture:plan018-seven-trial-baseline`. Successor browser capture
+remains blocked until the resulting schema-version 4 packet is independently
+accepted and its exact identity is pinned in the successor runner. Preserve
+the accepted three-trial Plan 018 packet and every failed or diagnostic packet
+as immutable historical evidence.
 
 ---
 

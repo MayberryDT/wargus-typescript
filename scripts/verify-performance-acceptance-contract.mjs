@@ -6,6 +6,7 @@ const root = process.cwd();
 const read = (file) => readFileSync(resolve(root, file), "utf8");
 const performanceContract = read("plans/PERFORMANCE-ACCEPTANCE.md");
 const wave2Recovery = read("plans/WAVE-2-RECOVERY-AMENDMENT.md");
+const pairedRemediationPlan = read("docs/superpowers/plans/2026-07-29-plan019-paired-ab-remediation.md");
 const hallaPolicy = read("plans/HALLA-EXECUTION-POLICY.md");
 const roadmap = read("plans/README.md");
 const detailedPlans = [
@@ -48,7 +49,11 @@ assert.match(wave2Recovery, /pooled.*raw-frame.*p95/i);
 assert.match(wave2Recovery, /schema-version 4/i);
 assert.match(wave2Recovery, /20260730T062702Z/);
 assert.match(wave2Recovery, /6bc0def2ac32baa619b718e5e3f9eb504c3c29f10e5051bbbb06cfd43549d962/);
-assert.match(wave2Recovery, /baseline capture path.*must be.*independently reviewed/is);
+assert.match(wave2Recovery, /run-plan018-seven-trial-baseline\.mjs/);
+assert.match(wave2Recovery, /WARGUS_BASELINE_CAPTURE=1/);
+assert.match(performanceContract, /run-plan018-seven-trial-baseline\.mjs/);
+assert.match(pairedRemediationPlan, /capture:plan018-seven-trial-baseline/);
+assert.match(pairedRemediationPlan, /5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/);
 assert.doesNotMatch(wave2Recovery, /Every measured row still needs three independent valid trials/i);
 
 for (const [file, plan] of detailedPlans) {
