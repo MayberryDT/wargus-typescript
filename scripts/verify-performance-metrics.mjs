@@ -21,6 +21,13 @@ try {
   const metrics = require(join(output, "runtimePerformance.js"));
   const profiles = require(join(output, "performanceProfiles.js"));
   const displayObjects = require(join(output, "displayObjectPerformance.js"));
+  const zeroPlan022 = () => ({ worldRenderCache: {
+    unit: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    lastSeenBuilding: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    corpse: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    projectile: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    spellEffect: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 }
+  } });
   assert.deepEqual(metrics.summarizePerformanceSamples([]), { sampleCount: 0, meanMs: null, p50Ms: null, p95Ms: null, p99Ms: null, maxMs: null, effectiveFps: null, over16_7Ms: 0, over33_3Ms: 0, over50Ms: 0 });
   const singleton = metrics.summarizePerformanceSamples([12]);
   assert.deepEqual([singleton.p50Ms, singleton.p95Ms, singleton.p99Ms, singleton.maxMs], [12, 12, 12, 12]);
@@ -70,7 +77,7 @@ try {
   displayObjects.destroyTrackedDisplayObject(inactiveRoot, { children: true });
   assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
     scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: false,
-    trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0
+    trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0, plan022: zeroPlan022()
   }, "Display lifecycle counters must remain zero outside capture.");
 
   const preexistingRoot = displayObjects.createTrackedContainer();
@@ -80,7 +87,7 @@ try {
   displayObjects.destroyTrackedDisplayObject(preexistingRoot, { children: true });
   assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
     scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true,
-    trackedCreated: 0, trackedDestroyed: 2, windowLiveDelta: -2
+    trackedCreated: 0, trackedDestroyed: 2, windowLiveDelta: -2, plan022: zeroPlan022()
   }, "A capture window must count the tracked preexisting object tree it destroys.");
 
   displayObjects.setDisplayObjectPerformanceCapture(false);
@@ -101,12 +108,12 @@ try {
   assert.equal(displayObjects.recordTrackedCreation(null), null, "Unavailable bitmap text must not increment creation counts.");
   assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
     scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true,
-    trackedCreated: 2, trackedDestroyed: 0, windowLiveDelta: 2
+    trackedCreated: 2, trackedDestroyed: 0, windowLiveDelta: 2, plan022: zeroPlan022()
   });
   displayObjects.destroyTrackedDisplayObject(trackedRoot, { children: true });
   assert.deepEqual(displayObjects.snapshotDisplayObjectPerformance(), {
     scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true,
-    trackedCreated: 2, trackedDestroyed: 2, windowLiveDelta: 0
+    trackedCreated: 2, trackedDestroyed: 2, windowLiveDelta: 0, plan022: zeroPlan022()
   }, "Recursive Pixi destruction must count the tracked tree once.");
   displayObjects.setDisplayObjectPerformanceCapture(false);
   console.log("Performance metrics verified (percentiles, thresholds, ring wrap, input pairing, scheduler summaries, deterministic profiles).");

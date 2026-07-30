@@ -13,7 +13,7 @@ import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilit
 import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, createPlan014AiKnowledgeFixtureWorld, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupQueueAttackMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiKnowledgeFixture, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceAiRuntimeEvidence, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { SIMULATION_MAX_BACKLOG_SECONDS, type SimulationTurnBudget } from "./simulation/orders";
 import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
-import { renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
+import { disposeRetainedWorldRenderCaches, renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
 import { availableCommands, destroyMinimapRenderCache, latestMinimapRenderCacheDebug, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type MinimapRenderCacheDebug, type ModernHudLayoutDebug } from "./view/renderHud";
 import type { SourceDiplomacyDraft } from "./view/sourceUiHelpers";
 import type { UnitTextureAtlas } from "./view/unitTextureAtlas";
@@ -4735,6 +4735,7 @@ async function loadPlayableMap(map: WargusMap): Promise<void> {
     const setup = await loadMapSetup(map);
     activeMap = setup ? manifest.maps.find((candidate) => candidate.path === setup.presentationPath) ?? map : map;
     setLoadingScreen({ mapName: mapLoadingName(activeMap), message: "Creating world", detail: "Placing units, fog, resources, and victory rules.", progress: 0.55 });
+    disposeRetainedWorldRenderCaches(worldLayer, unitLayer);
     world = createInitialWorld(activeMap, manifest.units, setup, manifest.upgrades, manifest.missiles, manifest.spells, manifest.allowRules, manifest.dependencies, manifest.buttons, manifest.engineSettings, manifest.aiDefinitions, manifest.unitDatabase, manifest.tilesets, manifest.animations);
     applyFixedBrowserDemoWorldPresentation(activeMap, world);
     captureBrowserSmokeScenarioSnapshot();
@@ -5797,6 +5798,7 @@ function cleanupBeforeExit(): void {
   try {
     saveCurrentAutosave();
   } finally {
+    disposeRetainedWorldRenderCaches(worldLayer, unitLayer);
     destroyMinimapRenderCache(hudLayer);
   }
 }
@@ -5877,6 +5879,7 @@ async function applyLoadedGame(loaded: LoadedSavedGame): Promise<void> {
     progress: 0.35
   });
   try {
+    disposeRetainedWorldRenderCaches(worldLayer, unitLayer);
     world = loaded.world;
     gameSpeed = sourceGameSpeedMultiplier(world);
     resetWorldTransientState();
