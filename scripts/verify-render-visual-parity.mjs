@@ -48,6 +48,7 @@ const FIXED_TICK = 0;
 const VIEWPORT = { width: 1280, height: 720, deviceScaleFactor: 1 };
 const MIN_START_AVAILABLE_BYTES = 4 * 1024 ** 3;
 const MIN_START_DISK_FREE_BYTES = 20 * 1024 ** 3;
+const INTEGRATION_MODE = process.env.WARGUS_VISUAL_INTEGRATION === "1";
 const INTERRUPT_FIXTURE_FLAG = "--interruption-fixture";
 const INTERRUPT_TEST_FLAG = "--self-test-interruption";
 const ALLOWED_GATE_FILES = [
@@ -76,13 +77,18 @@ else await runVisualParity();
 async function runVisualParity() {
   const context = validateExecutionContext();
   const { afterWorktree, afterHead, repositoryRoot } = context;
-  lifecycle.baseWorktree = path.join(repositoryRoot, ".worktrees", `task4-visual-base-${process.pid}`);
+  lifecycle.baseWorktree = path.join(repositoryRoot, ".worktrees", `${INTEGRATION_MODE ? "wave2-integration" : "task4"}-visual-base-${process.pid}`);
   assert.ok(!existsSync(lifecycle.baseWorktree), `Disposable base worktree already exists: ${lifecycle.baseWorktree}`);
 
   const preflight = capturePreflight(repositoryRoot, afterWorktree);
   const stamp = process.env.WARGUS_VISUAL_ARTIFACT_STAMP ?? utcStamp(new Date());
   assert.match(stamp, /^\d{8}T\d{6}Z$/, "Artifact stamp must be a UTC basic timestamp.");
-  const artifact = createArtifactDirectory({ preflight, plan: "021", commit: PLAN021_COMMIT, stamp });
+  const artifact = createArtifactDirectory({
+    preflight,
+    plan: INTEGRATION_MODE ? "WAVE-2-INTEGRATION" : "021",
+    commit: INTEGRATION_MODE ? afterHead : PLAN021_COMMIT,
+    stamp
+  });
   const visualDirectory = path.join(artifact.directory, "visual-parity");
   assert.ok(!existsSync(visualDirectory), `Visual artifact directory must be fresh: ${visualDirectory}`);
   mkdirSync(visualDirectory);
@@ -114,9 +120,13 @@ async function runVisualParity() {
     writeJson(visualDirectory, "packet.json", {
       schemaVersion: 2,
       baseCommit: BASE_COMMIT,
-      plan021Commit: PLAN021_COMMIT,
-      stagingGateCommit: afterHead,
-      stagingGateFiles: ALLOWED_GATE_FILES,
+      targetCommit: afterHead,
+      verificationMode: INTEGRATION_MODE ? "wave2-integration" : "plan021-staging",
+      ...(INTEGRATION_MODE ? {} : {
+        plan021Commit: PLAN021_COMMIT,
+        stagingGateCommit: afterHead,
+        stagingGateFiles: ALLOWED_GATE_FILES
+      }),
       profile: PROFILE,
       fixedState: {
         tick: FIXED_TICK,
@@ -466,24 +476,36 @@ function compareCaptures(base, after) {
 function validateExecutionContext() {
   const afterWorktree = lifecycle.afterWorktree;
   const afterHead = git(afterWorktree, ["rev-parse", "HEAD"]);
-  const afterParent = git(afterWorktree, ["rev-parse", "HEAD^"]);
-  const afterGrandparent = git(afterWorktree, ["rev-parse", "HEAD^^"]);
-  const afterGreatGrandparent = git(afterWorktree, ["rev-parse", "HEAD^^^"]);
-  const afterFourthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^"]);
-  const afterFifthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^"]);
-  const afterSixthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^^"]);
-  const afterSeventhParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^^^"]);
-  const afterEighthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^^^^"]);
-  assert.equal(afterParent, FOURTH_CORRECTION_COMMIT, "Visual parity full-signature correction must directly follow the exact-signature correction.");
-  assert.equal(afterGrandparent, THIRD_CORRECTION_COMMIT, "Visual parity correction ancestry must retain the prepared draw-call correction.");
-  assert.equal(afterGreatGrandparent, SECOND_CORRECTION_COMMIT, "Visual parity correction ancestry must retain the declaration-binding correction.");
-  assert.equal(afterFourthParent, FIRST_CORRECTION_COMMIT, "Visual parity correction ancestry must retain the reviewed first correction commit.");
-  assert.equal(afterFifthParent, PRIOR_PROVENANCE_COMMIT, "Visual parity correction ancestry must retain the reviewed provenance commit.");
-  assert.equal(afterSixthParent, SECOND_GATE_COMMIT, "Visual parity correction ancestry must retain the reviewed second coordinator gate commit.");
-  assert.equal(afterSeventhParent, FIRST_GATE_COMMIT, "Visual parity correction ancestry must retain the reviewed first coordinator gate commit.");
-  assert.equal(afterEighthParent, PLAN021_COMMIT, "Visual parity must run from the reviewed Plan 021 commit plus exactly eight coordinator-only gate commits.");
-  assert.deepEqual(git(afterWorktree, ["diff", "--name-only", `${PLAN021_COMMIT}..${afterHead}`]).split("\n").filter(Boolean).sort(), ALLOWED_GATE_FILES, "The staging commit must contain only the coordinator Task 4 gate files.");
-  assertClean(afterWorktree, "Plan 021 gate staging worktree");
+  if (INTEGRATION_MODE) {
+    git(afterWorktree, ["merge-base", "--is-ancestor", BASE_COMMIT, afterHead]);
+    const expectedTarget = process.env.WARGUS_VISUAL_INTEGRATION_TARGET;
+    if (expectedTarget) assert.equal(afterHead, expectedTarget, "Wave 2 visual parity must run at the exact requested integration SHA.");
+    const integratedFiles = new Set(git(afterWorktree, ["diff", "--name-only", `${BASE_COMMIT}..${afterHead}`]).split("\n").filter(Boolean));
+    for (const requiredFile of [
+      "src/simulation/terrainMetadata.ts",
+      "src/simulation/worldSelectors.ts",
+      "src/view/renderPreparation.ts",
+      "scripts/verify-terrain-metadata-cache.mjs",
+      "scripts/verify-unit-index.mjs",
+      "scripts/verify-render-preparation.mjs"
+    ]) assert.ok(integratedFiles.has(requiredFile), `Wave 2 integration is missing required accepted file ${requiredFile}.`);
+    assertClean(afterWorktree, "Wave 2 integration worktree");
+  } else {
+    const ancestors = ["HEAD^", "HEAD^^", "HEAD^^^", "HEAD^^^^", "HEAD^^^^^", "HEAD^^^^^^", "HEAD^^^^^^^", "HEAD^^^^^^^^"]
+      .map((revision) => git(afterWorktree, ["rev-parse", revision]));
+    assert.deepEqual(ancestors, [
+      FOURTH_CORRECTION_COMMIT,
+      THIRD_CORRECTION_COMMIT,
+      SECOND_CORRECTION_COMMIT,
+      FIRST_CORRECTION_COMMIT,
+      PRIOR_PROVENANCE_COMMIT,
+      SECOND_GATE_COMMIT,
+      FIRST_GATE_COMMIT,
+      PLAN021_COMMIT
+    ], "Visual parity staging ancestry must retain the reviewed Plan 021 gate chain.");
+    assert.deepEqual(git(afterWorktree, ["diff", "--name-only", `${PLAN021_COMMIT}..${afterHead}`]).split("\n").filter(Boolean).sort(), ALLOWED_GATE_FILES, "The staging commit must contain only the coordinator Task 4 gate files.");
+    assertClean(afterWorktree, "Plan 021 gate staging worktree");
+  }
   assert.equal(process.getuid?.(), 1000, "Visual parity must run as the Halla project user.");
   assert.equal(execFileSync("hostname", { encoding: "utf8" }).trim(), "halla");
   assert.equal(path.resolve(CHROME_BIN), CHROME_BIN);
@@ -500,7 +522,7 @@ function capturePreflight(repositoryRoot, afterWorktree) {
       artifactWorkspace: process.env.WARGUS_ARTIFACT_WORKSPACE ?? `${repositoryRoot}-retained-artifacts`,
       artifactRoot: process.env.WARGUS_ARTIFACT_ROOT ?? path.join(`${repositoryRoot}-retained-artifacts`, ".artifacts"),
       disposableWorktree: afterWorktree,
-      preservationOwner: "wave2-recovery-task4"
+      preservationOwner: INTEGRATION_MODE ? "wave2-integration" : "wave2-recovery-task4"
     }),
     startResources
   };
@@ -516,12 +538,13 @@ function assertStartResources(resources) {
 function acquireCaptureLock(preflight, afterHead) {
   const lockPath = path.join(preflight.artifactRoot, "performance", ".wargus-capture.lock");
   const acquiredAt = new Date().toISOString();
-  const token = [process.pid, "021", afterHead, acquiredAt].join(":");
+  const capturePlan = INTEGRATION_MODE ? "WAVE-2-INTEGRATION" : "021";
+  const token = [process.pid, capturePlan, afterHead, acquiredAt].join(":");
   let descriptor;
   try {
     descriptor = openSync(lockPath, "wx", 0o600);
     try {
-      writeFileSync(descriptor, JSON.stringify({ token, pid: process.pid, plan: "021", captureSha: afterHead, worktree: process.cwd(), acquiredAt }) + "\n", "utf8");
+      writeFileSync(descriptor, JSON.stringify({ token, pid: process.pid, plan: capturePlan, captureSha: afterHead, worktree: process.cwd(), acquiredAt }) + "\n", "utf8");
     } finally {
       closeSync(descriptor);
     }
