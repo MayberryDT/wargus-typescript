@@ -24,6 +24,7 @@ const OFFSETS_MS = [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
 const ATTACK_COMMAND_OFFSET_MS = 250;
 const COMMAND_PAIR_DEADLINE_MS = 1000;
+const TRIALS_PER_ROW = 7;
 const SUMMARY_PUBLISHER_SOURCE = new URL("./lib/checksummed-summary-publisher.mjs", import.meta.url);
 const FIXED_TICK_OFFSET = 600;
 const FIXED_PROOF_PROFILE_IDS = ["idle-25", "army-100", "army-200", "command-18", "combat-100"];
@@ -118,7 +119,7 @@ async function main(mode) {
     writeJson(run.directory, "environment.json", environment);
     writeJson(run.directory, "browser-preflight.json", preflight);
     if (mode !== "preflight") {
-      for (const row of ROWS) for (let slot = 1; slot <= 3; slot += 1) {
+      for (const row of ROWS) for (let slot = 1; slot <= TRIALS_PER_ROW; slot += 1) {
         state.validTrials.push(await trialSlot(browser, allocation.serverPort, row, slot, definitions, state, monitor, environment, run));
       }
     } else {
@@ -143,7 +144,7 @@ async function main(mode) {
     finalize("resource-monitor", () => writeJson(run.directory, "resource-monitor.json", monitor.snapshot()));
     finalize("controller-lifecycle", () => writeJson(run.directory, "controller-lifecycle.json", { allocation, lifecycle: controller.lifecycleLedger, cleanup: state.cleanup, cleanupError: state.cleanupError, pageCloseErrors: state.pageCloseErrors }));
     finalize("capture-lock-record", () => writeJson(run.directory, "capture-lock.json", { path: captureLock.path, acquiredAt: captureLock.acquiredAt, releasedAt: captureLock.releasedAt, releaseError: state.lockReleaseError }));
-    if (mode === "full" && state.validTrials.length === ROWS.length * 3) {
+    if (mode === "full" && state.validTrials.length === ROWS.length * TRIALS_PER_ROW) {
       const result = publishChecksummedSummary(run.directory, matrixSummary(state, run, monitor, environment), {
         writeFailure: (failures) => writeJson(run.directory, "finalization-errors.json", [...state.finalizationErrors, ...failures])
       });
@@ -301,12 +302,12 @@ function loadAcceptedBaseline(preflight) {
   for (const required of ["matrix-summary.json", "environment.json", "browser-preflight.json", "fixed-tick-proof.json"]) if (!names.has(required)) throw new Error("Accepted baseline manifest is missing " + required);
   const summary = JSON.parse(readFileSync(path.join(directory, "matrix-summary.json"), "utf8"));
   const baselineEnvironment = JSON.parse(readFileSync(path.join(directory, "environment.json"), "utf8"));
-  if (summary.run?.captureSha !== captureSha || summary.ready !== true || summary.qualifiedTrialCount !== 21 || summary.rows?.length !== ALL_ROWS.length) throw new Error("Accepted baseline identity, readiness, or canonical row count is invalid.");
+  if (summary.schemaVersion !== 4 || summary.run?.captureSha !== captureSha || summary.ready !== true || summary.qualifiedTrialCount !== ALL_ROWS.length * TRIALS_PER_ROW || summary.rows?.length !== ALL_ROWS.length) throw new Error("Accepted baseline schema, identity, readiness, or canonical row count is invalid.");
   if (baselineEnvironment.captureSha !== captureSha || baselineEnvironment.buildMode !== "preview" || !baselineEnvironment.browser || !baselineEnvironment.gpu || !baselineEnvironment.profileLocks) throw new Error("Accepted baseline environment identity is incomplete.");
   const rows = {};
   summary.rows.forEach((entry, index) => {
     const canonical = ALL_ROWS[index];
-    if (stableJson(entry.row) !== stableJson(canonical) || entry.trials?.length !== 3) throw new Error("Accepted baseline canonical row definition drifted at row " + (index + 1));
+    if (stableJson(entry.row) !== stableJson(canonical) || entry.trials?.length !== TRIALS_PER_ROW) throw new Error("Accepted baseline canonical row definition or seven-trial count drifted at row " + (index + 1));
     const trials = entry.trials.map((trial, trialIndex) => {
       const expectedName = "row-" + canonical.row + "-slot-" + (trialIndex + 1) + ".json";
       if (trial.file !== expectedName || !names.has(trial.file)) throw new Error("Accepted baseline trial is not a canonical manifest member: " + trial.file);
@@ -321,8 +322,14 @@ function loadAcceptedBaseline(preflight) {
       entry.trials[trialIndex].file,
       Object.entries(trial.disposition?.budgetFailures ?? {}).filter(([, failed]) => failed === true).map(([key]) => key)
     ]));
+    const robustFrameP95 = robustFrameP95Acceptance({
+      baselineTrials: trials.map((trial) => ({ frameP95Ms: trial.statistics.frame.p95Ms, frameSamples: trial.stopped.frameSamples })),
+      afterTrials: trials.map((trial) => ({ frameP95Ms: trial.statistics.frame.p95Ms, frameSamples: trial.stopped.frameSamples }))
+    });
     rows[canonical.row] = {
-      worstFrameP95Ms: Math.max(...trials.map((trial) => trial.statistics.frame.p95Ms)),
+      medianTrialFrameP95Ms: robustFrameP95.baselineMedianTrialFrameP95Ms,
+      pooledFrameP95Ms: robustFrameP95.pooledBaselineFrameP95Ms,
+      frameP95Trials: trials.map((trial) => ({ frameP95Ms: trial.statistics.frame.p95Ms, frameSamples: trial.stopped.frameSamples })),
       budgetFailureKeys: [...new Set(Object.values(trialBudgetFailureKeys).flat())],
       trialBudgetFailureKeys,
       trialFiles: entry.trials.map((trial) => trial.file),
@@ -643,16 +650,58 @@ function commandTrialDiagnostics(outcomes, value) {
 function statistics(value) { return { frame: sampleStats(value.frameSamples), update: sampleStats(value.updateSamples), renderPreparation: sampleStats(value.renderPreparationSamples), inputToCommand: sampleStats(value.inputToCommandSamples), inputToNextRender: sampleStats(value.inputToNextRenderSamples), scheduler: value.scheduler }; }
 function sampleStats(values) { const sorted = values.filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b); const rank = (p) => sorted.length ? sorted[Math.ceil(sorted.length * p) - 1] : null; return { sampleCount: sorted.length, p50Ms: rank(.5), p95Ms: rank(.95), p99Ms: rank(.99), meanMs: sorted.length ? sorted.reduce((sum, value) => sum + value, 0) / sorted.length : null, maxMs: sorted.at(-1) ?? null, thresholdCounts: { over16_7Ms: sorted.filter((value) => value > 16.7).length, over33_3Ms: sorted.filter((value) => value > 33.3).length, over50Ms: sorted.filter((value) => value > 50).length, over100Ms: sorted.filter((value) => value > 100).length } }; }
 function budgetFailures(trial) { const frame = trial.statistics.frame; const result = { frameP95: exceeds(frame.p95Ms, BUDGETS.frameP95), frameP99: exceeds(frame.p99Ms, BUDGETS.frameP99), framesOver50: !frame.sampleCount || frame.thresholdCounts.over50Ms / frame.sampleCount * 100 > BUDGETS.over50Percent, schedulerDropped: trial.stopped.scheduler.droppedDeltaSeconds !== BUDGETS.dropped, schedulerBacklog: exceeds(trial.stopped.scheduler.maxBacklogSeconds, BUDGETS.backlog), heap: trial.heapGrowthPercent === null || exceeds(trial.heapGrowthPercent, BUDGETS.heap) }; if (trial.row.profile === "command-18") { result.inputToCommandP95 = exceeds(trial.statistics.inputToCommand.p95Ms, BUDGETS.command); result.inputToNextRenderP95 = exceeds(trial.statistics.inputToNextRender.p95Ms, BUDGETS.render); } return result; }
-function successorAcceptance({ mode, baselineFailureKeys, afterFailureKeys, baselineWorstFrameP95Ms, afterWorstFrameP95Ms, prerequisitePass, targetedWorkReductionProofPass, noNewBudgetFailuresPass, frameP95RegressionPass, absoluteBudgetsPass }) {
+function robustFrameP95Acceptance({ baselineTrials, afterTrials }) {
+  if (baselineTrials?.length !== 7 || afterTrials?.length !== 7) throw new Error("Robust frame-p95 acceptance requires exactly seven baseline and seven successor trials.");
+  const validate = (trials, label) => trials.map((trial, index) => {
+    if (!Number.isFinite(trial?.frameP95Ms) || trial.frameP95Ms < 0) throw new Error(`${label} trial ${index + 1} requires a finite non-negative frame p95.`);
+    if (!Array.isArray(trial.frameSamples) || trial.frameSamples.length === 0 || trial.frameSamples.some((value) => !Number.isFinite(value) || value < 0)) throw new Error(`${label} trial ${index + 1} requires finite non-negative raw frame samples.`);
+    const sorted = [...trial.frameSamples].sort((a, b) => a - b);
+    const rawP95 = sorted[Math.ceil(sorted.length * .95) - 1];
+    if (rawP95 !== trial.frameP95Ms) throw new Error(`${label} trial ${index + 1} frame p95 does not match its raw frame samples.`);
+    return { frameP95Ms: trial.frameP95Ms, frameSamples: sorted };
+  });
+  const baseline = validate(baselineTrials, "Baseline");
+  const after = validate(afterTrials, "Successor");
+  const nearestRank = (values, percentile) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.ceil(sorted.length * percentile) - 1];
+  };
+  const regressionPercent = (before, next) => before > 0 ? (next - before) / before * 100 : (next === 0 ? 0 : Number.POSITIVE_INFINITY);
+  const exceedsFivePercentAtDecisionPrecision = (before, next) => {
+    const decisionBase = Math.round(before / .1) * .1;
+    const decisionAfter = Math.round(next / .1) * .1;
+    const scaledAfter = decisionAfter * 100;
+    const scaledThreshold = decisionBase * 105;
+    const tolerance = Number.EPSILON * Math.max(1, Math.abs(scaledAfter), Math.abs(scaledThreshold)) * 8;
+    return scaledAfter - scaledThreshold > tolerance;
+  };
+  const baselineMedianTrialFrameP95Ms = nearestRank(baseline.map((trial) => trial.frameP95Ms), .5);
+  const afterMedianTrialFrameP95Ms = nearestRank(after.map((trial) => trial.frameP95Ms), .5);
+  const pooledBaselineFrameP95Ms = nearestRank(baseline.flatMap((trial) => trial.frameSamples), .95);
+  const pooledAfterFrameP95Ms = nearestRank(after.flatMap((trial) => trial.frameSamples), .95);
+  const medianTrialFrameP95RegressionPercent = regressionPercent(baselineMedianTrialFrameP95Ms, afterMedianTrialFrameP95Ms);
+  const pooledFrameP95RegressionPercent = regressionPercent(pooledBaselineFrameP95Ms, pooledAfterFrameP95Ms);
+  const medianTrialFrameP95RegressionPass = !exceedsFivePercentAtDecisionPrecision(baselineMedianTrialFrameP95Ms, afterMedianTrialFrameP95Ms);
+  const pooledFrameP95RegressionPass = !exceedsFivePercentAtDecisionPrecision(pooledBaselineFrameP95Ms, pooledAfterFrameP95Ms);
+  return {
+    baselineMedianTrialFrameP95Ms, afterMedianTrialFrameP95Ms, medianTrialFrameP95RegressionPercent,
+    pooledBaselineFrameP95Ms, pooledAfterFrameP95Ms, pooledFrameP95RegressionPercent,
+    medianTrialFrameP95RegressionPass, pooledFrameP95RegressionPass,
+    frameP95RegressionPass: medianTrialFrameP95RegressionPass && pooledFrameP95RegressionPass
+  };
+}
+function successorAcceptance({ mode, baselineFailureKeys, afterFailureKeys, prerequisitePass, targetedWorkReductionProofPass, noNewBudgetFailuresPass, medianTrialFrameP95RegressionPass, pooledFrameP95RegressionPass, absoluteBudgetsPass }) {
   if (mode !== "incremental" && mode !== "absolute-release") throw new Error("Acceptance mode must be incremental or absolute-release.");
   const baselineKeys = baselineFailureKeys ?? [];
   const afterKeys = afterFailureKeys ?? [];
   const noNewPass = noNewBudgetFailuresPass ?? afterKeys.every((key) => baselineKeys.includes(key));
-  const regressionPass = frameP95RegressionPass ?? (Number.isFinite(afterWorstFrameP95Ms) && Number.isFinite(baselineWorstFrameP95Ms) && baselineWorstFrameP95Ms > 0 && (afterWorstFrameP95Ms - baselineWorstFrameP95Ms) / baselineWorstFrameP95Ms * 100 <= 5);
+  const medianPass = medianTrialFrameP95RegressionPass === true;
+  const pooledPass = pooledFrameP95RegressionPass === true;
+  const regressionPass = medianPass && pooledPass;
   const absolutePass = absoluteBudgetsPass ?? afterKeys.length === 0;
   const incrementalAccepted = prerequisitePass === true && targetedWorkReductionProofPass === true && noNewPass && regressionPass;
   const absoluteReleaseAccepted = incrementalAccepted && absolutePass;
-  return { mode, noNewBudgetFailuresPass: noNewPass, frameP95RegressionPass: regressionPass, absoluteBudgetsPass: absolutePass, incrementalAccepted, absoluteReleaseAccepted, accepted: mode === "incremental" ? incrementalAccepted : absoluteReleaseAccepted };
+  return { mode, noNewBudgetFailuresPass: noNewPass, medianTrialFrameP95RegressionPass: medianPass, pooledFrameP95RegressionPass: pooledPass, frameP95RegressionPass: regressionPass, absoluteBudgetsPass: absolutePass, incrementalAccepted, absoluteReleaseAccepted, accepted: mode === "incremental" ? incrementalAccepted : absoluteReleaseAccepted };
 }
 function matrixSummary(state, run, monitor, environment) {
   const rows = ROWS.map((row) => {
@@ -660,41 +709,42 @@ function matrixSummary(state, run, monitor, environment) {
     const invalid = state.invalidTrials.filter((trial) => trial.row.row === row.row);
     const failureKeys = [...new Set(trials.flatMap((trial) => Object.keys(trial.disposition.budgetFailures)))];
     const budgetFailureUnion = Object.fromEntries(failureKeys.map((key) => [key, trials.some((trial) => trial.disposition.budgetFailures[key]) ]));
-    const afterWorstFrameP95Ms = trials.length === 3 ? Math.max(...trials.map((trial) => trial.statistics.frame.p95Ms)) : null;
-    const baselineWorstFrameP95Ms = run.baseline.rows[row.row]?.worstFrameP95Ms ?? null;
-    const frameP95RegressionPercent = Number.isFinite(afterWorstFrameP95Ms) && Number.isFinite(baselineWorstFrameP95Ms) && baselineWorstFrameP95Ms > 0
-      ? (afterWorstFrameP95Ms - baselineWorstFrameP95Ms) / baselineWorstFrameP95Ms * 100
-      : null;
-    const qualified = trials.length === 3 && trials.every((trial) => trial.disposition.qualified);
+    const qualified = trials.length === TRIALS_PER_ROW && trials.every((trial) => trial.disposition.qualified);
+    const robustFrameP95 = qualified ? robustFrameP95Acceptance({
+      baselineTrials: run.baseline.rows[row.row]?.frameP95Trials,
+      afterTrials: trials.map((trial) => ({ frameP95Ms: trial.statistics.frame.p95Ms, frameSamples: trial.stopped.frameSamples }))
+    }) : null;
     const afterFailureKeys = Object.entries(budgetFailureUnion).filter(([, failed]) => failed === true).map(([key]) => key);
     const baselineFailureKeys = run.baseline.rows[row.row]?.budgetFailureKeys ?? [];
-    const acceptance = successorAcceptance({ mode: ACCEPTANCE_MODE, baselineFailureKeys, afterFailureKeys, baselineWorstFrameP95Ms, afterWorstFrameP95Ms, prerequisitePass: qualified, targetedWorkReductionProofPass: run.targetedWorkReductionProof?.value?.verdict === "pass" });
+    const acceptance = successorAcceptance({ mode: ACCEPTANCE_MODE, baselineFailureKeys, afterFailureKeys, medianTrialFrameP95RegressionPass: robustFrameP95?.medianTrialFrameP95RegressionPass, pooledFrameP95RegressionPass: robustFrameP95?.pooledFrameP95RegressionPass, prerequisitePass: qualified, targetedWorkReductionProofPass: run.targetedWorkReductionProof?.value?.verdict === "pass" });
     return {
       row,
       trials: trials.map((trial) => ({ file: trial.file, slot: trial.slot, replacement: trial.replacement, disposition: trial.disposition })),
       invalid,
-      baseline: { worstFrameP95Ms: baselineWorstFrameP95Ms, budgetFailureKeys: baselineFailureKeys },
-      after: { worstFrameP95Ms: afterWorstFrameP95Ms, budgetFailureKeys: afterFailureKeys },
-      frameP95RegressionPercent,
+      baseline: { medianTrialFrameP95Ms: robustFrameP95?.baselineMedianTrialFrameP95Ms ?? null, pooledFrameP95Ms: robustFrameP95?.pooledBaselineFrameP95Ms ?? null, budgetFailureKeys: baselineFailureKeys },
+      after: { medianTrialFrameP95Ms: robustFrameP95?.afterMedianTrialFrameP95Ms ?? null, pooledFrameP95Ms: robustFrameP95?.pooledAfterFrameP95Ms ?? null, budgetFailureKeys: afterFailureKeys },
+      medianTrialFrameP95RegressionPercent: robustFrameP95?.medianTrialFrameP95RegressionPercent ?? null,
+      pooledFrameP95RegressionPercent: robustFrameP95?.pooledFrameP95RegressionPercent ?? null,
       acceptance,
       worstTrialDispositionUnion: { validSlots: trials.length, qualified, dataUnqualification: trials.flatMap((trial) => trial.disposition.dataUnqualification), budgetFailures: budgetFailureUnion, invalidAttempts: invalid.length }
     };
   });
   const qualifiedTrialCount = state.validTrials.filter((trial) => trial.disposition.qualified).length;
-  const captureComplete = qualifiedTrialCount === ROWS.length * 3;
+  const captureComplete = qualifiedTrialCount === ROWS.length * TRIALS_PER_ROW;
   const cleanupPass = !state.cleanupError && Array.isArray(state.cleanup?.residualPids) && state.cleanup.residualPids.length === 0 && Array.isArray(state.cleanup?.openPorts) && state.cleanup.openPorts.length === 0;
   const lockReleasePass = !state.lockReleaseError && typeof state.lockReleasedAt === "string";
   const finalizationPass = state.finalizationErrors.length === 0 && state.pageCloseErrors.length === 0;
   const noNewBudgetFailuresPass = rows.every((row) => row.acceptance.noNewBudgetFailuresPass);
-  const frameP95RegressionPass = rows.every((row) => row.acceptance.frameP95RegressionPass);
+  const medianTrialFrameP95RegressionPass = rows.every((row) => row.acceptance.medianTrialFrameP95RegressionPass);
+  const pooledFrameP95RegressionPass = rows.every((row) => row.acceptance.pooledFrameP95RegressionPass);
   const absoluteBudgetsPass = rows.every((row) => row.acceptance.absoluteBudgetsPass);
   const comparability = successorComparability(state, run, environment);
   const targetedWorkReductionProofPass = run.targetedWorkReductionProof?.value?.verdict === "pass";
   const prerequisitePass = captureComplete && cleanupPass && lockReleasePass && finalizationPass && comparability.pass;
-  const acceptance = successorAcceptance({ mode: ACCEPTANCE_MODE, prerequisitePass, targetedWorkReductionProofPass, noNewBudgetFailuresPass, frameP95RegressionPass, absoluteBudgetsPass });
+  const acceptance = successorAcceptance({ mode: ACCEPTANCE_MODE, prerequisitePass, targetedWorkReductionProofPass, noNewBudgetFailuresPass, medianTrialFrameP95RegressionPass, pooledFrameP95RegressionPass, absoluteBudgetsPass });
   const ready = acceptance.accepted;
   return {
-    schemaVersion: 3, mode: "full", captureComplete, ready, qualifiedTrialCount, invalidTrialCount: state.invalidTrials.length, budgets: BUDGETS,
+    schemaVersion: 4, mode: "full", captureComplete, ready, qualifiedTrialCount, invalidTrialCount: state.invalidTrials.length, budgets: BUDGETS,
     acceptance, lifecycle: { cleanupPass, lockReleasePass, finalizationPass, environmentAndFingerprintPass: comparability.pass, targetedWorkReductionProofPass }, comparability,
     run: { captureSha: run.captureSha, logicalPath: run.logicalPath, directory: run.directory, stamp: run.stamp, targetedWorkReductionProof: run.targetedWorkReductionProof },
     acceptedBaseline: run.baseline, environment, profileLocks: Object.fromEntries(state.locks), rows, resources: monitor.snapshot(),
@@ -714,7 +764,7 @@ function successorComparability(state, run, environment) {
     rows: ROWS.every((row) => {
       const expectedQualification = run.baseline.rows[row.row]?.qualification;
       const trials = state.validTrials.filter((trial) => trial.row.row === row.row);
-      return trials.length === 3 && trials.every((trial) => stableJson({ renderer: trial.qualification.renderer, browserViewport: trial.qualification.browserViewport, pixiViewport: trial.qualification.pixiViewport, executable: trial.qualification.executable, version: trial.qualification.version, gpu: trial.qualification.gpu }) === stableJson(expectedQualification));
+      return trials.length === TRIALS_PER_ROW && trials.every((trial) => stableJson({ renderer: trial.qualification.renderer, browserViewport: trial.qualification.browserViewport, pixiViewport: trial.qualification.pixiViewport, executable: trial.qualification.executable, version: trial.qualification.version, gpu: trial.qualification.gpu }) === stableJson(expectedQualification));
     })
   };
   return { pass: Object.values(checks).every(Boolean), checks, expected: { buildMode: expected.buildMode, browser: expected.browser, gpu: expected.gpu, controllerCommit: expected.controllerCommit, profileLocks: Object.fromEntries([...new Set(ROWS.map((row) => row.profile))].map((profile) => [profile, expected.profileLocks[profile]])) } };

@@ -7,6 +7,11 @@ import vm from "node:vm";
 import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/checksummed-summary-publisher.mjs";
 
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
+assert.match(source, /schemaVersion: 4/, "Seven-trial robust summaries must use schema version 4.");
+assert.doesNotMatch(source, /afterWorstFrameP95Ms|baselineWorstFrameP95Ms|worstFrameP95Ms/,
+  "Schema-v4 summaries and baseline loading must not retain worst-trial frame-p95 fields.");
+assert.match(source, /summary\.schemaVersion !== 4/,
+  "The baseline loader must reject pre-schema-v4 baseline packets.");
 const measuredPairStarts = loadLiteral(source, "OFFSETS_MS");
 assert.equal(JSON.stringify(measuredPairStarts), JSON.stringify([500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500]),
   "The runner must schedule ten uniform pair starts from 500 through 9500 ms.");
@@ -14,7 +19,7 @@ const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "realPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
   "targetedVerifierPaths", "acceptedBaselineIdentity", "validateCaptureAttribution",
-  "successorAcceptance", "errorRecord"
+  "robustFrameP95Acceptance", "successorAcceptance", "errorRecord"
 ]);
 
 assert.equal(helpers.commandPairReady({
@@ -271,17 +276,111 @@ assert.doesNotThrow(() => helpers.validateCaptureAttribution("abc", "abc", ""));
 assert.throws(() => helpers.validateCaptureAttribution("abc", "def", ""), /capture SHA/i);
 assert.throws(() => helpers.validateCaptureAttribution("abc", "abc", "?? scratch.txt"), /clean worktree/i);
 
+const stableSamples = () => Array(20).fill(50);
+const noisySamples = [...Array(18).fill(50), 66.6, 66.6];
+const oneNoisyTrial = helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: stableSamples() })),
+  afterTrials: Array.from({ length: 7 }, (_, index) => ({
+    frameP95Ms: index === 3 ? 66.6 : 50,
+    frameSamples: index === 3 ? noisySamples : stableSamples()
+  }))
+});
+assert.equal(oneNoisyTrial.medianTrialFrameP95RegressionPass, true,
+  "One noisy trial among exactly seven must not move the median trial-p95 gate.");
+assert.equal(oneNoisyTrial.pooledFrameP95RegressionPass, true,
+  "One quantile-boundary trial among exactly seven must not move the pooled raw-frame p95 gate.");
+assert.equal(oneNoisyTrial.frameP95RegressionPass, true,
+  "One noisy trial must not fail an otherwise stable seven-trial row.");
+
+const medianOnlyRegression = helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, (_, index) => ({
+    frameP95Ms: 50,
+    frameSamples: index < 4 ? [50, 50] : Array(100).fill(50)
+  })),
+  afterTrials: Array.from({ length: 7 }, (_, index) => ({
+    frameP95Ms: index < 4 ? 55 : 50,
+    frameSamples: index < 4 ? [50, 55] : Array(100).fill(50)
+  }))
+});
+assert.equal(medianOnlyRegression.medianTrialFrameP95RegressionPass, false,
+  "Median trial-p95 regression over 5% must fail even when pooled p95 is stable.");
+assert.equal(medianOnlyRegression.pooledFrameP95RegressionPass, true);
+assert.equal(medianOnlyRegression.frameP95RegressionPass, false);
+
+const pooledOnlyRegression = helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, (_, index) => ({
+    frameP95Ms: 50,
+    frameSamples: index < 3 ? Array(100).fill(50) : [50]
+  })),
+  afterTrials: Array.from({ length: 7 }, (_, index) => ({
+    frameP95Ms: index < 3 ? 55 : 50,
+    frameSamples: index < 3 ? [...Array(94).fill(50), ...Array(6).fill(55)] : [50]
+  }))
+});
+assert.equal(pooledOnlyRegression.medianTrialFrameP95RegressionPass, true);
+assert.equal(pooledOnlyRegression.pooledFrameP95RegressionPass, false,
+  "Pooled raw-frame p95 regression over 5% must fail even when median trial-p95 is stable.");
+assert.equal(pooledOnlyRegression.frameP95RegressionPass, false);
+
+const exactBoundary = helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 100, frameSamples: [100] })),
+  afterTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 105, frameSamples: [105] }))
+});
+assert.equal(exactBoundary.medianTrialFrameP95RegressionPass, true, "Exactly 5% median regression must pass.");
+assert.equal(exactBoundary.pooledFrameP95RegressionPass, true, "Exactly 5% pooled regression must pass.");
+assert.equal(exactBoundary.frameP95RegressionPass, true);
+
+for (const boundaryNoise of [-2e-12, 2e-12]) {
+  const noisyBoundaryValue = 105 + boundaryNoise;
+  const noisyBoundary = helpers.robustFrameP95Acceptance({
+    baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 100, frameSamples: [100] })),
+    afterTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: noisyBoundaryValue, frameSamples: [noisyBoundaryValue] }))
+  });
+  assert.equal(noisyBoundary.medianTrialFrameP95RegressionPass, true,
+    `Stored-value noise ${boundaryNoise} ms below the 0.1 ms decision precision must not fail median acceptance.`);
+  assert.equal(noisyBoundary.pooledFrameP95RegressionPass, true,
+    `Stored-value noise ${boundaryNoise} ms below the 0.1 ms decision precision must not fail pooled acceptance.`);
+}
+
+const smallestMeaningfulRegression = helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 100, frameSamples: [100] })),
+  afterTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 105.1, frameSamples: [105.1] }))
+});
+assert.equal(smallestMeaningfulRegression.medianTrialFrameP95RegressionPass, false,
+  "The smallest meaningful 0.1 ms step above the +5% median boundary must fail.");
+assert.equal(smallestMeaningfulRegression.pooledFrameP95RegressionPass, false,
+  "The smallest meaningful 0.1 ms step above the +5% pooled boundary must fail.");
+
+for (const trialCount of [6, 8]) {
+  assert.throws(() => helpers.robustFrameP95Acceptance({
+    baselineTrials: Array.from({ length: trialCount }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
+    afterTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] }))
+  }), /exactly seven/i, `${trialCount} baseline trials must fail closed.`);
+  assert.throws(() => helpers.robustFrameP95Acceptance({
+    baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
+    afterTrials: Array.from({ length: trialCount }, () => ({ frameP95Ms: 50, frameSamples: [50] }))
+  }), /exactly seven/i, `${trialCount} successor trials must fail closed.`);
+}
+assert.throws(() => helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
+  afterTrials: Array.from({ length: 7 }, (_, index) => ({ frameP95Ms: index === 0 ? Number.NaN : 50, frameSamples: [50] }))
+}), /finite/i, "Non-finite trial p95 values must fail closed.");
+assert.throws(() => helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
+  afterTrials: Array.from({ length: 7 }, (_, index) => ({ frameP95Ms: 50, frameSamples: index === 0 ? [] : [50] }))
+}), /raw frame sample/i, "Missing raw frame samples must fail closed.");
+
 const inheritedFailure = helpers.successorAcceptance({
   mode: "incremental",
   baselineFailureKeys: ["frameP95"],
   afterFailureKeys: ["frameP95"],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 105,
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: true
 });
 assert.equal(inheritedFailure.noNewBudgetFailuresPass, true, "An inherited baseline failure must pass the no-new-failures gate.");
-assert.equal(inheritedFailure.frameP95RegressionPass, true, "Exactly 5% frame-p95 regression must pass.");
+assert.equal(inheritedFailure.frameP95RegressionPass, true, "Both robust frame-p95 component gates must pass.");
 assert.equal(inheritedFailure.absoluteBudgetsPass, false, "An inherited absolute failure must remain truthfully failed.");
 assert.equal(inheritedFailure.incrementalAccepted, true, "An inherited baseline failure may pass incremental acceptance.");
 assert.equal(inheritedFailure.absoluteReleaseAccepted, false, "Absolute release must reject any remaining budget failure.");
@@ -291,8 +390,8 @@ const afterOnlyFailure = helpers.successorAcceptance({
   mode: "incremental",
   baselineFailureKeys: ["frameP95"],
   afterFailureKeys: ["frameP95", "heap"],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 100,
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: true
 });
@@ -304,20 +403,47 @@ const regression = helpers.successorAcceptance({
   mode: "incremental",
   baselineFailureKeys: [],
   afterFailureKeys: [],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 105.01,
+  medianTrialFrameP95RegressionPass: false,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: true
 });
-assert.equal(regression.frameP95RegressionPass, false, "A greater-than-5% frame-p95 regression must fail.");
-assert.equal(regression.incrementalAccepted, false, "A greater-than-5% frame-p95 regression must reject incremental acceptance.");
+assert.equal(regression.frameP95RegressionPass, false, "A failed median trial-p95 gate must fail robust acceptance.");
+assert.equal(regression.incrementalAccepted, false, "A failed robust p95 component must reject incremental acceptance.");
+
+const pooledRegression = helpers.successorAcceptance({
+  mode: "incremental",
+  baselineFailureKeys: [],
+  afterFailureKeys: [],
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: false,
+  prerequisitePass: true,
+  targetedWorkReductionProofPass: true,
+  frameP95RegressionPass: true
+});
+assert.equal(pooledRegression.frameP95RegressionPass, false,
+  "A caller-supplied combined pass must not bypass a failed pooled component gate.");
+assert.equal(pooledRegression.incrementalAccepted, false);
+
+for (const failedPrerequisite of ["comparability", "lifecycle", "checksum"]) {
+  const invalid = helpers.successorAcceptance({
+    mode: "incremental",
+    baselineFailureKeys: [],
+    afterFailureKeys: [],
+    medianTrialFrameP95RegressionPass: true,
+    pooledFrameP95RegressionPass: true,
+    prerequisitePass: false,
+    targetedWorkReductionProofPass: true
+  });
+  assert.equal(invalid.accepted, false, `Invalid ${failedPrerequisite} evidence must fail closed.`);
+}
 
 const missingTargetedProof = helpers.successorAcceptance({
   mode: "incremental",
   baselineFailureKeys: [],
   afterFailureKeys: [],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 100,
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: false
 });
@@ -328,8 +454,8 @@ const absoluteWithFailure = helpers.successorAcceptance({
   mode: "absolute-release",
   baselineFailureKeys: ["frameP95"],
   afterFailureKeys: ["frameP95"],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 100,
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: true
 });
@@ -341,15 +467,15 @@ const absoluteClean = helpers.successorAcceptance({
   mode: "absolute-release",
   baselineFailureKeys: ["frameP95"],
   afterFailureKeys: [],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 100,
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: true
 });
 assert.deepEqual(
   Object.keys(absoluteClean).sort(),
-  ["absoluteBudgetsPass", "absoluteReleaseAccepted", "accepted", "frameP95RegressionPass", "incrementalAccepted", "mode", "noNewBudgetFailuresPass"].sort(),
-  "Schema-v3 acceptance must expose both verdicts and their component gates."
+  ["absoluteBudgetsPass", "absoluteReleaseAccepted", "accepted", "frameP95RegressionPass", "incrementalAccepted", "medianTrialFrameP95RegressionPass", "mode", "noNewBudgetFailuresPass", "pooledFrameP95RegressionPass"].sort(),
+  "Schema-v4 acceptance must expose both verdicts and their component gates."
 );
 assert.equal(absoluteClean.absoluteReleaseAccepted, true, "Absolute release must pass when incremental gates and all absolute budgets pass.");
 assert.equal(absoluteClean.accepted, true, "Selected absolute-release mode must accept the clean verdict.");
@@ -431,13 +557,13 @@ assert.throws(() => helpers.successorAcceptance({
   mode: "wrong",
   baselineFailureKeys: [],
   afterFailureKeys: [],
-  baselineWorstFrameP95Ms: 100,
-  afterWorstFrameP95Ms: 100,
+  medianTrialFrameP95RegressionPass: true,
+  pooledFrameP95RegressionPass: true,
   prerequisitePass: true,
   targetedWorkReductionProofPass: true
 }), /incremental|absolute-release/i, "Unknown acceptance modes must fail closed.");
 
-console.log("Successor capture contract verified (paired real input and schema-v3 verdicts).");
+console.log("Successor capture contract verified (paired real input and schema-v4 robust verdicts).");
 
 function loadHelpers(moduleSource, names) {
   const declarations = names.map((name) => extractFunction(moduleSource, name)).join("\n");
