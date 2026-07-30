@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmdirSync, statfsSync, statSync, symlinkSync, unlinkSync, writeFileSync, accessSync, constants as fsConstants } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmdirSync, rmSync, statfsSync, statSync, symlinkSync, unlinkSync, writeFileSync, accessSync, constants as fsConstants } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
@@ -32,6 +32,7 @@ const DIAGNOSTIC_RELATIVE_PATH = path.join("diagnostics", "plan019-paired-ab");
 const SUMMARY_NAME = "paired-diagnostic-summary.json";
 const TEMP_PREFIX = ".wargus-paired-publish-";
 const SOFTWARE_RENDERER = /swiftshader|llvmpipe|software|mesa offscreen/i;
+const AMD_VULKAN_RENDERER = /^ANGLE \(AMD,.*Vulkan.*AMD Radeon.*, radv\)$/i;
 const AMD_VULKAN_FLAGS = [
   "--use-gl=angle", "--use-angle=vulkan", "--enable-features=Vulkan", "--disable-vulkan-surface",
   "--enable-gpu", "--ignore-gpu-blocklist", "--enable-gpu-rasterization", "--disable-background-timer-throttling",
@@ -165,6 +166,7 @@ export function validateQualification(record, { expectedRenderer, expectedFinger
   const raf = record?.rafTimestamps;
   const rafAdvanced = Array.isArray(raf) && raf.length >= 3 && raf.every((value, index) => Number.isFinite(value) && (index === 0 || value > raf[index - 1]));
   if (!record?.webgl2 || !record.renderer || SOFTWARE_RENDERER.test(record.renderer)) throw new Error(`Hardware renderer qualification failed: ${record?.renderer ?? "missing"}.`);
+  if (!AMD_VULKAN_RENDERER.test(record.renderer)) throw new Error(`Renderer must be the qualified AMD Radeon Vulkan renderer; found ${record.renderer}.`);
   if (expectedRenderer !== undefined && record.renderer !== expectedRenderer) throw new Error(`Renderer identity changed: expected ${expectedRenderer}; found ${record.renderer}.`);
   if (record.focused !== true || record.visibility !== "visible" || !rafAdvanced) throw new Error("Qualification requires focus, visible document state, and advancing RAF.");
   const viewport = record.browserViewport;
@@ -177,17 +179,137 @@ export function validateQualification(record, { expectedRenderer, expectedFinger
 }
 
 export function validateCleanup(cleanup) {
-  if (!Array.isArray(cleanup?.residualPids) || !Array.isArray(cleanup?.openPorts) || cleanup.residualPids.length > 0 || cleanup.openPorts.length > 0) {
-    throw new Error(`Owned cleanup incomplete: residual PIDs=${cleanup?.residualPids?.join(",") ?? "missing"}; open ports=${cleanup?.openPorts?.join(",") ?? "missing"}.`);
+  if (!Array.isArray(cleanup?.residualPids) || !Array.isArray(cleanup?.openPorts) || !Array.isArray(cleanup?.profileResiduals) || cleanup.residualPids.length > 0 || cleanup.openPorts.length > 0 || cleanup.profileResiduals.length > 0) {
+    throw new Error(`Owned cleanup incomplete: residual PIDs=${cleanup?.residualPids?.join(",") ?? "missing"}; open ports=${cleanup?.openPorts?.join(",") ?? "missing"}; profile residuals=${cleanup?.profileResiduals?.join(",") ?? "missing"}.`);
   }
-  return { residualPids: [], openPorts: [] };
+  return { residualPids: [], openPorts: [], profileResiduals: [] };
 }
 
-export function publishAtomicDiagnostic(directory, summary, { beforeReadyRename = () => {}, afterReadyRename = () => {} } = {}) {
+export function createOwnedBrowserProfile({ root, pair, arm, replacement }) {
+  if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`Owned browser profile root is missing: ${root}.`);
+  if (!Number.isInteger(pair) || pair < 1 || pair > IDENTITY.pairCount || !new Set(["base", "plan019"]).has(arm) || !Number.isInteger(replacement) || replacement < 0 || replacement > 1) throw new Error("Owned browser profile identity is invalid.");
+  const profilePath = path.join(root, `pair-${String(pair).padStart(2, "0")}-${arm}-attempt-${replacement + 1}`);
+  mkdirSync(profilePath, { mode: 0o700 });
+  return profilePath;
+}
+
+export function removeOwnedBrowserProfile({ profilePath, root }) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedProfile = path.resolve(profilePath);
+  if (path.dirname(resolvedProfile) !== resolvedRoot) throw new Error(`Refusing to remove browser profile outside exact owned root ${resolvedRoot}.`);
+  if (existsSync(resolvedProfile)) rmSync(resolvedProfile, { recursive: true, force: false });
+  if (existsSync(resolvedProfile)) throw new Error(`Owned browser profile cleanup left residual ${resolvedProfile}.`);
+  return { profilePath: resolvedProfile, removed: true };
+}
+
+export function buildSupportingPairedMetrics({ baseTrials, plan019Trials }) {
+  classifyPairedDiagnostic({ baseTrials, plan019Trials });
+  return baseTrials.map((base, index) => {
+    const after = plan019Trials[index];
+    const compare = (baseValue, afterValue) => compareMetric(baseValue, afterValue);
+    return {
+      pair: base.pair,
+      frame: {
+        p50Ms: compare(base.statistics.frame.p50Ms, after.statistics.frame.p50Ms),
+        p95Ms: compare(base.statistics.frame.p95Ms, after.statistics.frame.p95Ms),
+        p99Ms: compare(base.statistics.frame.p99Ms, after.statistics.frame.p99Ms),
+        meanMs: compare(base.statistics.frame.meanMs, after.statistics.frame.meanMs),
+        maxMs: compare(base.statistics.frame.maxMs, after.statistics.frame.maxMs),
+        over50Count: compare(base.statistics.frame.thresholdCounts.over50Ms, after.statistics.frame.thresholdCounts.over50Ms),
+        over100Count: compare(base.statistics.frame.thresholdCounts.over100Ms, after.statistics.frame.thresholdCounts.over100Ms)
+      },
+      update: {
+        p95Ms: compare(base.statistics.update.p95Ms, after.statistics.update.p95Ms),
+        meanMs: compare(base.statistics.update.meanMs, after.statistics.update.meanMs)
+      },
+      renderPreparation: {
+        p95Ms: compare(base.statistics.renderPreparation.p95Ms, after.statistics.renderPreparation.p95Ms),
+        meanMs: compare(base.statistics.renderPreparation.meanMs, after.statistics.renderPreparation.meanMs)
+      },
+      scheduler: {
+        droppedDeltaSeconds: compare(base.stopped.scheduler.droppedDeltaSeconds, after.stopped.scheduler.droppedDeltaSeconds),
+        maxBacklogSeconds: compare(base.stopped.scheduler.maxBacklogSeconds, after.stopped.scheduler.maxBacklogSeconds)
+      }
+    };
+  });
+}
+
+function compareMetric(base, plan019) {
+  if (!Number.isFinite(base) || base < 0 || !Number.isFinite(plan019) || plan019 < 0) throw new Error("Supporting paired metrics require non-negative finite values.");
+  return {
+    base: roundMetric(base),
+    plan019: roundMetric(plan019),
+    delta: roundMetric(plan019 - base),
+    relativeDeltaPercent: base === 0 ? null : roundMetric((plan019 - base) / base * 100)
+  };
+}
+
+function roundMetric(value) {
+  return Number(value.toFixed(12));
+}
+
+export function advanceRafTimestamp(previousTimestamp, currentTimestamp) {
+  if (!Number.isFinite(previousTimestamp) || !Number.isFinite(currentTimestamp) || currentTimestamp <= previousTimestamp) {
+    throw new InvalidArmError(`Capture requires advancing RAF timestamps; previous=${previousTimestamp}, current=${currentTimestamp}.`);
+  }
+  return currentTimestamp;
+}
+
+export async function cleanupTrackedController(record, registry) {
+  const cleanup = await record.controller.cleanup();
+  const complete = { ...cleanup, profileResiduals: cleanup.profileResiduals ?? [] };
+  validateCleanup(complete);
+  registry.delete(record);
+  return complete;
+}
+
+export function buildPairArmReference(trial, orderIndex) {
+  if (!trial || !new Set(["base", "plan019"]).has(trial.arm) || !Number.isInteger(orderIndex) || orderIndex < 0 || orderIndex > 1 || typeof trial.file !== "string" || typeof trial.stamp !== "string" || trial.valid !== true) throw new Error("Valid trial identity is required for a pair-arm reference.");
+  return { arm: trial.arm, orderIndex, file: trial.file, replacement: trial.replacement, stamp: trial.stamp, valid: true };
+}
+
+export function validatePublicationPacket(directory, summary) {
+  if (summary?.captureComplete !== true || summary?.validTrialCount !== IDENTITY.pairCount * 2 || summary?.classification?.realRegression === undefined || !Array.isArray(summary?.supportingPairedMetrics) || summary.supportingPairedMetrics.length !== IDENTITY.pairCount) {
+    throw new Error("READY packet requires capture classification, supporting metrics, and exactly 30 valid raw trials.");
+  }
+  const schedule = buildAlternatingPairs(IDENTITY.pairCount);
+  if (!Array.isArray(summary.pairs) || summary.pairs.length !== schedule.length) throw new Error("READY packet requires exactly 15 summary pairs.");
+  const pairsDocument = JSON.parse(readFileSync(path.join(directory, "pairs.json"), "utf8"));
+  if (stableJson(pairsDocument.completed) !== stableJson(summary.pairs)) throw new Error("pairs.json completed references do not exactly match summary pairs.");
+  const trialFiles = [];
+  const stamps = new Set();
+  for (const expected of schedule) {
+    const pair = summary.pairs[expected.pair - 1];
+    if (pair?.pair !== expected.pair || stableJson(pair.order) !== stableJson(expected.order) || !Array.isArray(pair.arms) || pair.arms.length !== 2) throw new Error(`Summary pair ${expected.pair} does not match the alternating schedule.`);
+    for (const [orderIndex, arm] of expected.order.entries()) {
+      const reference = pair.arms[orderIndex];
+      if (reference?.arm !== arm || reference.orderIndex !== orderIndex || reference.valid !== true || !Number.isInteger(reference.replacement) || reference.replacement < 0 || reference.replacement > 1 || typeof reference.file !== "string" || path.basename(reference.file) !== reference.file || typeof reference.stamp !== "string" || stamps.has(reference.stamp)) throw new Error(`Summary pair ${expected.pair} ${arm} reference is invalid or non-unique.`);
+      stamps.add(reference.stamp);
+      const file = path.join(directory, reference.file);
+      if (!existsSync(file)) throw new Error(`Missing valid raw trial ${reference.file}.`);
+      const raw = JSON.parse(readFileSync(file, "utf8"));
+      const expectedIdentity = { pair: expected.pair, arm, orderIndex, stamp: reference.stamp, replacement: reference.replacement, valid: true };
+      const actualIdentity = Object.fromEntries(Object.keys(expectedIdentity).map((key) => [key, raw[key]]));
+      if (stableJson(actualIdentity) !== stableJson(expectedIdentity)) throw new Error(`Raw trial identity mismatch for ${reference.file}.`);
+      trialFiles.push(reference.file);
+    }
+  }
+  const expectedFiles = [...trialFiles].sort();
+  const actualFiles = readdirSync(directory).filter((name) => /^pair-\d{2}-(?:base|plan019)(?:-replacement)?\.json$/.test(name)).sort();
+  const missing = expectedFiles.filter((name) => !actualFiles.includes(name));
+  const extra = actualFiles.filter((name) => !expectedFiles.includes(name));
+  if (missing.length > 0) throw new Error(`Missing valid raw trial files: ${missing.join(", ")}.`);
+  if (extra.length > 0) throw new Error(`Extra unreferenced raw trial files: ${extra.join(", ")}.`);
+  if (new Set(expectedFiles).size !== IDENTITY.pairCount * 2) throw new Error("Valid raw trial references must be unique across all 15 pairs.");
+  return { trialFiles: expectedFiles, stamps: [...stamps] };
+}
+
+export function publishAtomicDiagnostic(directory, summary, { beforeReadyRename = () => {}, verifyFinalManifest = verifyProjectedManifest, readyRename = renameReadyLast } = {}) {
+  validatePublicationPacket(directory, summary);
   const lifecycle = summary?.lifecycle;
   const requiredFiles = ["environment.json", "pairs.json", "resources.json", "lifecycle.json"];
-  if (summary?.captureComplete !== true || summary.validTrialCount !== 30 || summary?.classification?.realRegression === undefined || summary?.pairs?.length !== IDENTITY.pairCount || lifecycle?.cleanupPass !== true || lifecycle?.worktreesRemoved !== true || lifecycle?.lockReleased !== true || lifecycle?.finalizationPass !== true || requiredFiles.some((name) => !existsSync(path.join(directory, name)))) {
-    throw new Error("READY publication requires 30 valid arms, classification, 15 pairs, complete retained records, complete cleanup, removed worktrees, released lock, and successful finalization.");
+  if (summary?.captureComplete !== true || summary.validTrialCount !== 30 || summary?.classification?.realRegression === undefined || summary?.pairs?.length !== IDENTITY.pairCount || lifecycle?.cleanupPass !== true || lifecycle?.profilesRemoved !== true || lifecycle?.worktreesRemoved !== true || lifecycle?.lockReleased !== true || lifecycle?.finalizationPass !== true || requiredFiles.some((name) => !existsSync(path.join(directory, name)))) {
+    throw new Error("READY publication requires 30 valid arms, classification, 15 pairs, complete retained records, complete cleanup, removed profiles and worktrees, released lock, and successful finalization.");
   }
   const serial = `${process.pid}-${Date.now()}`;
   const paths = {
@@ -209,11 +331,11 @@ export function publishAtomicDiagnostic(directory, summary, { beforeReadyRename 
     writeDurable(paths.manifest, manifest);
     verifyProjectedManifest(directory, paths.manifest, paths.ready);
     renameDurable(paths.manifest, paths.finalManifest, directory);
+    verifyFinalManifest(directory, paths.finalManifest, paths.ready);
+    const manifestResult = { path: paths.finalManifest, sha256: sha(readFileSync(paths.finalManifest)) };
     beforeReadyRename();
-    renameDurable(paths.ready, paths.summary, directory);
-    afterReadyRename();
-    const verified = writeAndVerifyChecksumManifest(directory);
-    return { published: true, summary: ready, manifest: verified, failures: [] };
+    readyRename(paths.ready, paths.summary, directory);
+    return { published: true, summary: ready, manifest: manifestResult, failures: [] };
   } catch (error) {
     const failures = [errorRecord(error)];
     for (const temp of activeTemps) if (existsSync(temp)) {
@@ -252,6 +374,15 @@ function writeDurable(file, value) {
 
 function renameDurable(from, to, directory) {
   renameSync(from, to);
+  syncDirectory(directory);
+}
+
+function renameReadyLast(from, to, directory) {
+  syncDirectory(directory);
+  renameSync(from, to);
+}
+
+function syncDirectory(directory) {
   const descriptor = openSync(directory, "r");
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
@@ -329,6 +460,9 @@ async function runDiagnostic() {
     pairRecords: [],
     resourceRecords: [],
     finalizationErrors: [],
+    profileRoot: null,
+    profilePaths: new Set(),
+    profilesRemoved: false,
     worktreesRemoved: false,
     lockReleased: false,
     directory: null
@@ -341,7 +475,7 @@ async function runDiagnostic() {
   let terminalError = null;
   try {
     state.directory = createDiagnosticDirectory(retained.artifactRoot);
-    state.armWorktrees = createArmWorktrees(coordinator);
+    createArmWorktrees(coordinator, state.armWorktrees);
     const environment = buildEnvironment(coordinator, retained, identityRecord, state.armWorktrees, lock);
     writeJson(state.directory, "environment.json", environment);
     writeJson(state.directory, "pairs.json", { schemaVersion: 1, schedule: buildAlternatingPairs(IDENTITY.pairCount), completed: [], invalid: [] });
@@ -353,7 +487,7 @@ async function runDiagnostic() {
         const worktree = state.armWorktrees.find((candidate) => candidate.arm === arm);
         const trial = await captureArmWithReplacement({ coordinator, worktree, pair: pairSpec.pair, orderIndex, locks, state, environment });
         state.validTrials.push(trial);
-        pairRecord.arms.push({ arm, file: trial.file, replacement: trial.replacement, stamp: trial.stamp, valid: true });
+        pairRecord.arms.push(buildPairArmReference(trial, orderIndex));
         writePairs(state);
       }
       state.pairRecords.push(pairRecord);
@@ -366,14 +500,23 @@ async function runDiagnostic() {
   } catch (error) {
     terminalError = error;
   } finally {
-    for (const controller of state.controllers) {
+    for (const controllerRecord of [...state.controllers]) {
       try {
-        const cleanup = await controller.cleanup();
-        validateCleanup(cleanup);
+        const cleanup = await cleanupTrackedController(controllerRecord, state.controllers);
         state.cleanupRecords.push({ scope: "final-sweep", cleanup });
       } catch (error) {
         state.finalizationErrors.push({ step: "controller-final-sweep", ...errorRecord(error) });
       }
+    }
+    try {
+      for (const profilePath of [...state.profilePaths]) {
+        removeOwnedBrowserProfile({ profilePath, root: state.profileRoot });
+        state.profilePaths.delete(profilePath);
+      }
+      if (state.profileRoot && existsSync(state.profileRoot)) rmdirSync(state.profileRoot);
+      state.profilesRemoved = state.profilePaths.size === 0 && (!state.profileRoot || !existsSync(state.profileRoot));
+    } catch (error) {
+      state.finalizationErrors.push({ step: "browser-profile-removal", ...errorRecord(error) });
     }
     try {
       removeArmWorktrees(coordinator, state.armWorktrees);
@@ -396,6 +539,8 @@ async function runDiagnostic() {
       schemaVersion: 1,
       cleanupRecords: state.cleanupRecords,
       worktreesRemoved: state.worktreesRemoved,
+      profilesRemoved: state.profilesRemoved,
+      profileResiduals: [...state.profilePaths],
       captureLock: { path: lock.path, acquiredAt: lock.acquiredAt, releasedAt: lock.releasedAt },
       finalizationErrors: state.finalizationErrors
     });
@@ -417,6 +562,7 @@ async function runDiagnostic() {
   const baseTrials = state.validTrials.filter(({ arm }) => arm === "base");
   const plan019Trials = state.validTrials.filter(({ arm }) => arm === "plan019");
   const classification = classifyPairedDiagnostic({ baseTrials, plan019Trials });
+  const supportingPairedMetrics = buildSupportingPairedMetrics({ baseTrials, plan019Trials });
   const summary = {
     schemaVersion: 1,
     ready: true,
@@ -426,8 +572,10 @@ async function runDiagnostic() {
     identity: canonicalIdentity(),
     pairs: state.pairRecords,
     classification,
+    supportingPairedMetrics,
     lifecycle: {
-      cleanupPass: state.cleanupRecords.length >= 30 && state.cleanupRecords.every(({ cleanup }) => cleanup.residualPids.length === 0 && cleanup.openPorts.length === 0),
+      cleanupPass: state.cleanupRecords.length >= 30 && state.cleanupRecords.every(({ cleanup }) => cleanup.residualPids.length === 0 && cleanup.openPorts.length === 0 && cleanup.profileResiduals.length === 0) && state.profilesRemoved,
+      profilesRemoved: state.profilesRemoved,
       worktreesRemoved: state.worktreesRemoved,
       lockReleased: state.lockReleased,
       finalizationPass: state.finalizationErrors.length === 0
@@ -455,7 +603,7 @@ function inspectCoordinator(coordinator) {
 }
 
 export function createDiagnosticDirectory(artifactRoot, requestedStamp = process.env.WARGUS_PAIRED_AB_STAMP?.trim()) {
-  const stamp = requestedStamp || new Date().toISOString().replace(/[-:.]/g, "");
+  const stamp = requestedStamp || new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "");
   if (!/^\d{8}T\d{6}Z$/.test(stamp)) throw new Error("WARGUS_PAIRED_AB_STAMP must be a UTC basic timestamp such as 20260729T235959Z.");
   const parent = path.join(artifactRoot, DIAGNOSTIC_RELATIVE_PATH);
   mkdirSync(parent, { recursive: true });
@@ -465,24 +613,55 @@ export function createDiagnosticDirectory(artifactRoot, requestedStamp = process
   return directory;
 }
 
-function createArmWorktrees(coordinator) {
+export function allocateArmWorktreeRecords({ root, definitions, registry = [], operations }) {
+  operations.createRoot(root);
+  try {
+    for (const { arm, commit } of definitions) {
+      const record = { arm, commit, worktree: path.join(root, arm), root, allocationAttempted: true, created: false };
+      registry.push(record);
+      operations.add(record);
+      record.created = true;
+      operations.validate(record);
+    }
+    return registry;
+  } catch (allocationError) {
+    try {
+      cleanupArmWorktreeRecords({ root, records: registry, operations });
+    } catch (cleanupError) {
+      const error = new AggregateError([allocationError, cleanupError], "Worktree allocation and cleanup failed.");
+      error.records = registry;
+      throw error;
+    }
+    allocationError.records = registry;
+    throw allocationError;
+  }
+}
+
+export function cleanupArmWorktreeRecords({ root, records, operations }) {
+  const errors = [];
+  for (const record of [...records].reverse()) {
+    try { operations.remove(record); } catch (error) { errors.push(error); }
+  }
+  try { operations.removeRoot(root); } catch (error) { errors.push(error); }
+  if (errors.length > 0) throw new AggregateError(errors, "Worktree allocation cleanup failed.");
+  return { rootRemoved: true, records: [...records] };
+}
+
+function createArmWorktrees(coordinator, registry) {
   const root = path.join("/home/halla/workspaces/t3", `.wargus-plan019-paired-${process.pid}`);
   if (existsSync(root)) throw new Error(`Disposable worktree root already exists: ${root}`);
-  mkdirSync(root);
-  const created = [];
-  try {
-    for (const [arm, commit] of [["base", IDENTITY.baseCommit], ["plan019", IDENTITY.plan019Commit]]) {
-      const worktree = path.join(root, arm);
-      execFileSync("git", ["-C", coordinator, "worktree", "add", "--detach", worktree, commit], { stdio: ["ignore", "ignore", "pipe"], timeout: 120_000 });
-      const record = { arm, commit, worktree, root };
-      created.push(record);
-      validateArmIdentity(record);
+  return allocateArmWorktreeRecords({
+    root,
+    definitions: [{ arm: "base", commit: IDENTITY.baseCommit }, { arm: "plan019", commit: IDENTITY.plan019Commit }],
+    registry,
+    operations: {
+      createRoot: (target) => mkdirSync(target),
+      add: (record) => execFileSync("git", ["-C", coordinator, "worktree", "add", "--detach", record.worktree, record.commit], { stdio: ["ignore", "ignore", "pipe"], timeout: 120_000 }),
+      validate: validateArmIdentity,
+      remove: (record) => removeArmWorktree(coordinator, record),
+      removeRoot: (target) => { if (existsSync(target)) rmdirSync(target); }
     }
-    return created;
-  } catch (error) {
-    try { removeArmWorktrees(coordinator, created, root); } catch { }
-    throw error;
-  }
+  });
 }
 
 function validateArmIdentity(record) {
@@ -494,15 +673,23 @@ function validateArmIdentity(record) {
   });
 }
 
+function removeArmWorktree(coordinator, record) {
+  if (!existsSync(record.worktree)) return;
+  validateArmIdentity(record);
+  execFileSync("git", ["-C", coordinator, "worktree", "remove", record.worktree], { stdio: ["ignore", "ignore", "pipe"], timeout: 120_000 });
+}
+
 function removeArmWorktrees(coordinator, worktrees, explicitRoot = null) {
-  for (const record of [...worktrees].reverse()) {
-    if (existsSync(record.worktree)) {
-      validateArmIdentity(record);
-      execFileSync("git", ["-C", coordinator, "worktree", "remove", record.worktree], { stdio: ["ignore", "ignore", "pipe"], timeout: 120_000 });
-    }
-  }
   const root = explicitRoot ?? worktrees[0]?.root;
-  if (root && existsSync(root)) rmdirSync(root);
+  if (!root) return;
+  return cleanupArmWorktreeRecords({
+    root,
+    records: worktrees,
+    operations: {
+      remove: (record) => removeArmWorktree(coordinator, record),
+      removeRoot: (target) => { if (existsSync(target)) rmdirSync(target); }
+    }
+  });
 }
 
 function buildEnvironment(coordinator, retained, coordinatorIdentity, worktrees, lock) {
@@ -555,12 +742,19 @@ async function captureArmWithReplacement({ coordinator, worktree, pair, orderInd
 async function captureArmAttempt({ coordinator, worktree, pair, orderIndex, replacement, stamp, locks, state, environment }) {
   validateArmIdentity(worktree);
   const dependencyLink = path.join(worktree.worktree, "node_modules");
+  if (!state.profileRoot) {
+    state.profileRoot = path.join("/tmp", `.wargus-plan019-paired-profiles-${process.pid}`);
+    if (existsSync(state.profileRoot)) throw new LifecycleError(`Owned browser profile root already exists: ${state.profileRoot}.`);
+    mkdirSync(state.profileRoot, { mode: 0o700 });
+  }
+  const profilePath = createOwnedBrowserProfile({ root: state.profileRoot, pair, arm: worktree.arm, replacement });
+  state.profilePaths.add(profilePath);
   if (existsSync(dependencyLink)) throw new LifecycleError(`Disposable ${worktree.arm} worktree unexpectedly contains node_modules.`);
   symlinkSync(path.join(coordinator, "node_modules"), dependencyLink, "dir");
   const controller = new BrowserExecutionController({ name: `plan019-paired-${pair}-${worktree.arm}-${replacement + 1}` });
-  state.controllers.add(controller);
+  const controllerRecord = { controller, pair, arm: worktree.arm, replacement };
+  state.controllers.add(controllerRecord);
   const resources = [];
-  let browserServer = null;
   let browser = null;
   let page = null;
   let captureError = null;
@@ -591,16 +785,22 @@ async function captureArmAttempt({ coordinator, worktree, pair, orderIndex, repl
     }});
     assertManifestResponse(await fetch(manifestUrl));
     const playwright = await import("playwright");
-    await controller.releasePort(allocation.debugPort);
-    browserServer = await playwright.chromium.launchServer({
-      executablePath: CHROME_BIN,
-      headless: true,
-      args: [...AMD_VULKAN_FLAGS, `--remote-debugging-port=${allocation.debugPort}`]
+    await controller.startChrome({
+      chromeBin: CHROME_BIN,
+      debugPort: allocation.debugPort,
+      profilePath,
+      extraArgs: [...AMD_VULKAN_FLAGS, `--window-size=${IDENTITY.viewport.width},${IDENTITY.viewport.height}`, "--force-device-scale-factor=1"]
     });
-    controller.trackOwnedPid(browserServer.process().pid);
-    browser = await playwright.chromium.connect(browserServer.wsEndpoint());
-    const context = await browser.newContext({ viewport: { width: IDENTITY.viewport.width, height: IDENTITY.viewport.height }, deviceScaleFactor: IDENTITY.viewport.deviceScaleFactor });
+    await waitForReadiness({ probe: async () => {
+      throwIfAborted(state.abortController.signal);
+      try { const response = await fetch(`http://127.0.0.1:${allocation.debugPort}/json/version`); return { ready: response.status === 200, progress: `cdp-${response.status}` }; }
+      catch (error) { return { ready: false, progress: `cdp-${error.code ?? error.name}` }; }
+    }});
+    browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${allocation.debugPort}`);
+    const context = browser.contexts()[0];
+    if (!context) throw new InvalidArmError("System Chrome did not expose its owned default context.");
     page = await context.newPage();
+    await page.setViewportSize({ width: IDENTITY.viewport.width, height: IDENTITY.viewport.height });
     await page.goto(`http://127.0.0.1:${allocation.serverPort}/?smoke=1&perfProfile=${IDENTITY.profile}`, { waitUntil: "domcontentloaded", timeout: 120_000 });
     await waitForReadiness({ probe: async () => {
       throwIfAborted(state.abortController.signal);
@@ -632,13 +832,15 @@ async function captureArmAttempt({ coordinator, worktree, pair, orderIndex, repl
     let t15 = null;
     let stopped = null;
     let lastResourceAt = 0;
+    let lastRafTimestamp = qualification.rafTimestamps.at(-1);
     await controller.runCapture({
       intervalMs: 25,
       readFrame: async () => {
         throwIfAborted(state.abortController.signal);
         const frame = await withTimeout(page.evaluate(() => new Promise((resolve) => requestAnimationFrame((timestamp) => resolve({ timestamp, focused: document.hasFocus(), visibility: document.visibilityState })))), 2_000, "RAF");
         if (!frame.focused || frame.visibility !== "visible") throw new InvalidArmError("Document focus or visibility changed during capture.");
-        return { rafAdvanced: Number.isFinite(frame.timestamp) && frame.timestamp > 0 };
+        lastRafTimestamp = advanceRafTimestamp(lastRafTimestamp, frame.timestamp);
+        return { rafAdvanced: true };
       },
       shouldStop: async () => {
         const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
@@ -686,18 +888,21 @@ async function captureArmAttempt({ coordinator, worktree, pair, orderIndex, repl
       : new InvalidArmError(`Pair ${pair} ${worktree.arm} capture attempt ${replacement + 1} was invalid.`, error);
   } finally {
     const closeErrors = [];
-    try { await page?.context().close(); } catch (error) { closeErrors.push(error); }
+    try { await page?.close(); } catch (error) { closeErrors.push(error); }
     try { await browser?.close(); } catch (error) { closeErrors.push(error); }
-    try { await browserServer?.close(); } catch (error) { closeErrors.push(error); }
     let cleanup = null;
     try {
-      cleanup = await controller.cleanup();
+      const controllerCleanup = await cleanupTrackedController(controllerRecord, state.controllers);
+      try {
+        removeOwnedBrowserProfile({ profilePath, root: state.profileRoot });
+        state.profilePaths.delete(profilePath);
+      } catch (error) { closeErrors.push(error); }
+      cleanup = { ...controllerCleanup, profileResiduals: existsSync(profilePath) ? [profilePath] : [] };
       validateCleanup(cleanup);
     } catch (error) {
       closeErrors.push(error);
-      cleanup = controller.lastCleanup ?? { residualPids: ["unknown"], openPorts: ["unknown"] };
+      cleanup = { ...(controller.lastCleanup ?? { residualPids: ["unknown"], openPorts: ["unknown"] }), profileResiduals: existsSync(profilePath) ? [profilePath] : [] };
     }
-    state.controllers.delete(controller);
     try { if (existsSync(dependencyLink)) unlinkSync(dependencyLink); } catch (error) { closeErrors.push(error); }
     try { validateArmIdentity(worktree); } catch (error) { closeErrors.push(error); }
     resources.push(resourceRecord("post-cleanup", worktree, pair, replacement));

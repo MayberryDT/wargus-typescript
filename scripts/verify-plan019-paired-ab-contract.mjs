@@ -336,7 +336,7 @@ try {
 
 console.log("Plan 019 paired A/B analysis contract verified.");
 
-const { existsSync, mkdirSync } = await import("node:fs");
+const { existsSync, mkdirSync, renameSync, unlinkSync } = await import("node:fs");
 process.env.WARGUS_PAIRED_AB_CONTRACT_TEST = "1";
 const {
   acquireDiagnosticLock,
@@ -344,6 +344,7 @@ const {
   assertManifestResponse,
   assertRetainedStorage,
   assertTrialPacketComplete,
+  buildPairArmReference,
   canonicalIdentity,
   createDiagnosticDirectory,
   publishAtomicDiagnostic,
@@ -514,7 +515,7 @@ assert.throws(
 
 const qualification = {
   webgl2: true,
-  renderer: "ANGLE (AMD, AMD Radeon RX 7900 XTX, Vulkan)",
+  renderer: "ANGLE (AMD, Vulkan 1.4.318 (AMD Radeon Graphics (RADV RENOIR) (0x0000164C)), radv)",
   vendor: "Google Inc. (AMD)",
   focused: true,
   visibility: "visible",
@@ -546,40 +547,25 @@ assert.throws(
   "Fingerprint drift must fail qualification."
 );
 
-assert.deepEqual(validateCleanup({ residualPids: [], openPorts: [] }), {
+assert.deepEqual(validateCleanup({ residualPids: [], openPorts: [], profileResiduals: [] }), {
   residualPids: [],
-  openPorts: []
+  openPorts: [],
+  profileResiduals: []
 });
 assert.throws(
-  () => validateCleanup({ residualPids: [123], openPorts: [] }),
+  () => validateCleanup({ residualPids: [123], openPorts: [], profileResiduals: [] }),
   /cleanup incomplete/i,
   "Residual owned PIDs must prevent publication."
 );
 assert.throws(
-  () => validateCleanup({ residualPids: [], openPorts: [55000] }),
+  () => validateCleanup({ residualPids: [], openPorts: [55000], profileResiduals: [] }),
   /cleanup incomplete/i,
   "Residual owned ports must prevent publication."
 );
 
 const publicationDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-paired-publish-"));
 try {
-  for (const name of ["environment.json", "pairs.json", "resources.json", "lifecycle.json"]) {
-    writeFileSync(path.join(publicationDirectory, name), "{}\n");
-  }
-  const summary = {
-    schemaVersion: 1,
-    ready: true,
-    captureComplete: true,
-    validTrialCount: 30,
-    classification: { realRegression: false },
-    pairs: Array.from({ length: 15 }, (_, index) => ({ pair: index + 1 })),
-    lifecycle: {
-      cleanupPass: true,
-      worktreesRemoved: true,
-      lockReleased: true,
-      finalizationPass: true
-    }
-  };
+  const summary = writePublicationFixture(publicationDirectory);
   assert.throws(
     () => publishAtomicDiagnostic(publicationDirectory, {
       ...summary,
@@ -606,4 +592,265 @@ try {
   );
 } finally {
   rmSync(publicationDirectory, { recursive: true, force: true });
+}
+
+const {
+  advanceRafTimestamp,
+  allocateArmWorktreeRecords,
+  buildSupportingPairedMetrics,
+  cleanupArmWorktreeRecords,
+  cleanupTrackedController,
+  createOwnedBrowserProfile,
+  removeOwnedBrowserProfile,
+  validatePublicationPacket
+} = await import("./run-plan019-paired-ab-diagnostic.mjs");
+
+const defaultStampRoot = mkdtempSync(path.join(tmpdir(), "wargus-plan019-default-stamp-"));
+try {
+  const defaultStampedDirectory = createDiagnosticDirectory(defaultStampRoot);
+  assert.match(path.basename(defaultStampedDirectory), /^\d{8}T\d{6}Z$/, "Default diagnostic stamps must use UTC basic seconds.");
+} finally {
+  rmSync(defaultStampRoot, { recursive: true, force: true });
+}
+
+const realAmdVulkanRenderer = "ANGLE (AMD, Vulkan 1.4.318 (AMD Radeon Graphics (RADV RENOIR) (0x0000164C)), radv)";
+assert.equal(validateQualification({ ...qualification, renderer: realAmdVulkanRenderer }, {
+  expectedRenderer: realAmdVulkanRenderer,
+  expectedFingerprintHash: "fingerprint-1"
+}).renderer, realAmdVulkanRenderer);
+for (const rejectedRenderer of [
+  "ANGLE (Intel, Vulkan 1.3.0 (Intel UHD Graphics), intel)",
+  "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA RTX 4090), nvidia)",
+  "ANGLE (AMD, AMD Radeon Graphics, OpenGL 4.6)"
+]) {
+  assert.throws(
+    () => validateQualification({ ...qualification, renderer: rejectedRenderer }, {
+      expectedRenderer: rejectedRenderer,
+      expectedFingerprintHash: "fingerprint-1"
+    }),
+    /AMD Radeon Vulkan/i,
+    `Renderer ${rejectedRenderer} must not satisfy the AMD Vulkan contract.`
+  );
+}
+
+const allocationRegistry = [];
+const allocationEvents = [];
+const allocationRoot = "/tmp/wargus-plan019-injected-worktrees";
+assert.throws(
+  () => allocateArmWorktreeRecords({
+    root: allocationRoot,
+    definitions: [
+      { arm: "base", commit: identity.baseCommit },
+      { arm: "plan019", commit: identity.plan019Commit }
+    ],
+    registry: allocationRegistry,
+    operations: {
+      createRoot: () => allocationEvents.push("create-root"),
+      add: (record) => {
+        allocationEvents.push(`add:${record.arm}`);
+        if (record.arm === "plan019") throw new Error("injected add failure after allocation");
+      },
+      validate: (record) => allocationEvents.push(`validate:${record.arm}`),
+      remove: (record) => {
+        allocationEvents.push(`remove:${record.arm}`);
+        if (record.arm === "plan019") throw new Error("injected first cleanup failure");
+      },
+      removeRoot: () => allocationEvents.push("remove-root")
+    }
+  }),
+  /allocation.*cleanup/i,
+  "Partial worktree allocation plus cleanup failure must propagate."
+);
+assert.deepEqual(allocationRegistry.map(({ arm }) => arm), ["base", "plan019"], "Every attempted worktree must remain durably tracked after allocation failure.");
+assert.ok(allocationEvents.includes("remove:base"), "Allocation rollback must attempt every exact known worktree.");
+assert.ok(allocationEvents.includes("remove:plan019"), "Allocation rollback must include the partially added worktree.");
+cleanupArmWorktreeRecords({
+  root: allocationRoot,
+  records: allocationRegistry,
+  operations: {
+    remove: (record) => allocationEvents.push(`retry-remove:${record.arm}`),
+    removeRoot: () => allocationEvents.push("retry-remove-root")
+  }
+});
+assert.ok(allocationEvents.includes("retry-remove:plan019"), "Outer cleanup must be able to retry every exact retained worktree record.");
+
+const profileRoot = mkdtempSync(path.join(tmpdir(), "wargus-plan019-profiles-"));
+try {
+  const firstProfile = createOwnedBrowserProfile({ root: profileRoot, pair: 1, arm: "base", replacement: 0 });
+  const secondProfile = createOwnedBrowserProfile({ root: profileRoot, pair: 1, arm: "plan019", replacement: 0 });
+  assert.notEqual(firstProfile, secondProfile, "Every arm must own a unique browser profile path.");
+  assert.throws(
+    () => validateCleanup({ residualPids: [], openPorts: [], profileResiduals: [firstProfile] }),
+    /profile/i,
+    "An owned Chrome profile residual must fail lifecycle cleanup."
+  );
+  removeOwnedBrowserProfile({ profilePath: firstProfile, root: profileRoot });
+  removeOwnedBrowserProfile({ profilePath: secondProfile, root: profileRoot });
+  assert.equal(existsSync(firstProfile), false);
+  assert.equal(existsSync(secondProfile), false);
+} finally {
+  rmSync(profileRoot, { recursive: true, force: true });
+}
+
+const trackedControllers = new Set();
+let controllerCleanupAttempts = 0;
+const trackedController = {
+  cleanup: async () => {
+    controllerCleanupAttempts += 1;
+    if (controllerCleanupAttempts === 1) return { residualPids: [123], openPorts: [], profileResiduals: [] };
+    return { residualPids: [], openPorts: [], profileResiduals: [] };
+  }
+};
+const trackedRecord = { controller: trackedController, scope: "contract-retry" };
+trackedControllers.add(trackedRecord);
+await assert.rejects(
+  () => cleanupTrackedController(trackedRecord, trackedControllers),
+  /cleanup incomplete/i,
+  "A failed controller cleanup must remain retryable."
+);
+assert.equal(trackedControllers.has(trackedRecord), true, "Failed cleanup must not delete the tracked controller.");
+await cleanupTrackedController(trackedRecord, trackedControllers);
+assert.equal(trackedControllers.has(trackedRecord), false, "Only verified clean controller state may be untracked.");
+assert.equal(controllerCleanupAttempts, 2);
+
+assert.equal(advanceRafTimestamp(100, 116.7), 116.7);
+assert.throws(() => advanceRafTimestamp(116.7, 116.7), /advancing RAF/i, "Repeated positive RAF timestamps must invalidate capture.");
+assert.throws(() => advanceRafTimestamp(116.7, 100), /advancing RAF/i, "Decreasing RAF timestamps must invalidate capture.");
+
+const supportingBase = Array.from({ length: 15 }, (_, index) => supportingTrial(index + 1, 50, 10));
+const supportingAfter = Array.from({ length: 15 }, (_, index) => supportingTrial(index + 1, 55, 12));
+const supporting = buildSupportingPairedMetrics({ baseTrials: supportingBase, plan019Trials: supportingAfter });
+assert.equal(supporting.length, 15);
+assert.deepEqual(supporting[0], {
+  pair: 1,
+  frame: {
+    p50Ms: { base: 25, plan019: 27.5, delta: 2.5, relativeDeltaPercent: 10 },
+    p95Ms: { base: 50, plan019: 55, delta: 5, relativeDeltaPercent: 10 },
+    p99Ms: { base: 75, plan019: 82.5, delta: 7.5, relativeDeltaPercent: 10 },
+    meanMs: { base: 30, plan019: 33, delta: 3, relativeDeltaPercent: 10 },
+    maxMs: { base: 100, plan019: 110, delta: 10, relativeDeltaPercent: 10 },
+    over50Count: { base: 10, plan019: 12, delta: 2, relativeDeltaPercent: 20 },
+    over100Count: { base: 2, plan019: 3, delta: 1, relativeDeltaPercent: 50 }
+  },
+  update: {
+    p95Ms: { base: 5, plan019: 5.5, delta: 0.5, relativeDeltaPercent: 10 },
+    meanMs: { base: 2, plan019: 2.2, delta: 0.2, relativeDeltaPercent: 10 }
+  },
+  renderPreparation: {
+    p95Ms: { base: 3, plan019: 3.3, delta: 0.3, relativeDeltaPercent: 10 },
+    meanMs: { base: 1, plan019: 1.1, delta: 0.1, relativeDeltaPercent: 10 }
+  },
+  scheduler: {
+    droppedDeltaSeconds: { base: 0, plan019: 0, delta: 0, relativeDeltaPercent: null },
+    maxBacklogSeconds: { base: 0.1, plan019: 0.11, delta: 0.01, relativeDeltaPercent: 10 }
+  }
+});
+
+assert.deepEqual(buildPairArmReference({ arm: "plan019", file: "pair-01-plan019.json", replacement: 0, stamp: "pair-01-plan019-attempt-1", valid: true }, 1), {
+  arm: "plan019", orderIndex: 1, file: "pair-01-plan019.json", replacement: 0, stamp: "pair-01-plan019-attempt-1", valid: true
+});
+
+const packetDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-packet-valid-"));
+try {
+  const packetSummary = writePublicationFixture(packetDirectory);
+  assert.equal(validatePublicationPacket(packetDirectory, packetSummary).trialFiles.length, 30);
+
+  const missingDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-packet-missing-"));
+  try {
+    const missingSummary = writePublicationFixture(missingDirectory);
+    unlinkSync(path.join(missingDirectory, missingSummary.pairs[0].arms[0].file));
+    assert.throws(() => validatePublicationPacket(missingDirectory, missingSummary), /missing.*raw trial/i);
+  } finally { rmSync(missingDirectory, { recursive: true, force: true }); }
+
+  const extraDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-packet-extra-"));
+  try {
+    const extraSummary = writePublicationFixture(extraDirectory);
+    writeFileSync(path.join(extraDirectory, "pair-99-base.json"), "{}\n");
+    assert.throws(() => validatePublicationPacket(extraDirectory, extraSummary), /extra.*raw trial/i);
+  } finally { rmSync(extraDirectory, { recursive: true, force: true }); }
+
+  const mismatchDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-packet-mismatch-"));
+  try {
+    const mismatchSummary = writePublicationFixture(mismatchDirectory);
+    const firstFile = mismatchSummary.pairs[0].arms[0].file;
+    const mismatched = JSON.parse(readFileSync(path.join(mismatchDirectory, firstFile), "utf8"));
+    mismatched.arm = "plan019";
+    writeFileSync(path.join(mismatchDirectory, firstFile), `${JSON.stringify(mismatched)}\n`);
+    assert.throws(() => validatePublicationPacket(mismatchDirectory, mismatchSummary), /raw trial.*mismatch/i);
+  } finally { rmSync(mismatchDirectory, { recursive: true, force: true }); }
+
+  const noRawDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-packet-zero-"));
+  try {
+    const noRawSummary = writePublicationFixture(noRawDirectory, { writeTrials: false });
+    assert.throws(() => validatePublicationPacket(noRawDirectory, noRawSummary), /missing.*raw trial/i);
+  } finally { rmSync(noRawDirectory, { recursive: true, force: true }); }
+
+  const legacyPostRenameDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-post-rename-"));
+  try {
+    const legacySummary = writePublicationFixture(legacyPostRenameDirectory);
+    const result = publishAtomicDiagnostic(legacyPostRenameDirectory, legacySummary, {
+      readyRename: (from, to) => {
+        renameSync(from, to);
+        throw new Error("injected legacy post-rename fsync failure");
+      }
+    });
+    assert.equal(result.published, false);
+    assert.equal(JSON.parse(readFileSync(path.join(legacyPostRenameDirectory, "paired-diagnostic-summary.json"), "utf8")).ready, false, "An injected legacy post-rename failure must be durably downgraded.");
+  } finally { rmSync(legacyPostRenameDirectory, { recursive: true, force: true }); }
+
+  const finalVerifyDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-final-verify-"));
+  try {
+    const finalVerifySummary = writePublicationFixture(finalVerifyDirectory);
+    const result = publishAtomicDiagnostic(finalVerifyDirectory, finalVerifySummary, {
+      verifyFinalManifest: () => { throw new Error("injected final verification failure"); }
+    });
+    assert.equal(result.published, false);
+    assert.equal(JSON.parse(readFileSync(path.join(finalVerifyDirectory, "paired-diagnostic-summary.json"), "utf8")).ready, false, "Final verification failure must never persist READY.");
+  } finally { rmSync(finalVerifyDirectory, { recursive: true, force: true }); }
+} finally {
+  rmSync(packetDirectory, { recursive: true, force: true });
+}
+
+function supportingTrial(pair, frameP95Ms, over50Count) {
+  const scale = frameP95Ms / 50;
+  return {
+    pair,
+    statistics: {
+      frame: { p50Ms: 25 * scale, p95Ms: frameP95Ms, p99Ms: 75 * scale, meanMs: 30 * scale, maxMs: 100 * scale, thresholdCounts: { over50Ms: over50Count, over100Ms: frameP95Ms === 50 ? 2 : 3 } },
+      update: { p95Ms: 5 * scale, meanMs: 2 * scale },
+      renderPreparation: { p95Ms: 3 * scale, meanMs: 1 * scale }
+    },
+    stopped: { frameSamples: [25 * scale, frameP95Ms, frameP95Ms, frameP95Ms], scheduler: { droppedDeltaSeconds: 0, maxBacklogSeconds: 0.1 * scale } }
+  };
+}
+
+function writePublicationFixture(directory, { writeTrials = true } = {}) {
+  const pairs = buildAlternatingPairs(15).map(({ pair, order }) => ({
+    pair,
+    order,
+    arms: order.map((arm, orderIndex) => ({
+      ...buildPairArmReference({
+        arm,
+        file: `pair-${String(pair).padStart(2, "0")}-${arm}.json`,
+        replacement: 0,
+        stamp: `pair-${String(pair).padStart(2, "0")}-${arm}-attempt-1`,
+        valid: true
+      }, orderIndex)
+    }))
+  }));
+  for (const name of ["environment.json", "resources.json", "lifecycle.json"]) writeFileSync(path.join(directory, name), "{}\n");
+  writeFileSync(path.join(directory, "pairs.json"), `${JSON.stringify({ schemaVersion: 1, completed: pairs }, null, 2)}\n`);
+  if (writeTrials) for (const pair of pairs) for (const arm of pair.arms) {
+    writeFileSync(path.join(directory, arm.file), `${JSON.stringify({ pair: pair.pair, arm: arm.arm, orderIndex: arm.orderIndex, stamp: arm.stamp, replacement: arm.replacement, valid: true })}\n`);
+  }
+  return {
+    schemaVersion: 1,
+    ready: true,
+    captureComplete: true,
+    validTrialCount: 30,
+    classification: { realRegression: false },
+    supportingPairedMetrics: Array.from({ length: 15 }, (_, index) => ({ pair: index + 1 })),
+    pairs,
+    lifecycle: { cleanupPass: true, profilesRemoved: true, worktreesRemoved: true, lockReleased: true, finalizationPass: true }
+  };
 }
