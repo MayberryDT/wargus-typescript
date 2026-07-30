@@ -65,9 +65,7 @@ export function classifyPairedDiagnostic({ baseTrials, plan019Trials } = {}) {
   });
 
   const medianPairedFrameP95RegressionPercent = median(pairedDeltas);
-  const regressedPairCount = pairedDeltas.filter(
-    (delta) => delta > REGRESSION_THRESHOLD_PERCENT
-  ).length;
+  const regressedPairCount = pairedDeltas.filter(exceedsRegressionThreshold).length;
   const pooledBaseFrameP95Ms = pooledP95(baseTrials);
   const pooledPlan019FrameP95Ms = pooledP95(plan019Trials);
   const pooledFrameP95RegressionPercent = relativeDeltaPercent(
@@ -76,11 +74,11 @@ export function classifyPairedDiagnostic({ baseTrials, plan019Trials } = {}) {
   );
   const conditions = {
     medianOverFivePercent:
-      medianPairedFrameP95RegressionPercent > REGRESSION_THRESHOLD_PERCENT,
+      exceedsRegressionThreshold(medianPairedFrameP95RegressionPercent),
     atLeastElevenPairsOverFivePercent:
       regressedPairCount >= REQUIRED_REGRESSED_PAIR_COUNT,
     pooledOverFivePercent:
-      pooledFrameP95RegressionPercent > REGRESSION_THRESHOLD_PERCENT
+      exceedsRegressionThreshold(pooledFrameP95RegressionPercent)
   };
 
   return {
@@ -168,6 +166,11 @@ function validateTrial(trial, label) {
   if (samples.some((sample) => !Number.isFinite(sample) || sample < 0)) {
     throw new Error(`${label}.stopped.frameSamples must contain only non-negative finite numbers.`);
   }
+}
+
+function exceedsRegressionThreshold(value) {
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), REGRESSION_THRESHOLD_PERCENT) * 8;
+  return value - REGRESSION_THRESHOLD_PERCENT > tolerance;
 }
 
 function median(values) {

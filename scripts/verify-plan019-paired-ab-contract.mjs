@@ -140,6 +140,26 @@ assert.deepEqual(greaterThanFivePercent.conditions, {
 });
 assert.equal(greaterThanFivePercent.realRegression, true);
 
+const decimalBaseTrials = baseTrials.map((trial) => ({
+  ...trial,
+  statistics: { frame: { p95Ms: 16.7 } },
+  stopped: { frameSamples: [16.7, 16.7, 16.7, 16.7] }
+}));
+const decimalExactFivePercent = classifyPairedDiagnostic({
+  baseTrials: decimalBaseTrials,
+  plan019Trials: decimalBaseTrials.map((trial) => ({
+    ...trial,
+    statistics: { frame: { p95Ms: 17.535 } },
+    stopped: { frameSamples: [17.535, 17.535, 17.535, 17.535] }
+  }))
+});
+assert.deepEqual(decimalExactFivePercent.conditions, {
+  medianOverFivePercent: false,
+  atLeastElevenPairsOverFivePercent: false,
+  pooledOverFivePercent: false
+}, "Mathematical +5% with a non-binary decimal base must pass every strict threshold.");
+assert.equal(decimalExactFivePercent.realRegression, false);
+
 const invalidInputs = [
   {
     label: "missing pair",
