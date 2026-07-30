@@ -1,3 +1,5 @@
+
+Accepted-base recovery: `campaigns/human-exp/levelx10h.smp.gz` can enter an unbounded synchronous defensive-auto-attack pathfinding burst immediately after its briefing is dismissed. If the full playable verifier reproduces the accepted-base stack `sourceAttackTargetPathResult -> findPathResult -> searchReachable -> footprintSearchCost`, preserve that failure as inherited Plan 024 evidence, run the remaining representative maps plus Plan 022 renderer-specific browser and visual gates, and continue. Integrate the reviewed Plan 022 renderer slice without declaring the inherited map green. Plan 024 must eliminate the burst, after which the coordinator reruns the full unfiltered playable verifier and backfills Plan 022 browser acceptance before final closeout.
 # Plan 022: Retain World Display Objects
 
 > **Executor instructions:** Execute this Wave 3 plan in an isolated Halla

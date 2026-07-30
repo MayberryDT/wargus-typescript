@@ -29,7 +29,7 @@
   (`git rev-parse HEAD` printed the same SHA)
 
 Plans 022 and 023 must both finish and integrate before any Wave 4 executor
-starts. After Wave 3 integration, the coordinator must compare the integrated
+starts. The Plan 022 renderer implementation may enter Wave 4 with only the explicitly inherited `levelx10h` synchronous pathfinding gate deferred, provided every Plan 022-owned focused, visual, lifecycle, build, determinism, and unaffected browser gate passed and the accepted base reproduced the same pathfinding stack. Plan 024 owns eliminating that burst and must rerun the full unfiltered playable verifier to backfill Plan 022 before either plan closes. After Wave 3 integration, the coordinator must compare the integrated
 tree with the concrete rewrite base. If any cited pathfinding, order,
 occupancy, save, normalizer, verifier, or performance seam changed, the
 coordinator must amend this plan with the new accepted concrete SHA, refreshed
