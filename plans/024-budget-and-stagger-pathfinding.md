@@ -8,10 +8,10 @@
 > and [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md)
 > unchanged. Implement resumable A* and the node-expansion budget from the
 > first scheduler commit. Pending path requests and resumable progress are
-> authoritative, mandatory save state. Stop on every STOP condition.
+> authoritative, mandatory save state. Handle every recovery condition autonomously: preserve evidence, diagnose, correct, and rerun.
 >
 > **Drift check:** Run every command and inventory in `Current state` first.
-> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
+> Record and reconcile any accepted-base, excerpt, ownership, or dependency drift before continuing.
 
 ## Status
 
@@ -29,13 +29,13 @@
   (`git rev-parse HEAD` printed the same SHA)
 
 Plans 022 and 023 must both finish and integrate before any Wave 4 executor
-starts. After Wave 3 integration, the coordinator must compare the integrated
+starts. The Plan 022 renderer implementation may enter Wave 4 with only the explicitly inherited `levelx10h` synchronous pathfinding gate deferred, provided every Plan 022-owned focused, visual, lifecycle, build, determinism, and unaffected browser gate passed and the accepted base reproduced the same pathfinding stack. Plan 024 owns eliminating that burst and must rerun the full unfiltered playable verifier to backfill Plan 022 before either plan closes. After Wave 3 integration, the coordinator must compare the integrated
 tree with the concrete rewrite base. If any cited pathfinding, order,
 occupancy, save, normalizer, verifier, or performance seam changed, the
 coordinator must amend this plan with the new accepted concrete SHA, refreshed
 excerpts, inventories, and exact handoff names before Plan 024 begins. Never
 replace a concrete SHA with a symbolic token. If the refresh is absent when a
-cited seam differs, STOP.
+cited seam differs, create the coordinator refresh before continuing.
 
 Plan 024 and Plan 025 may execute concurrently only while the ownership tables
 in both plans remain disjoint. Plan 024 owns path requests and save-schema
@@ -151,7 +151,7 @@ integration; Plan 019 terrain, Plan 020 first-match ID lookup, and Plan 023
 authoritative occupancy order remain intact; every path request/retry and
 path-relevant mutation is inventoried; and save/load still follows additive
 version-1 normalization. If any cited seam differs without the coordinator
-refresh required above, STOP.
+refresh required above, create it before continuing.
 
 ## Commands you will need
 
@@ -381,7 +381,7 @@ the accepted-base `footprintSearchCost` for every in-map anchor in row-major
 order and freezes four `Uint8Array(tileCount)` cost planes in this exact mode
 order: `none`, `all`, `path-planning`, `static`. Encode blocked as 0,
 cost 1 as 1, and moving-occupant cost 5 as 5; any other accepted-base result is
-a drift STOP requiring a plan amendment. Out-of-map anchors remain implicitly
+drift requiring a plan amendment. Out-of-map anchors remain implicitly
 blocked. These four planes fully cover goal validity, nearest tracking,
 diagonal corner checks, terrain rules, and Plan 023 ordered occupancy outcomes
 used by current `pathfinding.ts`.
@@ -413,10 +413,9 @@ snapshot is installed and before the first expansion, represented as
 service opportunity,
 fail it deterministically as `path-snapshot-capacity` through the existing
 no-route outcome. A snapshot over 8,388,608 bytes fails deterministically as
-`path-snapshot-oversize`. Both failures are acceptance STOPs and neither may
+`path-snapshot-oversize`. Both are acceptance failures requiring correction, and neither may
 fall back synchronously or to live reads. Snapshot capture is atomic, timed,
-and included in direct fixed-step acceptance; a capture-time budget failure is
-also a STOP but never a wall-clock input to gameplay.
+and included in direct fixed-step acceptance; a capture-time budget failure also requires correction but is never a wall-clock input to gameplay.
 
 Completion revalidates the path, target, unit eligibility, and intent against
 the current authoritative world. If the intent remains valid but the route is
@@ -897,9 +896,7 @@ p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
 plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
 evidence; work counts alone do not suffice.
 
-STOP performance acceptance on invalid-trial exhaustion, environment or
-fingerprint drift, a new budget-failure key, a frame p95 regression greater
-than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+When invalid-trial exhaustion, environment or fingerprint drift, a new budget-failure key, a frame p95 regression greater than 5%, missing targeted work-reduction proof, or incomplete durable evidence occurs, preserve the failed evidence, diagnose and correct the cause, then recapture until the acceptance contract passes.
 The existing functional, parity, save, visual, cadence, lifecycle, and
 plan-specific targeted-proof gates remain independent requirements. The plan
 may close when `incrementalReady` and those independent requirements pass.
@@ -966,7 +963,9 @@ on `/tmp` as durable evidence.
 - [ ] The branch contains only Plan 024-owned files; coordinator
   main/performance-schema/package/README integration is separate.
 
-## STOP conditions
+## Autonomous recovery conditions
+
+These conditions are failures to diagnose and correct, not instructions to pause the task, ask the user, or abandon the remaining roadmap. Preserve the failed evidence, keep the last green checkpoint, make the smallest safe correction in the owning plan or coordinator integration, and rerun the exact gate until it passes.
 
 - Either Wave 3 plan has not passed every exit gate and integrated, or any
   technical dependency, durable artifact, checksum, fingerprint, route oracle,

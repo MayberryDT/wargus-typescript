@@ -106,8 +106,10 @@ Only one active implementation plan may own a hotspot at a time:
 | `scripts/verify-browser-runtime-smoke.mjs` | 014 -> 017 |
 | `scripts/verify-save-schema.mjs` | 011 -> 013 -> 014 |
 
-If a plan would edit a hotspot owned by an unfinished predecessor, STOP. Do not
-resolve the conflict by copying one plan's future implementation into another.
+If a plan would edit a hotspot owned by an unfinished predecessor, serialize
+that work behind the predecessor or move the shared edit into coordinator
+integration. Do not resolve the conflict by copying one plan.s future
+implementation into another.
 
 ## Per-plan landing protocol
 
