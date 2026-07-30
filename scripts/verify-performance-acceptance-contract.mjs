@@ -69,7 +69,7 @@ assert.match(pairedRemediationPlan, /run-wave2-successor-capture\.mjs/);
 for (const [planId, targetSha] of [
   ["019", "5935a17f456868051c2c16b2f0d8d2b4da56d115"],
   ["020", "9bab6b0e3f7d260148cc1c0f5c1c231098046e19"],
-  ["021", "d943d6afacb281b4c136bebd9a2aeb72b77fd19c"]
+  ["021", "859d5de4441cba8b714d1022034887947150fdbe"]
 ]) {
   assert.match(pairedRemediationPlan, new RegExp(targetSha));
   assert.match(pairedRemediationPlan, new RegExp(`WARGUS_PERF_PLAN=${planId} WARGUS_PERF_ACCEPTANCE_MODE=incremental npm run capture:wave2-successor`));

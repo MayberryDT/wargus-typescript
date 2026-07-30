@@ -76,7 +76,7 @@ assert.deepEqual([...helpers.allowedPreCaptureFiles({ baseline: false, external:
 const expectedWave2Captures = {
   "019": { targetSha: "5935a17f456868051c2c16b2f0d8d2b4da56d115", rows: "3,5,7" },
   "020": { targetSha: "9bab6b0e3f7d260148cc1c0f5c1c231098046e19", rows: "6" },
-  "021": { targetSha: "d943d6afacb281b4c136bebd9a2aeb72b77fd19c", rows: "3,4,6" }
+  "021": { targetSha: "859d5de4441cba8b714d1022034887947150fdbe", rows: "3,4,6" }
 };
 for (const [planId, expected] of Object.entries(expectedWave2Captures)) {
   assert.match(wave2CoordinatorSource, new RegExp(expected.targetSha));
