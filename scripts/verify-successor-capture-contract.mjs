@@ -21,7 +21,7 @@ assert.equal(JSON.stringify(measuredPairStarts), JSON.stringify([500, 1500, 2500
 const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "realPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
-  "targetedVerifierPaths", "acceptedBaselineIdentity", "validateCaptureAttribution",
+  "targetedVerifierPaths", "acceptedBaselineIdentity", "validateAcceptedBaselineSummary", "validateCaptureAttribution",
   "captureConfiguration", "baselineReadiness", "robustFrameP95Acceptance", "successorAcceptance", "errorRecord"
 ]);
 
@@ -297,17 +297,33 @@ assert.equal(JSON.stringify(helpers.targetedVerifierPaths("019")), JSON.stringif
 assert.equal(JSON.stringify(helpers.targetedVerifierPaths("024")), JSON.stringify(["scripts/verify-pathfinding-budget.mjs", "scripts/verify-x12-first-tick.mjs"]), "Plan 024 must retain both new verifier results.");
 
 const pinnedBaseline = helpers.acceptedBaselineIdentity("/retained/.artifacts", {});
-assert.equal(pinnedBaseline.captureSha, "033629474959122749f6acb013ed6c2a0c0d2556");
-assert.equal(pinnedBaseline.stamp, "20260729T051148Z");
-assert.equal(pinnedBaseline.manifestSha256, "657dec5af935823fc27beaf16034b78813b4090244f22146effefc430040bed1");
-assert.equal(pinnedBaseline.directory, "/retained/.artifacts/performance/018/033629474959122749f6acb013ed6c2a0c0d2556/20260729T051148Z");
+assert.equal(pinnedBaseline.captureSha, "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b");
+assert.equal(pinnedBaseline.stamp, "20260730T075608266Z");
+assert.equal(pinnedBaseline.manifestSha256, "21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06");
+assert.equal(pinnedBaseline.directory, "/retained/.artifacts/performance/018/5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/20260730T075608266Z");
 assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_CAPTURE_SHA: "wrong" }), /accepted Plan 018 capture/i);
 assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_MATRIX_DIR: "/wrong/stamp" }), /accepted Plan 018 directory/i);
 assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_MANIFEST_SHA256: "wrong" }), /accepted Plan 018 manifest/i);
 assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_CAPTURE_SHA: "" }), /accepted Plan 018 capture/i);
 assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_MATRIX_DIR: "" }), /accepted Plan 018 directory/i);
 assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_MANIFEST_SHA256: "" }), /accepted Plan 018 manifest/i);
-assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_MATRIX_DIR: pinnedBaseline.directory + "/../20260729T051148Z" }), /accepted Plan 018 directory/i);
+assert.throws(() => helpers.acceptedBaselineIdentity("/retained/.artifacts", { WARGUS_BASELINE_MATRIX_DIR: pinnedBaseline.directory + "/../20260730T075608266Z" }), /accepted Plan 018 directory/i);
+
+const acceptedSchema4Summary = {
+  schemaVersion: 4,
+  run: { captureSha: pinnedBaseline.captureSha },
+  ready: true,
+  qualifiedTrialCount: 49,
+  rows: Array.from({ length: 7 }, () => ({}))
+};
+assert.doesNotThrow(() => helpers.validateAcceptedBaselineSummary(acceptedSchema4Summary, pinnedBaseline.captureSha),
+  "The pinned schema-v4 49-trial baseline summary shape must load.");
+assert.throws(() => helpers.validateAcceptedBaselineSummary({
+  ...acceptedSchema4Summary,
+  schemaVersion: 3,
+  qualifiedTrialCount: 21
+}, pinnedBaseline.captureSha), /schema.*identity.*readiness.*canonical row count/i,
+  "The historical schema-v3 21-trial packet must remain rejected by the schema-v4 loader.");
 
 assert.doesNotThrow(() => helpers.validateCaptureAttribution("abc", "abc", ""));
 assert.throws(() => helpers.validateCaptureAttribution("abc", "def", ""), /capture SHA/i);
@@ -623,6 +639,8 @@ function loadHelpers(moduleSource, names) {
     ATTACK_COMMAND_OFFSET_MS: 250,
     COMMAND_PAIR_DEADLINE_MS: 1000,
     RAF_AWAIT_TIMEOUT_MS: 100,
+    ALL_ROWS: Array.from({ length: 7 }, (_, index) => ({ row: index + 1 })),
+    TRIALS_PER_ROW: 7,
     realCommand: null,
     measurementOffsetMs: null,
     sleep: null,

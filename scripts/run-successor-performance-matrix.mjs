@@ -302,9 +302,9 @@ function reviewedHarnessProvenance() {
 
 function acceptedBaselineIdentity(artifactRoot, environment = process.env) {
   const accepted = {
-    captureSha: "033629474959122749f6acb013ed6c2a0c0d2556",
-    stamp: "20260729T051148Z",
-    manifestSha256: "657dec5af935823fc27beaf16034b78813b4090244f22146effefc430040bed1"
+    captureSha: "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b",
+    stamp: "20260730T075608266Z",
+    manifestSha256: "21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06"
   };
   accepted.directory = path.join(artifactRoot, "performance", "018", accepted.captureSha, accepted.stamp);
   if (environment.WARGUS_BASELINE_CAPTURE_SHA !== undefined && environment.WARGUS_BASELINE_CAPTURE_SHA.trim() !== accepted.captureSha) throw new Error("WARGUS_BASELINE_CAPTURE_SHA must match the accepted Plan 018 capture.");
@@ -327,6 +327,11 @@ function assertCleanCaptureAttribution(captureSha) {
   );
 }
 
+function validateAcceptedBaselineSummary(summary, captureSha) {
+  if (summary.schemaVersion !== 4 || summary.run?.captureSha !== captureSha || summary.ready !== true || summary.qualifiedTrialCount !== ALL_ROWS.length * TRIALS_PER_ROW || summary.rows?.length !== ALL_ROWS.length) throw new Error("Accepted baseline schema, identity, readiness, or canonical row count is invalid.");
+  return summary;
+}
+
 function loadAcceptedBaseline(preflight) {
   const accepted = acceptedBaselineIdentity(preflight.artifactRoot);
   const captureSha = accepted.captureSha;
@@ -345,9 +350,8 @@ function loadAcceptedBaseline(preflight) {
     if (!existsSync(file) || sha(readFileSync(file)) !== record.sha256) throw new Error("Accepted baseline checksum mismatch: " + record.name);
   }
   for (const required of ["matrix-summary.json", "environment.json", "browser-preflight.json", "fixed-tick-proof.json"]) if (!names.has(required)) throw new Error("Accepted baseline manifest is missing " + required);
-  const summary = JSON.parse(readFileSync(path.join(directory, "matrix-summary.json"), "utf8"));
+  const summary = validateAcceptedBaselineSummary(JSON.parse(readFileSync(path.join(directory, "matrix-summary.json"), "utf8")), captureSha);
   const baselineEnvironment = JSON.parse(readFileSync(path.join(directory, "environment.json"), "utf8"));
-  if (summary.schemaVersion !== 4 || summary.run?.captureSha !== captureSha || summary.ready !== true || summary.qualifiedTrialCount !== ALL_ROWS.length * TRIALS_PER_ROW || summary.rows?.length !== ALL_ROWS.length) throw new Error("Accepted baseline schema, identity, readiness, or canonical row count is invalid.");
   if (baselineEnvironment.captureSha !== captureSha || baselineEnvironment.buildMode !== "preview" || !baselineEnvironment.browser || !baselineEnvironment.gpu || !baselineEnvironment.profileLocks) throw new Error("Accepted baseline environment identity is incomplete.");
   const rows = {};
   summary.rows.forEach((entry, index) => {
