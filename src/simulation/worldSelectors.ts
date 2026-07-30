@@ -9,7 +9,6 @@ export type WorldUnitIndexDiagnostics = {
 };
 
 type WorldUnitIndexCache = {
-  tick: number;
   units: WorldUnit[];
   unitCount: number;
   generation: number;
@@ -60,7 +59,6 @@ function worldUnitIndexFor(world: WorldState): WorldUnitIndexCache {
   const existing = worldUnitIndexCaches.get(world);
   if (
     existing
-    && existing.tick === world.tick
     && existing.units === world.units
     && existing.unitCount === world.units.length
     && existing.generation === generation
@@ -80,7 +78,6 @@ function worldUnitIndexFor(world: WorldState): WorldUnitIndexCache {
     }
   }
   const cache = {
-    tick: world.tick,
     units: world.units,
     unitCount: world.units.length,
     generation,

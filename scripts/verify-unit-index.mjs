@@ -47,6 +47,35 @@ try {
     resetWorldUnitIndexDiagnostics
   } = selectors;
 
+  const productionSourceInventory = spawnSync("rg", [
+    "--pcre2",
+    "-n",
+    String.raw`\.id\s*(?:\+\+|--|(?<![=!<>])=(?!=))|\[['"]id['"]\]\s*(?:\+\+|--|(?<![=!<>])=(?!=))|Object\.assign\([^\n]*(?:unit|candidate|target)[^\n]*\bid\b|Reflect\.set\([^\n]*(?:unit|candidate|target)[^\n]*['"]id['"]`,
+    "src",
+    "--glob",
+    "*.ts"
+  ], { cwd: root, encoding: "utf8" });
+  assert.ok(
+    productionSourceInventory.status === 0 || productionSourceInventory.status === 1,
+    `Production unit-ID mutation inventory failed:\n${productionSourceInventory.stdout}${productionSourceInventory.stderr}`
+  );
+  assert.equal(productionSourceInventory.stdout, "",
+    "Production runtime must never assign or mutate an existing WorldUnit.id.");
+
+  resetWorldUnitIndexDiagnostics();
+  const stableTickUnit = unit("stable-tick", "stable tick");
+  const stableTickWorld = world([stableTickUnit]);
+  assert.equal(findWorldUnitById(stableTickWorld, "stable-tick"), stableTickUnit,
+    "The stable-tick fixture must build the exact-ID index once.");
+  for (let tick = 1; tick <= 600; tick += 1) {
+    stableTickWorld.tick = tick;
+    assert.equal(findWorldUnitById(stableTickWorld, "stable-tick"), stableTickUnit,
+      "Tick-only progress must preserve exact-ID lookup behavior.");
+  }
+  const stableTickDiagnostics = readWorldUnitIndexDiagnostics();
+  assert.equal(stableTickDiagnostics["plan020.unitIdIndex.rebuilds"], 1,
+    "Advancing 600 ticks without mutating world.units must reuse one transient index rebuild.");
+
   resetWorldUnitIndexDiagnostics();
   const first = unit("duplicate", "first");
   const second = unit("second", "second");
@@ -70,20 +99,20 @@ try {
   stableWorld.tick += 1;
   assert.equal(findWorldUnitById(stableWorld, "second"), second,
     "A world tick change must preserve exact-ID lookup behavior.");
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 2,
-    "A world tick change must rebuild the transient index.");
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 1,
+    "A world tick change without a unit-array mutation must reuse the transient index.");
 
   const pushed = unit("pushed", "pushed");
   stableWorld.units.push(pushed);
   assert.equal(findWorldUnitById(stableWorld, "pushed"), pushed,
     "A same-tick push must become visible through length-based rebuilding.");
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 3,
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 2,
     "A same-tick length change must rebuild the transient index.");
 
   stableWorld.units = stableWorld.units.filter((candidate) => candidate !== second);
   assert.equal(findWorldUnitById(stableWorld, "second"), undefined,
     "A filter replacement must remove stale exact-ID entries.");
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 4,
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 3,
     "An array-reference change must rebuild the transient index.");
 
   const originalUnits = stableWorld.units;
@@ -94,7 +123,7 @@ try {
   stableWorld.units = originalUnits;
   assert.equal(findWorldUnitById(stableWorld, "pushed"), pushed,
     "Restoring the authoritative array reference must restore its exact-ID entries.");
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 6,
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 5,
     "Temporary replacement and restoration must each rebuild by reference.");
 
   const replacement = unit("replacement", "replacement");
@@ -106,7 +135,7 @@ try {
     "Explicit invalidation must remove stale entries after indexed replacement.");
   assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.invalidations"], 1,
     "Explicit invalidation must increment its namespaced diagnostic.");
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 7,
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 6,
     "Explicit invalidation must cause exactly one subsequent rebuild.");
 
   const sharedUnits = [unit("shared", "shared")];
@@ -114,13 +143,13 @@ try {
   const independentB = world(sharedUnits, 8);
   assert.equal(findWorldUnitById(independentA, "shared"), sharedUnits[0]);
   assert.equal(findWorldUnitById(independentB, "shared"), sharedUnits[0]);
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 9,
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 8,
     "Distinct WorldState identities must own independent caches even when their arrays are shared.");
 
   const loadedWorld = structuredClone(independentA);
   assert.equal(findWorldUnitById(loadedWorld, "shared")?.id, "shared",
     "A load-created WorldState identity must build an independent cache.");
-  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 10,
+  assert.equal(readWorldUnitIndexDiagnostics()["plan020.unitIdIndex.rebuilds"], 9,
     "A load-created WorldState identity must not reuse the source world's cache.");
 
   const dead = unit("dead", "dead", 0);
@@ -130,7 +159,7 @@ try {
   const lifecycleDiagnostics = readWorldUnitIndexDiagnostics();
   assert.deepEqual(lifecycleDiagnostics, {
     "plan020.unitIdIndex.lookups": 14,
-    "plan020.unitIdIndex.rebuilds": 11,
+    "plan020.unitIdIndex.rebuilds": 10,
     "plan020.unitIdIndex.invalidations": 1,
     "plan020.unitIdIndex.duplicateIds": 0
   }, "Lifecycle diagnostics must count lookups, rebuild causes, and explicit invalidation exactly.");
@@ -193,6 +222,7 @@ try {
 
   console.log(JSON.stringify({
     diagnostics: {
+      stableTicks: stableTickDiagnostics,
       lifecycle: lifecycleDiagnostics,
       duplicate: duplicateDiagnostics,
       reset: resetDiagnostics,
@@ -205,7 +235,7 @@ try {
       total: assignments.length + pushes.length
     }
   }));
-  console.log("Unit ID index verified (first-match parity, lifecycle rebuilds, explicit invalidation, independent worlds, load identity, dead units, duplicates, diagnostics, and 22 runtime mutations).");
+  console.log("Unit ID index verified (600 stable ticks, immutable IDs, first-match parity, lifecycle rebuilds, explicit invalidation, independent worlds, load identity, dead units, duplicates, diagnostics, and 22 runtime mutations).");
 } finally {
   rmSync(output, { recursive: true, force: true });
 }
