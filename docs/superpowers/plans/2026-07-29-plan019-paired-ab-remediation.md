@@ -41,7 +41,7 @@
   - `classifyPairedDiagnostic({baseTrials, plan019Trials}): PairedDiagnosticVerdict`
   - `writeAndVerifyChecksumManifest(directory): {path:string, sha256:string}`
 
-- [ ] **Step 1: Write the failing contract verifier**
+- [x] **Step 1: Write the failing contract verifier**
 
 Use literal fixtures:
 
@@ -71,7 +71,7 @@ Also prove:
 - missing, duplicate, non-finite, mismatched, or non-15-pair inputs fail;
 - a modified checksummed file fails verification.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -81,7 +81,7 @@ node scripts/verify-plan019-paired-ab-contract.mjs
 
 Expected: failure because `scripts/lib/paired-performance-analysis.mjs` does not exist.
 
-- [ ] **Step 3: Implement the pure analysis module**
+- [x] **Step 3: Implement the pure analysis module**
 
 Implement literal median, nearest-rank p95, paired-delta, 11-of-15, and checksum logic. The verdict shape is:
 
@@ -105,12 +105,12 @@ Implement literal median, nearest-rank p95, paired-delta, 11-of-15, and checksum
 
 `realRegression` is true only when all three conditions are true.
 
-- [ ] **Step 4: Run GREEN and mutation checks**
+- [x] **Step 4: Run GREEN and mutation checks**
 
 Run the verifier, then independently mutate each of the three conditions to
 always true and confirm a corresponding fixture fails.
 
-- [ ] **Step 5: Run focused repository gates**
+- [x] **Step 5: Run focused repository gates**
 
 ```bash
 node --check scripts/lib/paired-performance-analysis.mjs
@@ -119,7 +119,7 @@ node --check scripts/verify-plan019-paired-ab-contract.mjs
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add package.json scripts/lib/paired-performance-analysis.mjs \
@@ -147,7 +147,7 @@ Obtain an independent review before Task 2.
   - `paired-diagnostic-summary.json`;
   - `sha256.json`.
 
-- [ ] **Step 1: Add failing runner contract tests**
+- [x] **Step 1: Add failing runner contract tests**
 
 Extract runner helpers under `WARGUS_PAIRED_AB_CONTRACT_TEST=1` and test:
 
@@ -166,7 +166,7 @@ Prove wrong commits, dirty worktrees, extra/missing pairs, reused stamps, absent
 retained storage, lock contention, non-200 manifest, renderer mismatch,
 fingerprint mismatch, incomplete cleanup, and partial publication fail closed.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 node scripts/verify-plan019-paired-ab-contract.mjs
@@ -174,7 +174,7 @@ node scripts/verify-plan019-paired-ab-contract.mjs
 
 Expected: missing runner/helper failure.
 
-- [ ] **Step 3: Implement preflight and lifecycle**
+- [x] **Step 3: Implement preflight and lifecycle**
 
 The runner must:
 
@@ -186,7 +186,7 @@ The runner must:
 - preflight retained storage and create a fresh UTC-stamped diagnostic directory;
 - capture host, browser, GPU, source, commit, and package-lock identity.
 
-- [ ] **Step 4: Implement one-arm capture**
+- [x] **Step 4: Implement one-arm capture**
 
 For each arm:
 
@@ -204,14 +204,14 @@ For each arm:
 Allow one replacement for an invalid arm. Record both invalid attempts. A
 second invalid attempt stops the full diagnostic.
 
-- [ ] **Step 5: Implement atomic publication**
+- [x] **Step 5: Implement atomic publication**
 
 Publish `paired-diagnostic-summary.json` only after all 30 valid trials,
 classification, resource records, lifecycle cleanup, worktree removal, and lock
 release succeed. Then generate and verify `sha256.json`. Any finalization error
 must prevent a READY diagnostic.
 
-- [ ] **Step 6: Run GREEN without browser capture**
+- [x] **Step 6: Run GREEN without browser capture**
 
 Run contract mode only:
 
@@ -222,7 +222,7 @@ node --check scripts/run-plan019-paired-ab-diagnostic.mjs
 git diff --check
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add package.json scripts/run-plan019-paired-ab-diagnostic.mjs \
@@ -244,12 +244,12 @@ Obtain an independent code review before Task 3.
 - Consumes: reviewed Task 2 runner.
 - Produces: one complete checksummed 15-pair packet and an independently verified classification.
 
-- [ ] **Step 1: Inventory Halla**
+- [x] **Step 1: Inventory Halla**
 
 Record hostname, listeners, relevant processes, memory, swap, disk, load, Chrome
 version, renderer groups, lock absence, clean worktrees, and exact commits.
 
-- [ ] **Step 2: Run the diagnostic**
+- [x] **Step 2: Run the diagnostic**
 
 Run under nested `video` and `render` groups:
 
@@ -259,18 +259,18 @@ sg video -c 'sg render -c "npm run diagnose:plan019-paired-ab"'
 
 Do not run another browser or performance capture concurrently.
 
-- [ ] **Step 3: Recompute the packet**
+- [x] **Step 3: Recompute the packet**
 
 Independently verify every manifest member, all 15 pairs, alternating order,
 valid/replacement dispositions, exact fingerprints, renderer identity,
 resources, lock release, worktree removal, and zero residual PIDs/ports.
 
-- [ ] **Step 4: Recompute classification**
+- [x] **Step 4: Recompute classification**
 
 Recompute all paired deltas, median, count over 5%, pooled p95 values, and the
 three-condition verdict without calling the production analysis module.
 
-- [ ] **Step 5: Independent review**
+- [x] **Step 5: Independent review**
 
 A fresh reviewer must approve packet integrity, arithmetic, and classification.
 Do not begin Task 4 before approval.
@@ -323,7 +323,7 @@ Run only if Task 3 independently confirms `realRegression: false`.
 - Modify: `plans/WAVE-2-RECOVERY-AMENDMENT.md`
 - Modify: `plans/PERFORMANCE-ACCEPTANCE.md`
 
-- [ ] **Step 1: Write failing acceptance fixtures**
+- [x] **Step 1: Write failing acceptance fixtures**
 
 Prove one noisy trial cannot fail an otherwise stable distribution, while a
 consistent regression does fail:
@@ -340,7 +340,7 @@ assert.equal(acceptSevenTrialRow({
 Also prove median regression over 5%, pooled regression over 5%, any new budget
 failure, missing trials, or invalid comparability fails.
 
-- [ ] **Step 2: Implement seven-trial robust acceptance**
+- [x] **Step 2: Implement seven-trial robust acceptance**
 
 Require exactly seven valid trials per row. Replace worst-trial p95 regression
 with both:
@@ -351,7 +351,7 @@ with both:
 Keep no-new-budget-failures, absolute-budget reporting, replacement limits,
 fingerprints, cleanup, locks, and checksums unchanged.
 
-- [ ] **Step 3: Amend durable contracts**
+- [x] **Step 3: Amend durable contracts**
 
 Document why the worst-of-three rule was unstable, cite the paired packet, and
 state the new exact seven-trial arithmetic. Preserve all historical packets.
@@ -434,12 +434,12 @@ Commit contract/harness changes separately from evidence/roadmap updates.
 - Modify: `plans/evidence/021.md`
 - Modify: `plans/README.md`
 
-- [ ] **Step 1: Close the selected remediation branch**
+- [x] **Step 1: Close the selected remediation branch**
 
 Record exact commits, commands, paired packet, manifest, classification,
 acceptance packets, and independent reviews.
 
-- [ ] **Step 2: Complete original Recovery Tasks 5–6**
+- [x] **Step 2: Complete original Recovery Tasks 5–6**
 
 Only after Plans 019–021 are accepted, integrate reviewed Wave 2 commits and run
 the full combined incremental matrix.

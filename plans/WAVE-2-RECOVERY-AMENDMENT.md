@@ -115,7 +115,7 @@ and every failed or diagnostic packet as immutable historical evidence.
 - Produces: `incremental` and `absolute-release` acceptance modes used by every
   later capture and post-integration gate.
 
-- [ ] **Step 1: Add a failing source-contract verifier**
+- [x] **Step 1: Add a failing source-contract verifier**
 
 Create `scripts/verify-performance-acceptance-contract.mjs`. It must read the
 shared contracts and Plans 019–025 and initially fail until all of these exact
@@ -132,7 +132,7 @@ assert.match(performanceContract, /Wave 5.*every absolute shared budget/i);
 It must also reject stale detailed-plan statements that say every assigned
 absolute budget must pass before Plans 019–025 can close.
 
-- [ ] **Step 2: Run the verifier and retain the meaningful RED**
+- [x] **Step 2: Run the verifier and retain the meaningful RED**
 
 Run:
 
@@ -143,7 +143,7 @@ node scripts/verify-performance-acceptance-contract.mjs
 Expected: assertion failure naming the missing incremental/absolute split, not
 a missing file or import error.
 
-- [ ] **Step 3: Write the amended shared contract**
+- [x] **Step 3: Write the amended shared contract**
 
 Add two explicit verdict algorithms to `plans/PERFORMANCE-ACCEPTANCE.md`:
 
@@ -172,7 +172,7 @@ Command rows must retain the Plan 018-passing input latency budgets. Plans
 019–025 and combined Waves 2–4 use `incremental`; Wave 5 uses
 `absolute-release`.
 
-- [ ] **Step 4: Refresh detailed plans and wave barriers**
+- [x] **Step 4: Refresh detailed plans and wave barriers**
 
 Replace the stale absolute-budget STOP/done language in Plans 019–025 with the
 incremental algorithm verbatim. Keep invalid-trial exhaustion, environment
@@ -183,7 +183,7 @@ gate and roadmap wave text to name the acceptance mode for each wave.
 Change Plans 019–021 from `BLOCKED` to `IN PROGRESS — RECOVERY AUTHORIZED`;
 retain links to the failed evidence and name this amendment as the authority.
 
-- [ ] **Step 5: Make the contract verifier green**
+- [x] **Step 5: Make the contract verifier green**
 
 Run:
 
@@ -194,7 +194,7 @@ git diff --check
 
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add plans package.json scripts/verify-performance-acceptance-contract.mjs
@@ -217,7 +217,7 @@ git commit -m "Authorize incremental performance acceptance"
 - Produces: schema-version 4 matrix summaries with both incremental and
   absolute verdicts, plus exact invalid-attempt diagnostics.
 
-- [ ] **Step 1: Copy the independently approved harnesses into tracked scripts**
+- [x] **Step 1: Copy the independently approved harnesses into tracked scripts**
 
 Start from the retained reviewed sources whose hashes are:
 
@@ -228,7 +228,7 @@ fixed  1d8b825fb535fd0a4467551f0cd42c2ec87e8b27b8b8c87a46007c2cc27b538e
 
 Adjust only relative imports and the explicit changes in this task.
 
-- [ ] **Step 2: Add a failing command-pair and verdict verifier**
+- [x] **Step 2: Add a failing command-pair and verdict verifier**
 
 `verify-successor-capture-contract.mjs` must extract/test the relevant pure
 helpers and fail until:
@@ -249,7 +249,7 @@ failure does not, one noisy trial among seven passes, either robust p95
 component over 5% fails, and absolute mode additionally requires an empty
 after-failure set.
 
-- [ ] **Step 3: Correct real input pairing**
+- [x] **Step 3: Correct real input pairing**
 
 Change `realCommand` readiness from “any next-render sample appeared” to the
 exact `pairReady` predicate above. Preserve the actual issue timestamp taken
@@ -269,7 +269,7 @@ invalid record:
 }
 ```
 
-- [ ] **Step 4: Implement schema-version 4 incremental verdicts**
+- [x] **Step 4: Implement schema-version 4 incremental verdicts**
 
 Load each accepted baseline trial's failure union and emit:
 
@@ -295,7 +295,7 @@ and pooled-frame p95 values, raw regression percentages, and independent
 component verdicts. Both component gates use the reviewed 0.1 ms decision
 precision and must pass; a combined caller-supplied pass cannot bypass either.
 
-- [ ] **Step 5: Run non-browser and negative checks**
+- [x] **Step 5: Run non-browser and negative checks**
 
 Run:
 
@@ -313,7 +313,7 @@ Expected: all pass; wrong mode, wrong baseline manifest, wrong fixed-tick
 offset, and non-fresh artifact stamp checks fail closed without launching a
 browser.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add package.json scripts/run-successor-performance-matrix.mjs \
@@ -337,7 +337,7 @@ git commit -m "Track incremental performance capture harness"
 - Produces: one reusable first-write-wins ID index until array
   identity/length/generation changes.
 
-- [ ] **Step 1: Add a failing stable-tick-reuse fixture**
+- [x] **Step 1: Add a failing stable-tick-reuse fixture**
 
 After the first index build, advance `world.tick` through 600 values and perform
 at least one exact-ID lookup per tick without mutating `world.units`.
@@ -352,13 +352,13 @@ assert.equal(diagnostics["plan020.unitIdIndex.rebuilds"], 1);
 Also inventory unit-ID assignments and fail if production runtime mutates an
 existing `WorldUnit.id`.
 
-- [ ] **Step 2: Remove tick from the cache validity key**
+- [x] **Step 2: Remove tick from the cache validity key**
 
 Remove `tick` from `WorldUnitIndexCache` and from the reuse predicate. Keep
 world identity, `world.units` reference, length, generation, first-write-wins,
 duplicate reporting, and explicit invalidation unchanged.
 
-- [ ] **Step 3: Re-run focused and behavioral gates**
+- [x] **Step 3: Re-run focused and behavioral gates**
 
 Run:
 
@@ -505,26 +505,26 @@ plan reviews.
   commits.
 - Produces: exact combined SHA and `incremental` full seven-row `READY` packet.
 
-- [ ] **Step 1: Integrate reviewed branches**
+- [x] **Step 1: Integrate reviewed branches**
 
 Integrate only accepted implementation/evidence commits. Resolve shared
 `package.json` and verifier ownership on the coordinator branch. Confirm the
 combined diff contains no rejected diagnostic packet or ignored harness source.
 
-- [ ] **Step 2: Run the Wave 2 combined non-browser/browser gate**
+- [x] **Step 2: Run the Wave 2 combined non-browser/browser gate**
 
 Run every Wave 2 focused verifier, typecheck, source parity, save schema,
 determinism, asset, build, runtime smoke, combat, native viewport, and visual
 parity gate on the exact combined SHA.
 
-- [ ] **Step 3: Run the full incremental matrix**
+- [x] **Step 3: Run the full incremental matrix**
 
 Capture all seven rows, exactly seven valid trials each, with
 `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Require no new budget failures,
 no row over 5% for either robust p95 regression, exact comparability, and clean
 lifecycle.
 
-- [ ] **Step 4: Commit the integration packet**
+- [x] **Step 4: Commit the integration packet**
 
 `plans/evidence/WAVE-2-INTEGRATION.md` must name the combined SHA, commands,
 results, artifact path, manifest hash, individual evidence inputs, remaining

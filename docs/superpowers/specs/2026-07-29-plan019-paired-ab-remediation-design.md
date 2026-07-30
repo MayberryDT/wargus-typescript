@@ -147,4 +147,3 @@ incomplete packet.
 - An independent reviewer recomputes the manifest, pair statistics,
   classification, lock lifecycle, and cleanup before either decision branch is
   implemented.
-

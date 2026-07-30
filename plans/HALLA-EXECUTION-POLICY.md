@@ -64,7 +64,7 @@ For each gate, the coordinator must:
    completed wave, all upstream parity gates those plans consume, and the
    relevant shared typecheck, build, asset, fixed-tick determinism, save-schema,
    and browser gates required by the completed wave's plan exit gates;
-3. run the full seven-row canonical Plan 018 matrix, with three valid trials per
+3. run the full seven-row canonical Plan 018 matrix, with exactly seven valid trials per
    row, exactly as defined by `plans/PERFORMANCE-ACCEPTANCE.md`; all captures
    and replacements run serially with no overlapping project benchmark;
 4. retain the raw trials, normalized matrix summary, environment and

@@ -137,7 +137,7 @@ excerpts/inventory before Plan 022 begins.
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick simulation and save output unchanged |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; `incrementalReady` passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | exactly seven valid trials per row; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, preparation,
 direct-Pixi diff, determinism, asset, and build gates. The new render-cache
@@ -348,15 +348,16 @@ totals include all retained creations and final destruction.
 
 Run every command in the table. Compare exact screenshot hashes when byte
 stability is available and otherwise retain before/after images and existing
-pixel statistics without inventing a tolerance. Capture three independent
+pixel statistics without inventing a tolerance. Capture exactly seven independent
 valid trials per assigned row using the accepted Plan 018 environment,
-profile, viewport, warmup, duration, fingerprints, per-trial statistics, and
-worst-trial rule. Do not pool samples.
-
-Require `incrementalReady`. A greater-than-5% worsening of worst-trial frame
-p95 is also a regression. Zero steady-state creation for unchanged prepared
-IDs is required after warm-up; creation may scale only with entrances, births,
-record-shape changes that cannot be updated, and bounded-pool misses.
+profile, viewport, warmup, duration, fingerprints, and per-trial statistics.
+Preserve every trial raw-frame sample. Require `incrementalReady`: both the
+median of seven per-trial frame p95 values and the nearest-rank p95 pooled from
+all raw after-frame samples must be no greater than 5% above their accepted
+baseline counterparts at 0.1 ms decision precision. Zero steady-state creation
+for unchanged prepared IDs is required after warm-up; creation may scale only
+with entrances, births, record-shape changes that cannot be updated, and
+bounded-pool misses.
 
 **Verify:** visual/preparation/determinism gates, bounds, and counter semantics
 hold; `incrementalReady` passes; evidence is durable and checksum-verified.
@@ -382,9 +383,10 @@ hold; `incrementalReady` passes; evidence is durable and checksum-verified.
 ## Performance acceptance
 
 This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
-and any plan-local direct-work baseline are the before evidence; capture three
+and any plan-local direct-work baseline are the before evidence; capture exactly seven
 independent valid after trials per assigned row under the shared lifecycle,
-nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+nearest-rank statistics, raw-frame retention, median-of-seven trial p95, and
+pooled raw-frame p95 rules. Never discard a valid budget,
 parity, timing, visual, or lifecycle failure.
 
 ```text

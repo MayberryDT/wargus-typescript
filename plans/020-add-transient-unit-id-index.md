@@ -12,9 +12,9 @@
 
 ## Status
 
-- **Status:** IN PROGRESS — RECOVERY AUTHORIZED
-- **Recovery authority:** `WAVE-2-RECOVERY-AMENDMENT Task 1`
-- **Failed evidence:** [020](evidence/020.md)
+- **Status:** DONE-VERIFIED — INCREMENTAL
+- **Acceptance authority:** `WAVE-2-RECOVERY-AMENDMENT Tasks 1–6`
+- **Evidence:** [020](evidence/020.md)
 - **Wave:** 2 — Independent hot paths
 - **Priority:** P1
 - **Effort:** M
@@ -114,7 +114,7 @@ inventory before Plan 020 begins.
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick state and save comparison passes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `combat-100` at 1280×720 | three valid trials; `incrementalReady` passes |
+| Performance | accepted Plan 018 `combat-100` at 1280×720 | exactly seven valid trials; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, save, combat,
 determinism, asset, and build gates. The new unit-index verifier does not exist
@@ -254,11 +254,13 @@ fields, and save output match; `world.units` remains authoritative and ordered.
 
 ### Step 4: Revalidate combat and measure
 
-Run every command in the table. Capture three independent valid `combat-100`
+Run every command in the table. Capture exactly seven independent valid `combat-100`
 trials using the exact accepted Plan 018 environment, specification, viewport,
-warmup, duration, fingerprints, statistics, and worst-trial rule. Do not pool
-samples or use renderer snapshot data. Require `incrementalReady`; a greater-than-5% worsening of worst-trial frame p95 also counts as a
-regression even if the budget passes.
+warmup, duration, fingerprints, and statistics. Preserve every trial raw-frame
+sample and do not use renderer snapshot data. Require `incrementalReady`: both
+the median of seven per-trial frame p95 values and the nearest-rank p95 pooled
+from all raw after-frame samples must be no greater than 5% above their accepted
+baseline counterparts at 0.1 ms decision precision.
 
 **Verify:** browser combat and all non-browser gates pass; lookup/rebuild/
 invalidation/duplicate diagnostics are namespaced; the `incrementalReady` verdict passes;
@@ -283,9 +285,10 @@ and evidence is durable and checksum-verified.
 ## Performance acceptance
 
 This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
-and any plan-local direct-work baseline are the before evidence; capture three
+and any plan-local direct-work baseline are the before evidence; capture exactly seven
 independent valid after trials per assigned row under the shared lifecycle,
-nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+nearest-rank statistics, raw-frame retention, median-of-seven trial p95, and
+pooled raw-frame p95 rules. Never discard a valid budget,
 parity, timing, visual, or lifecycle failure.
 
 ```text

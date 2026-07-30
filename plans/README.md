@@ -84,6 +84,12 @@ Wave 2 post-integration gate from `HALLA-EXECUTION-POLICY.md` against the exact
 combined SHA and commit `plans/evidence/WAVE-2-INTEGRATION.md` with a combined
 `READY` verdict before either Wave 3 executor starts. Individual exit packets
 and integration without that coordinator-owned packet do not open Wave 3.
+The barrier is now open: combined SHA
+`6c5e0faa861e1ba7a931c913e561fb837c2afb01` passed the exact full gate and
+schema-v4 49-trial incremental matrix. The checksum-verified
+[`READY` integration packet](evidence/WAVE-2-INTEGRATION.md) is authoritative;
+Wave 3 may proceed from that concrete base.
+
 After that barrier opens, the technical dependency edges remain narrower: Plan
 022 consumes accepted Plan 021 and owns renderer-only retained objects and
 per-view caches; Plan 023 consumes accepted Plans 019 and 020 and owns

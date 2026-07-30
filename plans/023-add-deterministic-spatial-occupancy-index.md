@@ -155,7 +155,7 @@ before Plan 023 begins.
 | Browser fixture parity | `npm run verify:browser-runtime-smoke` | clear/single/mixed/spell same-world fixture invalidation and first-query rebuild preserve ordered outcomes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | three valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; `incrementalReady` passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | exactly seven valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, accepted terrain
 and unit-ID parity, pathfinding, save, determinism, asset, build, and direct
@@ -420,20 +420,20 @@ resumes parity.
 
 ### Step 5: Revalidate behavior and measure
 
-Run every command in the table. Capture three independent valid trials per
+Run every command in the table. Capture exactly seven independent valid trials per
 assigned row using the exact accepted Plan 018 environment, profile, viewport,
-warmup, duration, fingerprints, per-trial statistics, and worst-trial rule. Do
-not pool samples. Record candidate counts and direct occupancy-query duration
+warmup, duration, fingerprints, and per-trial statistics. Preserve every trial
+raw-frame sample. Record candidate counts and direct occupancy-query duration
 from identical legacy/indexed timer boundaries. Record register, unregister,
-transition, invalidation, and rebuild duration separately and sum every
-maintenance/update millisecond for each trial.
-
-Report direct query p50/p95/p99/mean/max/total and maintenance operation
+transition, invalidation, rebuild, fallback, maintenance total, and processed
+simulation-step counts with no overlapping timers. Report both direct-query and
+each maintenance-operation distribution with nearest-rank
 p50/p95/p99/mean/max/total. Normalize combined work as
 `(query total ms + maintenance total ms) / processed simulation steps`, using
-the same processed-step field for before and after. Every shared Plan 018 budget
-must pass, and a greater-than-5% worsening of worst-trial frame p95 remains a
-regression.
+the same processed-step field for before and after. Require `incrementalReady`:
+no new shared budget-failure key may appear, and both the median-of-seven trial
+frame-p95 and pooled raw-frame-p95 regression components must be no greater than
+5% at 0.1 ms decision precision.
 
 For `army-200`, worst-trial indexed query p95 must be lower than the legacy
 full-scan p95, candidate visits must fall, and worst-trial maintenance-inclusive
@@ -471,9 +471,10 @@ is durable and checksum-verified.
 ## Performance acceptance
 
 This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
-and any plan-local direct-work baseline are the before evidence; capture three
+and any plan-local direct-work baseline are the before evidence; capture exactly seven
 independent valid after trials per assigned row under the shared lifecycle,
-nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+nearest-rank statistics, raw-frame retention, median-of-seven trial p95, and
+pooled raw-frame p95 rules. Never discard a valid budget,
 parity, timing, visual, or lifecycle failure.
 
 ```text

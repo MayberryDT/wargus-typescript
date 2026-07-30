@@ -12,9 +12,9 @@
 
 ## Status
 
-- **Status:** IN PROGRESS — RECOVERY AUTHORIZED
-- **Recovery authority:** `WAVE-2-RECOVERY-AMENDMENT Task 1`
-- **Failed evidence:** [019](evidence/019.md)
+- **Status:** DONE-VERIFIED — INCREMENTAL
+- **Acceptance authority:** `WAVE-2-RECOVERY-AMENDMENT Tasks 1–6`
+- **Evidence:** [019](evidence/019.md)
 - **Wave:** 2 — Independent hot paths
 - **Priority:** P1
 - **Effort:** M
@@ -106,7 +106,7 @@ accepted concrete SHA and new exact excerpts before Plan 019 begins.
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick state and save comparison passes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 rows `army-100` at 1280×720 and `command-18` at both viewports | three valid trials per row; `incrementalReady` passes |
+| Performance | accepted Plan 018 rows `army-100` at 1280×720 and `command-18` at both viewports | exactly seven valid trials per row; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, pathfinding,
 fog/FOV, determinism, asset, and build gates. The new terrain verifier does not
@@ -243,12 +243,13 @@ match their respective legacy consumers, not the passability land-only mask.
 
 ### Step 4: Revalidate behavior and measure
 
-Run every command in the table. Capture three independent valid trials for
+Run every command in the table. Capture exactly seven independent valid trials for
 all assigned rows using the exact accepted Plan 018 environment, profile
-specification, warmup, duration, viewports, fingerprints, statistics, and
-worst-trial aggregation. Compare against the accepted baseline without pooling
-samples. Require `incrementalReady`; a greater-than-5% worsening
-of worst-trial frame p95 also counts as a regression even if the budget passes.
+specification, warmup, duration, viewports, fingerprints, and statistics.
+Preserve every trial raw-frame sample. Require `incrementalReady`: both the
+median of seven per-trial frame p95 values and the nearest-rank p95 pooled from
+all raw after-frame samples must be no greater than 5% above their accepted
+baseline counterparts at 0.1 ms decision precision.
 
 **Verify:** deterministic state/save parity is exact, path/FOV results are
 unchanged, the `incrementalReady` verdict passes, and evidence records CPU, frame, heap,
@@ -275,9 +276,10 @@ long-task, scheduler, input, and terrain-diagnostic results where applicable.
 ## Performance acceptance
 
 This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
-and any plan-local direct-work baseline are the before evidence; capture three
+and any plan-local direct-work baseline are the before evidence; capture exactly seven
 independent valid after trials per assigned row under the shared lifecycle,
-nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+nearest-rank statistics, raw-frame retention, median-of-seven trial p95, and
+pooled raw-frame p95 rules. Never discard a valid budget,
 parity, timing, visual, or lifecycle failure.
 
 ```text

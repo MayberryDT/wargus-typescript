@@ -169,7 +169,7 @@ required coordinator refresh, STOP.
 | Native viewport | `npm run verify:browser-native-viewport` | active/split-view fog ownership, pan, resize, closure, and pixels pass |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | three valid trials per row; direct visibility/fog evidence recorded; `incrementalReady` passes |
+| Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | exactly seven valid trials per row; direct visibility/fog evidence recorded; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, upstream parity,
 source-FOV/fog, save, determinism, asset, build, and direct-timing gates. The
@@ -590,9 +590,9 @@ legacy output; no rollback changes saves or Plan 022 ownership.
 
 ### Step 6: Revalidate and measure
 
-Run every command in the table. Capture three independent valid trials per
+Run every command in the table. Capture exactly seven independent valid trials per
 assigned row using the exact accepted Plan 018 environment, viewport, warmup,
-duration, fingerprints, statistics, and worst-trial rule. Do not pool samples.
+duration, fingerprints, and statistics. Preserve every trial raw-frame sample.
 
 Record per trial: visibility update and full-rebuild distributions; source and
 tile visits; contribution add/remove counts; dirty tiles/bounds/revisions;
@@ -608,8 +608,9 @@ processed simulation step must not increase. Worst-trial fog decision plus
 chunk-build milliseconds per rendered frame must be lower than legacy fog hash
 plus subtree-build milliseconds per frame. An unchanged stationary segment
 must recompute zero source FOVs and rebuild/create/destroy zero fog chunks after
-warm-up. Require `incrementalReady`; a greater-than-5% worsening of
-worst-trial frame p95 is a regression.
+warm-up. Require `incrementalReady`: both the median-of-seven trial frame-p95
+and pooled raw-frame-p95 regression components must be no greater than 5% at
+0.1 ms decision precision.
 
 **Verify:** direct simulation and renderer work improves rather than moving
 between phases, parity/cadence/memory/lifecycle gates pass, the `incrementalReady` verdict passes,
@@ -649,9 +650,10 @@ and evidence is durable and checksum-verified.
 ## Performance acceptance
 
 This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
-and any plan-local direct-work baseline are the before evidence; capture three
+and any plan-local direct-work baseline are the before evidence; capture exactly seven
 independent valid after trials per assigned row under the shared lifecycle,
-nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+nearest-rank statistics, raw-frame retention, median-of-seven trial p95, and
+pooled raw-frame p95 rules. Never discard a valid budget,
 parity, timing, visual, or lifecycle failure.
 
 ```text

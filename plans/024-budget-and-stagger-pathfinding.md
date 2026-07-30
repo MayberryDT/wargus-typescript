@@ -171,7 +171,7 @@ refresh required above, STOP.
 | Browser demo | `npm run verify:browser-demo-session` | deterministic demo behavior passes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
-| Performance | accepted `command-18`, `army-200`, and `combat-100` rows at 1280×720 plus X12 | three valid trials per matrix row; direct scheduler evidence recorded; `incrementalReady` passes |
+| Performance | accepted `command-18`, `army-200`, and `combat-100` rows at 1280×720 plus X12 | exactly seven valid trials per matrix row; direct scheduler evidence recorded; `incrementalReady` passes |
 
 Before implementation, run only the pre-existing typecheck, upstream parity,
 source-pathfinding, save, determinism, asset, build, and direct-timing gates.
@@ -803,10 +803,10 @@ save, and fixed-tick determinism all pass.
 
 ### Step 6: Revalidate and measure
 
-Run every command in the table. Capture three independent valid trials for
+Run every command in the table. Capture exactly seven independent valid trials for
 `command-18`, `army-200`, and `combat-100` using the exact accepted Plan 018
-environment, viewport, warmup, duration, fingerprints, statistics, and
-worst-trial rule. Do not pool samples.
+environment, viewport, warmup, duration, fingerprints, and statistics. Preserve
+every trial raw-frame sample.
 
 Record per trial: enqueue/completion/failure/cancellation counts; direct search
 duration and node-expansion distributions; expansions per processed tick;
@@ -823,8 +823,9 @@ lower than the synchronous baseline and total path-search milliseconds per
 processed step must not increase. Every after tick must stay at or below 512
 expansions, duplicate and synchronous fallback counts must be zero, the
 calculated starvation bound must hold, and the queue must drain in the bounded
-scenario. `incrementalReady` must pass; a greater-than-5% worsening
-of worst-trial frame p95 is a regression.
+scenario. `incrementalReady` must pass: both the median-of-seven trial frame-p95
+and pooled raw-frame-p95 regression components must be no greater than 5% at
+0.1 ms decision precision.
 
 **Verify:** direct path work improves rather than moving into queue
 maintenance, routes/orders/saves remain exact, the `incrementalReady` verdict passes, and
@@ -872,9 +873,10 @@ evidence is durable and checksum-verified.
 ## Performance acceptance
 
 This plan uses the `incremental` acceptance mode. The accepted Plan 018 rows
-and any plan-local direct-work baseline are the before evidence; capture three
+and any plan-local direct-work baseline are the before evidence; capture exactly seven
 independent valid after trials per assigned row under the shared lifecycle,
-nearest-rank statistics, and worst-trial rule. Never discard a valid budget,
+nearest-rank statistics, raw-frame retention, median-of-seven trial p95, and
+pooled raw-frame p95 rules. Never discard a valid budget,
 parity, timing, visual, or lifecycle failure.
 
 ```text

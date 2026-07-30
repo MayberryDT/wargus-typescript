@@ -80,12 +80,15 @@ assert.doesNotMatch(wave2Recovery, /Every measured row still needs three indepen
 for (const [file, plan] of detailedPlans) {
   assert.match(plan, /incrementalReady =\n  captureComplete\n  && validityAndComparabilityPass\n  && fixedTickPass\n  && noNewBudgetFailuresPass\n  && frameP95RegressionPass\n  && targetedWorkReductionProofPass\n  && cleanupAndIntegrityPass/, `${file} must use the incremental algorithm verbatim.`);
   assert.doesNotMatch(plan, /(?:every\s+(?:assigned|applicable|unchanged|shared)\s+budget(?:s)?\s+must\s+pass|shared budgets pass|assigned shared budget passes|assigned budgets pass|a budget fails)/i, `${file} retains stale absolute-budget closure language.`);
+  assert.doesNotMatch(plan, /\bthree (?:independent )?valid trials?\b|\bcapture three\b/i, `${file} retains stale three-trial instructions.`);
+  assert.doesNotMatch(plan, /(?:do not pool samples|without pooling samples|worst-trial (?:aggregation|rule|frame p95)|every\s+shared\s+Plan 018\s+budget\s+must\s+pass)/i, `${file} retains stale schema-v1 frame or absolute-budget acceptance language.`);
 }
 
 assert.match(hallaPolicy, /Wave 2.*incremental/i);
 assert.match(hallaPolicy, /Wave 3.*incremental/i);
 assert.match(hallaPolicy, /Wave 4.*incremental/i);
 assert.match(hallaPolicy, /Wave 5.*absolute-release/i);
+assert.doesNotMatch(hallaPolicy, /\bthree (?:independent )?valid trials?\b|\bcapture three\b/i, "Halla policy retains stale three-trial instructions.");
 assert.match(roadmap, /Wave 2.*incremental/i);
 assert.match(roadmap, /Wave 3.*incremental/i);
 assert.match(roadmap, /Wave 4.*incremental/i);
