@@ -383,7 +383,7 @@ recorded 49/49 qualified trials, zero invalid attempts, zero replacements,
 independent audit with zero findings. The exact identity is pinned in the
 schema-version 4 successor loader.
 
-- [ ] **Step 5: Rerun Plans 019–021 serially**
+- [x] **Step 5: Rerun Plans 019–021 serially**
 
 Capture Plan 019 rows 3/5/7, Plan 020 row 6, and Plan 021 rows 3/4/6. Require
 robust incremental acceptance and clean lifecycle for each.
@@ -420,7 +420,7 @@ review. Each packet must load the exact accepted schema-version 4 Plan 018
 baseline, pass its target-bound work-reduction verifier, robust incremental
 acceptance, checksums, lock release, and exact owned-process/port cleanup.
 
-- [ ] **Step 6: Commit and independently review**
+- [x] **Step 6: Commit and independently review**
 
 Commit contract/harness changes separately from evidence/roadmap updates.
 

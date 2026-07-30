@@ -376,7 +376,7 @@ git diff --check
 
 Expected: all pass; the 600-tick fixture reports one rebuild.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/simulation/worldSelectors.ts scripts/verify-unit-index.mjs \
@@ -401,13 +401,13 @@ git commit -m "Reuse unit ID index across stable ticks"
 - Produces: exact shared source assertion, deterministic before/after visual
   comparison, and coordinator-ready Plan 021 gate packet.
 
-- [ ] **Step 1: Replace the stale asset assertion**
+- [x] **Step 1: Replace the stale asset assertion**
 
 Require the actual prepared-frame call and reject the removed immediate-render
 call. The verifier must fail on a fixture containing only the legacy call and
 pass on the real Plan 021 source.
 
-- [ ] **Step 2: Add deterministic visual parity capture**
+- [x] **Step 2: Add deterministic visual parity capture**
 
 Use the shared browser controller and system Chrome. Capture the same fixed
 profile/tick/viewport from the accepted base and Plan 021 implementation.
@@ -419,7 +419,7 @@ Store both PNGs and a JSON comparison containing dimensions, SHA-256 values,
 changed-pixel count, maximum channel delta, and an exact-equality verdict.
 Do not add a tolerance; any unexplained changed pixel fails.
 
-- [ ] **Step 3: Run exact Plan 021 gates**
+- [x] **Step 3: Run exact Plan 021 gates**
 
 Run serially:
 
@@ -438,7 +438,7 @@ git diff --check
 Expected: all pass with exact visual parity and unchanged Plan 018 tracked
 display-object call-site counts.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit the coordinator verifier/package changes separately from the Plan 021
 evidence update.
@@ -458,33 +458,33 @@ evidence update.
   seven-trial schema-version 4 Plan 018 baseline.
 - Produces: one fresh checksum-verified incremental packet per plan.
 
-- [ ] **Step 1: Independently review the tracked harness**
+- [x] **Step 1: Independently review the tracked harness**
 
 Require an independent reviewer to approve baseline anchoring, pair readiness,
 invalid/replacement handling, incremental/absolute verdicts, cleanup, locking,
 freshness, and checksums before browser execution.
 
-- [ ] **Step 2: Capture Plan 019 serially**
+- [x] **Step 2: Capture Plan 019 serially**
 
 Run exact 600-tick proof and rows `3,5,7` at the Plan 019 implementation SHA
 with `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Do not reuse either failed
 stamp. Stop on a new exhausted replacement, new budget failure, either robust
 p95 regression over 5%, drift, or cleanup failure.
 
-- [ ] **Step 3: Capture remediated Plan 020 serially**
+- [x] **Step 3: Capture remediated Plan 020 serially**
 
 Run row `6` at the new implementation SHA. It must have no new budget failure,
 no more than 5% median trial-p95 regression, no more than 5% pooled raw-frame
 p95 regression, and the focused 600-tick one-rebuild proof.
 
-- [ ] **Step 4: Capture Plan 021 serially**
+- [x] **Step 4: Capture Plan 021 serially**
 
 Run one fresh rows `3,4,6` packet at the reviewed implementation SHA with the
 schema-version 4 harness and `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Preserve
 the old immutable packet as failed historical evidence; never alter its
 manifest.
 
-- [ ] **Step 5: Verify and commit evidence**
+- [x] **Step 5: Verify and commit evidence**
 
 Independently recompute every manifest, confirm zero residual PIDs/ports and a
 released lock, update concise evidence and roadmap rows, and obtain independent
