@@ -887,13 +887,37 @@ for (const [label, mutate, pattern] of [
   ["empty frame samples", (trial) => { trial.stopped.frameSamples = []; }, /frameSamples/i],
   ["nonfinite update samples", (trial) => { trial.stopped.updateSamples[0] = Number.NaN; }, /finite.*updateSamples/i],
   ["empty render samples", (trial) => { trial.stopped.renderPreparationSamples = []; }, /renderPreparationSamples/i],
-  ["nonfinite statistics", (trial) => { trial.statistics.frame.p95Ms = Number.NaN; }, /statistics.*finite/i],
+  ["nonfinite statistics", (trial) => { trial.statistics.frame.p95Ms = Number.NaN; }, /statistics.*raw samples/i],
   ["invalid scheduler dropped", (trial) => { trial.stopped.scheduler.droppedDeltaSeconds = -1; trial.statistics.scheduler.droppedDeltaSeconds = -1; }, /scheduler/i],
   ["invalid scheduler backlog", (trial) => { trial.stopped.scheduler.maxBacklogSeconds = Number.POSITIVE_INFINITY; trial.statistics.scheduler.maxBacklogSeconds = Number.POSITIVE_INFINITY; }, /scheduler/i]
 ]) {
   const invalid = structuredClone(validCapturedArm);
   mutate(invalid);
   assert.throws(() => finalizeCapturedArmTrial(invalid), pattern, `${label} must be rejected before a trial can be returned valid.`);
+}
+
+for (const metric of ["frame", "update", "renderPreparation"]) {
+  const wrongSampleCount = structuredClone(validCapturedArm);
+  wrongSampleCount.statistics[metric].sampleCount += 1;
+  assert.throws(() => finalizeCapturedArmTrial(wrongSampleCount), /statistics/i, `${metric}.sampleCount must match raw stopped samples.`);
+  for (const field of ["p50Ms", "p95Ms", "p99Ms", "meanMs", "maxMs"]) {
+    const finiteButWrong = structuredClone(validCapturedArm);
+    finiteButWrong.statistics[metric][field] += 1;
+    assert.throws(
+      () => finalizeCapturedArmTrial(finiteButWrong),
+      /statistics.*raw samples/i,
+      `${metric}.${field} must be recomputed from raw stopped samples.`
+    );
+  }
+  for (const threshold of ["over50Ms", "over100Ms"]) {
+    const finiteButWrong = structuredClone(validCapturedArm);
+    finiteButWrong.statistics[metric].thresholdCounts[threshold] = finiteButWrong.statistics[metric].thresholdCounts[threshold] === 0 ? 1 : 0;
+    assert.throws(
+      () => finalizeCapturedArmTrial(finiteButWrong),
+      /statistics.*raw samples/i,
+      `${metric}.${threshold} must be recomputed from raw stopped samples.`
+    );
+  }
 }
 
 function capturedArmFixture() {
@@ -903,9 +927,9 @@ function capturedArmFixture() {
     worldTick,
     heap: { supported: true, usedJsHeapSize: worldTick },
     scheduler: { ...scheduler },
-    frameSamples: [10, 20, 30],
+    frameSamples: [50, 100, 150],
     updateSamples: [1, 2, 3],
-    renderPreparationSamples: [0.1, 0.2, 0.3]
+    renderPreparationSamples: [0.25, 0.5, 0.75]
   });
   return {
     pair: 1,
@@ -921,9 +945,9 @@ function capturedArmFixture() {
     t15: snapshot(450),
     stopped: snapshot(900),
     statistics: {
-      frame: { sampleCount: 3, p50Ms: 20, p95Ms: 30, p99Ms: 30, meanMs: 20, maxMs: 30, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
+      frame: { sampleCount: 3, p50Ms: 100, p95Ms: 150, p99Ms: 150, meanMs: 100, maxMs: 150, thresholdCounts: { over50Ms: 2, over100Ms: 1 } },
       update: { sampleCount: 3, p50Ms: 2, p95Ms: 3, p99Ms: 3, meanMs: 2, maxMs: 3, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
-      renderPreparation: { sampleCount: 3, p50Ms: 0.2, p95Ms: 0.3, p99Ms: 0.3, meanMs: 0.2, maxMs: 0.3, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
+      renderPreparation: { sampleCount: 3, p50Ms: 0.5, p95Ms: 0.75, p99Ms: 0.75, meanMs: 0.5, maxMs: 0.75, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
       scheduler: { ...scheduler }
     }
   };

@@ -208,13 +208,8 @@ export function validateCapturedArmTrial(trial) {
   validateRuntimeSnapshot("15-second", trial.t15);
   validateRuntimeSnapshot("30-second", trial.stopped);
   for (const [metric, samplesName] of [["frame", "frameSamples"], ["update", "updateSamples"], ["renderPreparation", "renderPreparationSamples"]]) {
-    const samples = trial.stopped[samplesName];
-    const stats = trial.statistics?.[metric];
-    if (!stats || stats.sampleCount !== samples.length || [stats.p50Ms, stats.p95Ms, stats.p99Ms, stats.meanMs, stats.maxMs].some((value) => !Number.isFinite(value) || value < 0)) throw new InvalidArmError(`Captured arm statistics for ${metric} must be finite and match its samples.`);
-    for (const threshold of ["over50Ms", "over100Ms"]) {
-      const count = stats.thresholdCounts?.[threshold];
-      if (!Number.isInteger(count) || count < 0 || count > samples.length) throw new InvalidArmError(`Captured arm statistics threshold ${metric}.${threshold} is invalid.`);
-    }
+    const expectedStatistics = sampleStats(trial.stopped[samplesName]);
+    if (stableJson(trial.statistics?.[metric]) !== stableJson(expectedStatistics)) throw new InvalidArmError(`Captured arm statistics for ${metric} must exactly match recomputed raw samples.`);
   }
   const stoppedScheduler = trial.stopped.scheduler;
   const statisticsScheduler = trial.statistics?.scheduler;
