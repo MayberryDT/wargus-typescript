@@ -48,6 +48,12 @@ assert.match(rendererSource, /const graphics = createTrackedGraphics\(\);\s*reta
 assert.match(rendererSource, /if \(!\(child instanceof Container \&\& retainedWorldDisplayRoots\.has\(child\)\)\) \{\s*destroyImmediateWorldDisplayObject\(child, \{ children: true \}\);\s*\}/, "Immediate-layer cleanup must preserve registered retained objects and destroy only immediate objects");
 assert.match(rendererSource, /replaceWorldRenderCacheOwner\(existing, world, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord\)/, "Production cache lookup must execute world-owner replacement disposal");
 assert.match(rendererSource, /function unitRenderSignature[\s\S]*sourceDeclaredReactionRangeForUnit\(world, unit\)/, "Unit signature must include the live AI/person reaction-range dependency");
+assert.equal((rendererSource.match(/kind: "lastSeenBuilding"/g) ?? []).length, 1, "Last-seen buildings must reconcile exactly once for both draw strata");
+assert.match(rendererSource, /kind: "lastSeenBuilding"[\s\S]*liveKeys: new Set\(world\.lastSeenBuildings\.map\(\(building\) => building\.unitId\)\)[\s\S]*keyOf: \(building\) => building\.unitId/, "Last-seen building lifecycle must use stable unitId keys");
+assert.match(rendererSource, /shapeKeyOf: \(building\) => unitAtlases\.has\(building\.typeId\) \? "last-seen-sprite-v1" : "last-seen-graphics-v1"/, "Last-seen records must distinguish sprite and fallback child shapes");
+assert.match(rendererSource, /function drawLastSeenBuildingVisual[\s\S]*takeLastSeenBuildingSprite[\s\S]*takeLastSeenBuildingGraphics/, "Last-seen visuals must update retained Sprite and Graphics slots");
+assert.match(rendererSource, /function takeLastSeenBuildingGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Last-seen fallback Graphics must register for immediate-layer preservation");
+assert.match(rendererSource, /disposeRetainedWorldRenderCache\(layer: Container\)[\s\S]*retainedLastSeenBuildings\.delete\(layer\)/, "Exact cache disposal must clear the last-seen prepared-list memo");
 
 const sourceFile = ts.createSourceFile("worldRenderCache.ts", cacheSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const executableSource = sourceFile.statements
@@ -59,6 +65,33 @@ const javascript = ts.transpileModule(executableSource, {
 }).outputText;
 const load = Function("exports", `${javascript}\nreturn { beginRetainedRenderSlots, createRetainedRenderSlots, createWorldRenderCache, disposeWorldRenderCache, finishRetainedRenderSlots, planWorldRenderReconciliation, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot };`);
 const { beginRetainedRenderSlots, createRetainedRenderSlots, createWorldRenderCache, disposeWorldRenderCache, finishRetainedRenderSlots, planWorldRenderReconciliation, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot } = load({});
+
+const rendererFile = ts.createSourceFile("renderWorld.ts", rendererSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const retainedLastSeenFunctionNames = new Set([
+  "drawLastSeenBuildings",
+  "drawLastSeenBuildingVisual",
+  "takeLastSeenBuildingGraphics",
+  "takeLastSeenBuildingSprite"
+]);
+const retainedLastSeenExecutable = rendererFile.statements
+  .filter((statement) => ts.isFunctionDeclaration(statement) && statement.name && retainedLastSeenFunctionNames.has(statement.name.text))
+  .map((statement) => statement.getText(rendererFile))
+  .join("\n");
+assert.equal((retainedLastSeenExecutable.match(/function /g) ?? []).length, retainedLastSeenFunctionNames.size, "Executable fixture must load every production last-seen renderer function");
+const retainedLastSeenJavascript = ts.transpileModule(retainedLastSeenExecutable, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+}).outputText;
+const loadRetainedLastSeenRenderer = Function(
+  "dependencies",
+  `const { ${[
+    "beginRetainedUnitRender", "circleIntersectsViewport", "compareLastSeenBuildingDrawOrder", "createRetainedWorldDisplayRecord",
+    "createTrackedGraphics", "createTrackedSprite", "detachRetainedWorldDisplayRecord", "destroyRetainedWorldDisplayRecord",
+    "finishRetainedUnitRender", "getFrameTexture", "getLastSeenBuildingFrameNumber", "isLastSeenBuildingVisible",
+    "reconcileWorldRenderKind", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
+    "retainedWorldDisplayRoots", "retainedWorldRenderCacheFor", "sourceLastSeenFancyBuildingMirror", "spriteDirectionForFacing",
+    "takeRetainedRenderSlot"
+  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawLastSeenBuildings };`
+);
 
 const trackerFile = ts.createSourceFile("displayObjectPerformance.ts", trackerSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const trackerExecutable = trackerFile.statements
@@ -218,6 +251,170 @@ assert.deepEqual(tracked.snapshotDisplayObjectPerformance(), {
 }, "Production world replacement and split closure disposal must return exact tracked counts to zero");
 tracked.setDisplayObjectPerformanceCapture(false);
 
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const lastSeenPrepared = new WeakMap();
+const lastSeenRoots = new WeakSet();
+const lastSeenCaches = new WeakMap();
+const lastSeenResources = new WeakMap();
+let nextLastSeenResourceId = 1;
+let lastSeenReconciliations = 0;
+let currentLastSeenFrame = 0;
+const createLastSeenRecord = () => {
+  const root = tracked.createTrackedContainer();
+  lastSeenRoots.add(root);
+  return { root, signature: "", unitAtlases: null, unitObjects: createRetainedRenderSlots() };
+};
+const detachLastSeenRecord = (record) => {
+  record.root.removeFromParent();
+  for (const graphics of record.unitObjects.graphics) graphics.removeFromParent();
+};
+const destroyLastSeenRecord = (record) => {
+  detachLastSeenRecord(record);
+  record.root.removeChildren();
+  for (const object of [...record.unitObjects.graphics, ...record.unitObjects.sprites, ...record.unitObjects.texts]) {
+    tracked.destroyTrackedDisplayObject(object, { children: true });
+  }
+  tracked.destroyTrackedDisplayObject(record.root, { children: true });
+};
+const lastSeenCacheFor = (layer, world) => {
+  const existing = lastSeenCaches.get(layer);
+  const owned = replaceWorldRenderCacheOwner(existing, world, detachLastSeenRecord, destroyLastSeenRecord);
+  if (owned !== existing) lastSeenCaches.set(layer, owned);
+  return owned;
+};
+const beginLastSeenRender = (record) => {
+  record.root.removeChildren();
+  for (const graphics of record.unitObjects.graphics) graphics.removeFromParent();
+  beginRetainedRenderSlots(record.unitObjects);
+};
+const finishLastSeenRender = (record) => finishRetainedRenderSlots(record.unitObjects);
+const retainedLastSeen = loadRetainedLastSeenRenderer({
+  beginRetainedUnitRender: beginLastSeenRender,
+  circleIntersectsViewport: (_x, _y, _radius, viewport) => viewport.includes !== false,
+  compareLastSeenBuildingDrawOrder: (left, right) => left.drawLevel - right.drawLevel || left.y - right.y || left.unitId.localeCompare(right.unitId),
+  createRetainedWorldDisplayRecord: createLastSeenRecord,
+  createTrackedGraphics: tracked.createTrackedGraphics,
+  createTrackedSprite: tracked.createTrackedSprite,
+  detachRetainedWorldDisplayRecord: detachLastSeenRecord,
+  destroyRetainedWorldDisplayRecord: destroyLastSeenRecord,
+  finishRetainedUnitRender: finishLastSeenRender,
+  getFrameTexture: (_atlas, frame) => frame === 0 ? Texture.WHITE : Texture.EMPTY,
+  getLastSeenBuildingFrameNumber: () => currentLastSeenFrame,
+  isLastSeenBuildingVisible: (_world, building) => building.visible === true,
+  reconcileWorldRenderKind: (options) => {
+    lastSeenReconciliations += 1;
+    return reconcileWorldRenderKind(options);
+  },
+  retainedLastSeenBuildings: lastSeenPrepared,
+  retainedRenderResourceId: (resource) => {
+    if (!resource) return 0;
+    let id = lastSeenResources.get(resource);
+    if (!id) {
+      id = nextLastSeenResourceId++;
+      lastSeenResources.set(resource, id);
+    }
+    return id;
+  },
+  retainedSceneOrder,
+  retainedWorldDisplayRoots: lastSeenRoots,
+  retainedWorldRenderCacheFor: lastSeenCacheFor,
+  sourceLastSeenFancyBuildingMirror: () => false,
+  spriteDirectionForFacing: () => ({ mirror: false, offset: 0 }),
+  takeRetainedRenderSlot
+});
+const spriteAtlas = { numDirections: 1 };
+const lastSeenAtlases = new Map([["sprite", spriteAtlas]]);
+const building = (unitId, drawLevel, typeId, overrides = {}) => ({
+  unitId, drawLevel, typeId, x: drawLevel, y: drawLevel, radius: 12, frameWidth: 32, frameHeight: 32, facing: 4, ...overrides
+});
+const originalLastSeenBuildings = [
+  building("lower-sprite", 10, "sprite"), building("lower-fallback", 20, "fallback"),
+  building("upper-sprite", 40, "sprite"), building("upper-fallback", 50, "fallback")
+];
+const lastSeenWorld = { lastSeenBuildings: originalLastSeenBuildings, engineSettings: { useFancyBuildingsDefault: false } };
+const primaryLastSeenLayer = new Container();
+const splitLastSeenLayer = new Container();
+const unitSentinel = new Container();
+const drawLastSeenFrame = (layer, world = lastSeenWorld, viewport = { includes: true }) => {
+  layer.removeChildren();
+  retainedLastSeen.drawLastSeenBuildings(layer, world, lastSeenAtlases, viewport, { maxDrawLevel: 39 }, new Map());
+  layer.addChild(unitSentinel);
+  retainedLastSeen.drawLastSeenBuildings(layer, world, lastSeenAtlases, viewport, { minDrawLevel: 40 }, new Map());
+};
+drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(lastSeenReconciliations, 1, "Production last-seen renderer must reconcile once across lower and upper calls");
+const primaryLastSeenCache = lastSeenCaches.get(primaryLastSeenLayer);
+const primaryRecords = primaryLastSeenCache.kinds.lastSeenBuilding.active;
+const lowerSprite = primaryRecords.get("lower-sprite").value;
+const lowerFallback = primaryRecords.get("lower-fallback").value;
+const upperSprite = primaryRecords.get("upper-sprite").value;
+const upperFallback = primaryRecords.get("upper-fallback").value;
+assert.deepEqual(primaryLastSeenLayer.children, [
+  lowerSprite.root, lowerFallback.root, lowerFallback.unitObjects.graphics[0], unitSentinel,
+  upperSprite.root, upperFallback.root, upperFallback.unitObjects.graphics[0]
+], "Production last-seen renderer must preserve exact lower/unit/upper painter order");
+assert.deepEqual(lowerSprite.root.children, [lowerSprite.unitObjects.sprites[0]], "Sprite must remain nested under its retained root");
+const retainedLastSeenSprite = lowerSprite.unitObjects.sprites[0];
+assert.equal(retainedLastSeenSprite.texture, Texture.WHITE, "Retained last-seen Sprite must install the current frame texture");
+assert.equal(retainedLastSeenSprite.anchor.x, 0.5, "Retained last-seen Sprite must reset anchor x");
+assert.equal(retainedLastSeenSprite.anchor.y, 0.72, "Retained last-seen Sprite must reset anchor y");
+assert.equal(retainedLastSeenSprite.position.x, 10, "Retained last-seen Sprite must reset x");
+assert.equal(retainedLastSeenSprite.position.y, 20, "Retained last-seen Sprite must reset y offset");
+assert.equal(retainedLastSeenSprite.scale.x, 0.72, "Retained last-seen Sprite must reset horizontal scale");
+assert.equal(retainedLastSeenSprite.scale.y, 0.72, "Retained last-seen Sprite must reset vertical scale");
+assert.equal(retainedLastSeenSprite.alpha, 0.42, "Retained last-seen Sprite must reset alpha");
+currentLastSeenFrame = 1;
+drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(primaryRecords.get("lower-sprite").value.unitObjects.sprites[0], retainedLastSeenSprite, "Animation-frame change must retain Sprite identity");
+assert.equal(retainedLastSeenSprite.texture, Texture.EMPTY, "Animation-frame change must update the retained Sprite texture");
+const retainedLastSeenFallback = lowerFallback.unitObjects.graphics[0];
+assert.equal(lastSeenRoots.has(retainedLastSeenFallback), true, "Fallback Graphics must register for immediate-layer preservation");
+assert.deepEqual(
+  [retainedLastSeenFallback.getLocalBounds().minX, retainedLastSeenFallback.getLocalBounds().minY, retainedLastSeenFallback.getLocalBounds().maxX, retainedLastSeenFallback.getLocalBounds().maxY],
+  [7, 7, 33, 33],
+  "Fallback Graphics must draw the current building geometry"
+);
+Object.assign(originalLastSeenBuildings[1], { x: 80, y: 30, radius: 5 });
+drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(primaryRecords.get("lower-fallback").value.unitObjects.graphics[0], retainedLastSeenFallback, "Changed fallback input must retain Graphics identity");
+assert.deepEqual(
+  [retainedLastSeenFallback.getLocalBounds().minX, retainedLastSeenFallback.getLocalBounds().minY, retainedLastSeenFallback.getLocalBounds().maxX, retainedLastSeenFallback.getLocalBounds().maxY],
+  [74, 24, 86, 36],
+  "Changed fallback input must clear stale geometry before redraw"
+);
+const createdAfterWarmup = tracked.snapshotDisplayObjectPerformance().trackedCreated;
+for (let frame = 0; frame < 300; frame += 1) drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, createdAfterWarmup, "300 unchanged production last-seen frames must create zero display objects");
+assert.equal(primaryRecords.get("lower-sprite").value.root, lowerSprite.root, "Production Sprite root identity must remain stable");
+assert.equal(primaryRecords.get("lower-fallback").value.unitObjects.graphics[0], lowerFallback.unitObjects.graphics[0], "Production fallback Graphics identity must remain stable");
+drawLastSeenFrame(splitLastSeenLayer);
+const splitLowerSprite = lastSeenCaches.get(splitLastSeenLayer).kinds.lastSeenBuilding.active.get("lower-sprite").value;
+assert.notEqual(splitLowerSprite.root, lowerSprite.root, "Split viewport must own independent last-seen display objects");
+originalLastSeenBuildings[0].visible = true;
+drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(primaryLastSeenCache.kinds.lastSeenBuilding.dormant.get("lower-sprite").value.root, lowerSprite.root, "Visibility suppression must detach a live last-seen record");
+originalLastSeenBuildings[0].visible = false;
+drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(primaryLastSeenCache.kinds.lastSeenBuilding.active.get("lower-sprite").value.root, lowerSprite.root, "Visibility re-entry must retain identity");
+drawLastSeenFrame(primaryLastSeenLayer, lastSeenWorld, { includes: false });
+assert.equal(primaryLastSeenCache.kinds.lastSeenBuilding.dormant.get("lower-fallback").value.root, lowerFallback.root, "Viewport cull must detach to dormant");
+drawLastSeenFrame(primaryLastSeenLayer);
+lastSeenWorld.lastSeenBuildings = originalLastSeenBuildings.filter(({ unitId }) => unitId !== "upper-sprite");
+drawLastSeenFrame(primaryLastSeenLayer);
+assert.equal(upperSprite.root.destroyed, true, "Last-seen disappearance must destroy its exact record");
+const replacementLastSeenWorld = { lastSeenBuildings: [building("lower-sprite", 10, "sprite")], engineSettings: { useFancyBuildingsDefault: false } };
+drawLastSeenFrame(primaryLastSeenLayer, replacementLastSeenWorld);
+assert.notEqual(lastSeenCaches.get(primaryLastSeenLayer).kinds.lastSeenBuilding.active.get("lower-sprite").value.root, lowerSprite.root, "World replacement with the same stable key must create a new identity");
+assert.equal(lowerSprite.root.destroyed, true, "World replacement must destroy the old record synchronously");
+for (const [layer, cache] of [[primaryLastSeenLayer, lastSeenCaches.get(primaryLastSeenLayer)], [splitLastSeenLayer, lastSeenCaches.get(splitLastSeenLayer)]]) {
+  disposeWorldRenderCache(cache, detachLastSeenRecord, destroyLastSeenRecord);
+  lastSeenCaches.delete(layer);
+  lastSeenPrepared.delete(layer);
+}
+assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Production last-seen split/world-replacement disposal must return tracked live delta to zero");
+tracked.setDisplayObjectPerformanceCapture(false);
+
 let nextIdentity = 1;
 const created = [];
 const destroyed = [];
@@ -302,6 +499,26 @@ const removedUnit = reconcileWorldRenderKind(options(removalCache, "unit", [{ ke
 const removal = reconcileWorldRenderKind(options(removalCache, "unit", [], new Set()));
 assert.deepEqual(removal.actions.map(({ type }) => type), ["detach", "retire", "destroy", "reorder"], "Removal must destroy rather than enter dormancy");
 assert.ok(destroyed.includes(removedUnit.identity));
+
+const lastSeenCache = createWorldRenderCache({});
+const stableLastSeen = { key: "building-1", shape: "last-seen-sprite-v1" };
+const firstLastSeen = reconcileWorldRenderKind(options(lastSeenCache, "lastSeenBuilding", [stableLastSeen])).records[0].value;
+for (let frame = 0; frame < 300; frame += 1) {
+  const stable = reconcileWorldRenderKind(options(lastSeenCache, "lastSeenBuilding", [stableLastSeen])).records[0].value;
+  assert.equal(stable.identity, firstLastSeen.identity, "Unchanged last-seen building must retain identity");
+}
+const lastSeenLiveKeys = new Set();
+for (let index = 0; index < 130; index += 1) {
+  const key = `last-seen-${index}`;
+  lastSeenLiveKeys.add(key);
+  reconcileWorldRenderKind(options(lastSeenCache, "lastSeenBuilding", [{ key, shape: "last-seen-graphics-v1" }], new Set(lastSeenLiveKeys)));
+}
+reconcileWorldRenderKind(options(lastSeenCache, "lastSeenBuilding", [], lastSeenLiveKeys));
+assert.deepEqual(
+  [...lastSeenCache.kinds.lastSeenBuilding.dormant.keys()],
+  Array.from({ length: 128 }, (_, index) => `last-seen-${index + 2}`),
+  "Last-seen dormant cache must retain the newest 128 records"
+);
 
 for (const startingState of ["active", "dormant"]) {
   const shapeCache = createWorldRenderCache({});

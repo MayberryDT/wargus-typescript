@@ -29,6 +29,10 @@ const fogAtlasIds = new WeakMap<FogTextureAtlas, number>();
 const sourceFogBlurFilters = new WeakMap<Container, BlurFilter>();
 const retainedWorldDisplayRoots = new WeakSet<Container>();
 const retainedWorldRenderCaches = new WeakMap<Container, WorldRenderCache<RetainedWorldDisplayRecord>>();
+const retainedLastSeenBuildings = new WeakMap<
+  Container,
+  { world: WorldState; buildings: readonly WorldState["lastSeenBuildings"][number][] }
+>();
 const retainedRenderResourceIds = new WeakMap<object, number>();
 const createWorldRenderRecordRoot = createTrackedContainer;
 const destroyWorldRenderRecordRoot = destroyTrackedDisplayObject;
@@ -479,6 +483,7 @@ function retainedWorldRenderCacheFor(layer: Container, world: WorldState): World
 }
 
 export function disposeRetainedWorldRenderCache(layer: Container): void {
+  retainedLastSeenBuildings.delete(layer);
   const cache = retainedWorldRenderCaches.get(layer);
   if (!cache) return;
   disposeWorldRenderCache(cache, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
@@ -499,6 +504,20 @@ function destroyRetainedWorldDisplayRecord(record: RetainedWorldDisplayRecord): 
     destroyWorldRenderRecordRoot(object, { children: true });
   }
   destroyWorldRenderRecordRoot(record.root, { children: true });
+}
+
+function createRetainedWorldDisplayRecord(): RetainedWorldDisplayRecord {
+  const root = createWorldRenderRecordRoot();
+  retainedWorldDisplayRoots.add(root);
+  return {
+    root,
+    signature: "",
+    manifest: null,
+    unitAtlases: null,
+    missileAtlases: null,
+    statusDecorationAtlas: null,
+    unitObjects: createRetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>()
+  };
 }
 
 function reconcileUnits(
@@ -522,19 +541,7 @@ function reconcileUnits(
     liveKeys: new Set(world.units.filter((unit) => unit.hitPoints > 0).map((unit) => unit.id)),
     keyOf: (unit) => unit.id,
     shapeKeyOf: (unit) => unitRenderShapeKey(world, unit, selected, controlGroups, sourceShowOrdersVisible, manifest, unitAtlases, missileAtlases, statusDecorationAtlas, prepared),
-    create: () => {
-      const root = createWorldRenderRecordRoot();
-      retainedWorldDisplayRoots.add(root);
-      return {
-        root,
-        signature: "",
-        manifest: null,
-        unitAtlases: null,
-        missileAtlases: null,
-        statusDecorationAtlas: null,
-        unitObjects: createRetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>()
-      };
-    },
+    create: createRetainedWorldDisplayRecord,
     update: (record, stateUnit) => {
       const signature = unitRenderSignature(world, stateUnit, selected, controlGroups, sourceShowOrdersVisible, manifest, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
       if (
@@ -1564,41 +1571,82 @@ function constructionFrameForUnit(unit: WorldState["units"][number], manifest: W
 }
 
 function drawLastSeenBuildings(layer: Container, world: WorldState, unitAtlases: Map<string, UnitTextureAtlas>, viewport: WorldViewport, strata: { minDrawLevel?: number; maxDrawLevel?: number }, animationById: WorldRenderSnapshot["animationById"]): void {
-  if (world.lastSeenBuildings.length === 0) {
+  const lowerStratum = strata.maxDrawLevel !== undefined;
+  let prepared = retainedLastSeenBuildings.get(layer);
+  if (lowerStratum || prepared?.world !== world) {
+    const buildings = [...world.lastSeenBuildings]
+      .sort(compareLastSeenBuildingDrawOrder)
+      .filter((building) => !isLastSeenBuildingVisible(world, building)
+        && circleIntersectsViewport(building.x, building.y, Math.max(building.radius + 96, building.frameWidth, building.frameHeight), viewport));
+    prepared = { world, buildings };
+    retainedLastSeenBuildings.set(layer, prepared);
+    reconcileWorldRenderKind({
+      cache: retainedWorldRenderCacheFor(layer, world),
+      worldIdentity: world,
+      kind: "lastSeenBuilding",
+      items: buildings,
+      liveKeys: new Set(world.lastSeenBuildings.map((building) => building.unitId)),
+      keyOf: (building) => building.unitId,
+      shapeKeyOf: (building) => unitAtlases.has(building.typeId) ? "last-seen-sprite-v1" : "last-seen-graphics-v1",
+      create: createRetainedWorldDisplayRecord,
+      update: (record, building) => {
+        const atlas = unitAtlases.get(building.typeId);
+        const frameNumber = atlas ? getLastSeenBuildingFrameNumber(building, atlas.numDirections, animationById) : null;
+        const signature = JSON.stringify([building, world.engineSettings.useFancyBuildingsDefault, frameNumber, retainedRenderResourceId(atlas)]);
+        if (record.signature === signature && record.unitAtlases === unitAtlases) return;
+        beginRetainedUnitRender(record);
+        drawLastSeenBuildingVisual(record.root, world, building, atlas, frameNumber, record.unitObjects);
+        finishRetainedUnitRender(record);
+        record.signature = signature;
+        record.unitAtlases = unitAtlases;
+      },
+      attach: () => {},
+      detach: detachRetainedWorldDisplayRecord,
+      destroy: destroyRetainedWorldDisplayRecord,
+      reorder: () => {}
+    });
+  }
+  const cache = retainedWorldRenderCacheFor(layer, world);
+  const records = prepared.buildings
+    .filter((building) => building.drawLevel >= (strata.minDrawLevel ?? 0) && building.drawLevel <= (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY))
+    .map((building) => cache.kinds.lastSeenBuilding.active.get(building.unitId)?.value)
+    .filter((record): record is RetainedWorldDisplayRecord => Boolean(record));
+  for (const object of retainedSceneOrder(records, (record) => record.root, (record) => record.unitObjects.graphics)) {
+    layer.addChild(object);
+  }
+}
+
+function drawLastSeenBuildingVisual(layer: Container, world: WorldState, building: WorldState["lastSeenBuildings"][number], atlas: UnitTextureAtlas | undefined, frameNumber: number | null, objects: RetainedUnitRenderObjects): void {
+  if (atlas && frameNumber !== null) {
+    const texture = getFrameTexture(atlas, frameNumber);
+    const sprite = takeLastSeenBuildingSprite(texture, objects);
+    const direction = spriteDirectionForFacing(building.facing ?? 4, atlas.numDirections);
+    sprite.anchor.set(0.5, 0.72);
+    sprite.position.set(building.x, building.y + 10);
+    const mirror = direction.mirror || sourceLastSeenFancyBuildingMirror(world, building.typeId, building.unitId);
+    sprite.scale.set(mirror ? -0.72 : 0.72, 0.72);
+    sprite.alpha = 0.42;
+    layer.addChild(sprite);
     return;
   }
-  const graphics = createTrackedGraphics();
-  let drewFallbackGraphics = false;
-  for (const building of [...world.lastSeenBuildings].sort(compareLastSeenBuildingDrawOrder)) {
-    if (building.drawLevel < (strata.minDrawLevel ?? 0) || building.drawLevel > (strata.maxDrawLevel ?? Number.POSITIVE_INFINITY)) {
-      continue;
-    }
-    if (isLastSeenBuildingVisible(world, building) || !circleIntersectsViewport(building.x, building.y, Math.max(building.radius + 96, building.frameWidth, building.frameHeight), viewport)) {
-      continue;
-    }
-    const atlas = unitAtlases.get(building.typeId);
-    if (atlas) {
-      const frameNumber = getLastSeenBuildingFrameNumber(building, atlas.numDirections, animationById);
-      const texture = getFrameTexture(atlas, frameNumber);
-      const sprite = createTrackedSprite(texture);
-      const direction = spriteDirectionForFacing(building.facing ?? 4, atlas.numDirections);
-      sprite.anchor.set(0.5, 0.72);
-      sprite.position.set(building.x, building.y + 10);
-      const mirror = direction.mirror || sourceLastSeenFancyBuildingMirror(world, building.typeId, building.unitId);
-      sprite.scale.set(mirror ? -0.72 : 0.72, 0.72);
-      sprite.alpha = 0.42;
-      layer.addChild(sprite);
-      continue;
-    }
-    drewFallbackGraphics = true;
-    graphics.circle(building.x, building.y, building.radius);
-    graphics.fill({ color: 0x6f3a32, alpha: 0.38 });
-    graphics.circle(building.x, building.y, building.radius);
-    graphics.stroke({ width: 2, color: 0x1a1410, alpha: 0.45 });
-  }
-  if (drewFallbackGraphics) {
-    layer.addChild(graphics);
-  }
+  const graphics = takeLastSeenBuildingGraphics(objects);
+  graphics.circle(building.x, building.y, building.radius);
+  graphics.fill({ color: 0x6f3a32, alpha: 0.38 });
+  graphics.circle(building.x, building.y, building.radius);
+  graphics.stroke({ width: 2, color: 0x1a1410, alpha: 0.45 });
+  layer.addChild(graphics);
+}
+
+function takeLastSeenBuildingGraphics(objects: RetainedUnitRenderObjects): Graphics {
+  return takeRetainedRenderSlot(objects, "graphics", () => {
+    const graphics = createTrackedGraphics();
+    retainedWorldDisplayRoots.add(graphics);
+    return graphics;
+  }, (graphics) => graphics.clear());
+}
+
+function takeLastSeenBuildingSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
 }
 
 function isLastSeenBuildingVisible(world: WorldState, building: WorldState["lastSeenBuildings"][number]): boolean {
