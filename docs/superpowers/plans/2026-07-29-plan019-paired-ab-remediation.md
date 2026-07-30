@@ -404,7 +404,7 @@ the worktree and reports cleanup failure instead of forcing removal.
 |---|---|---|
 | 019 | `5935a17f456868051c2c16b2f0d8d2b4da56d115` | `3,5,7` |
 | 020 | `9bab6b0e3f7d260148cc1c0f5c1c231098046e19` | `6` |
-| 021 | `1be72d07678b8af8b9fe5fda7c3bde3065d274bf` | `3,4,6` |
+| 021 | `28de0d62a14a4d84faa07727a79d624244bcf61a` | `3,4,6` |
 
 After independent review of the coordinator, run exactly one command at a
 time in this order and stop on the first non-ready packet:
