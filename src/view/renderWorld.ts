@@ -35,6 +35,7 @@ const retainedLastSeenBuildings = new WeakMap<
 >();
 const retainedCorpseStrata = new WeakMap<Container, { world: WorldState; corpses: PreparedRenderStrata<WorldState["corpses"][number]> }>();
 const retainedProjectileStrata = new WeakMap<Container, { world: WorldState; projectiles: PreparedRenderStrata<WorldState["projectiles"][number]> }>();
+const retainedSpellEffectStrata = new WeakMap<Container, { world: WorldState; effects: PreparedRenderStrata<WorldState["spellEffects"][number]> }>();
 const retainedRenderResourceIds = new WeakMap<object, number>();
 const createWorldRenderRecordRoot = createTrackedContainer;
 const destroyWorldRenderRecordRoot = destroyTrackedDisplayObject;
@@ -96,6 +97,7 @@ export function renderWorld(args: RenderWorldArgs): void {
   clearImmediateWorldLayer(unitLayer);
   prepareRetainedCorpseStrata(unitLayer, world, prepared.corpses);
   prepareRetainedProjectileStrata(unitLayer, world, prepared.projectiles);
+  prepareRetainedSpellEffectStrata(unitLayer, world, prepared.spellEffects);
   drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
   drawLastSeenBuildings(unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
   drawProjectiles(unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -222,6 +224,7 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     clearImmediateWorldLayer(renderer.unitLayer);
     prepareRetainedCorpseStrata(renderer.unitLayer, world, prepared.corpses);
     prepareRetainedProjectileStrata(renderer.unitLayer, world, prepared.projectiles);
+    prepareRetainedSpellEffectStrata(renderer.unitLayer, world, prepared.spellEffects);
     drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
     drawLastSeenBuildings(renderer.unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
     drawProjectiles(renderer.unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -492,6 +495,7 @@ export function disposeRetainedWorldRenderCache(layer: Container): void {
   retainedLastSeenBuildings.delete(layer);
   retainedCorpseStrata.delete(layer);
   retainedProjectileStrata.delete(layer);
+  retainedSpellEffectStrata.delete(layer);
   const cache = retainedWorldRenderCaches.get(layer);
   if (!cache) return;
   disposeWorldRenderCache(cache, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
@@ -2031,42 +2035,82 @@ function missileSpriteScale(): number {
   return 1;
 }
 
+function prepareRetainedSpellEffectStrata(layer: Container, world: WorldState, effects: PreparedRenderStrata<WorldState["spellEffects"][number]>): void {
+  retainedSpellEffectStrata.set(layer, { world, effects });
+}
+
 function drawSpellEffects(layer: Container, world: WorldState, missileAtlases: Map<string, MissileTextureAtlas>, effects: readonly WorldState["spellEffects"][number][]): void {
-  if (!world.spellEffects || world.spellEffects.length === 0) {
+  const prepared = retainedSpellEffectStrata.get(layer);
+  if (!prepared || prepared.world !== world) throw new Error("Spell-effect render strata were not prepared for this view");
+  const cache = retainedWorldRenderCacheFor(layer, world);
+  if (effects === prepared.effects.below40) {
+    const preparedEffects = [...prepared.effects.below40, ...prepared.effects.atLeast40];
+    reconcileWorldRenderKind({
+      cache,
+      worldIdentity: world,
+      kind: "spellEffect",
+      items: preparedEffects,
+      liveKeys: new Set(world.spellEffects.map((effect) => effect.id)),
+      keyOf: (effect) => effect.id,
+      shapeKeyOf: (effect) => spellEffectRenderShapeKey(world, effect, missileAtlases),
+      create: createRetainedWorldDisplayRecord,
+      update: (record, effect) => {
+        const atlas = effect.missileId ? missileAtlases.get(effect.missileId) : undefined;
+        const signature = JSON.stringify([effect, world.tick, world.tickRate, world.engineSettings, world.spellDefinitions, world.missileDefinitions, world.tileSize, retainedRenderResourceId(atlas)]);
+        if (record.signature === signature && record.missileAtlases === missileAtlases) return;
+        beginRetainedUnitRender(record);
+        drawSpellEffectVisual(record.root, world, effect, atlas, record.unitObjects);
+        finishRetainedUnitRender(record);
+        record.signature = signature;
+        record.missileAtlases = missileAtlases;
+      },
+      attach: () => {},
+      detach: detachRetainedWorldDisplayRecord,
+      destroy: destroyRetainedWorldDisplayRecord,
+      reorder: () => {}
+    });
+  }
+  const records = effects
+    .map((effect) => cache.kinds.spellEffect.active.get(effect.id)?.value)
+    .filter((record): record is RetainedWorldDisplayRecord => Boolean(record));
+  for (const object of retainedSceneOrder(records, (record) => record.root, (record) => record.unitObjects.graphics)) layer.addChild(object);
+}
+
+function spellEffectRenderShapeKey(world: WorldState, effect: WorldState["spellEffects"][number], missileAtlases: Map<string, MissileTextureAtlas>): string {
+  const atlas = effect.missileId ? missileAtlases.get(effect.missileId) : undefined;
+  if (!atlas) return "spell-effect-graphics-v1";
+  if (effect.kind === "blizzard" || effect.kind === "death-and-decay") {
+    const impacts = sourceAreaBombardmentVisualImpacts(world, effect, sourceAreaBombardmentForEffect(world, effect));
+    return `spell-effect-sprites-${impacts.length}-v1`;
+  }
+  return "spell-effect-sprite-1-v1";
+}
+
+function drawSpellEffectVisual(layer: Container, world: WorldState, effect: WorldState["spellEffects"][number], atlas: MissileTextureAtlas | undefined, objects: RetainedUnitRenderObjects): void {
+  const progress = Math.min(1, effect.age / Math.max(0.01, effect.duration));
+  const persistent = effect.kind === "blizzard" || effect.kind === "death-and-decay";
+  const alpha = persistent ? Math.max(0.28, 0.72 - progress * 0.35) : Math.max(0, 1 - progress);
+  const pulse = effect.radius * (0.55 + progress * 0.65);
+  const color = spellColor(effect.kind);
+  if (atlas) {
+    if (persistent) {
+      drawAreaSpellMissiles(layer, world, effect, atlas, alpha, objects);
+      return;
+    }
+    const sprite = takeSpellEffectSprite(getMissileFrameTexture(atlas, spellEffectMissileFrame(world, effect, atlas)), objects);
+    sprite.anchor.set(0.5);
+    sprite.position.set(effect.x, effect.y);
+    sprite.alpha = Math.max(0.05, alpha);
+    sprite.scale.set(spellEffectSpriteScale(effect, atlas));
+    layer.addChild(sprite);
     return;
   }
-  const graphics = createTrackedGraphics();
-  let drewFallbackGraphics = false;
-  const enhancedEffects = world.engineSettings.enhancedEffectsDefault !== false;
-  for (const effect of effects) {
-    const progress = Math.min(1, effect.age / Math.max(0.01, effect.duration));
-    const persistent = effect.kind === "blizzard" || effect.kind === "death-and-decay";
-    const alpha = persistent ? Math.max(0.28, 0.72 - progress * 0.35) : Math.max(0, 1 - progress);
-    const pulse = effect.radius * (0.55 + progress * 0.65);
-    const color = spellColor(effect.kind);
-    const atlas = effect.missileId ? missileAtlases.get(effect.missileId) : undefined;
-    if (atlas) {
-      if (persistent) {
-        drawAreaSpellMissiles(layer, world, effect, atlas, alpha);
-        continue;
-      }
-      const texture = getMissileFrameTexture(atlas, spellEffectMissileFrame(world, effect, atlas));
-      const sprite = createTrackedSprite(texture);
-      sprite.anchor.set(0.5);
-      sprite.position.set(effect.x, effect.y);
-      sprite.alpha = Math.max(0.05, alpha);
-      sprite.scale.set(spellEffectSpriteScale(effect, atlas));
-      layer.addChild(sprite);
-      continue;
-    }
-    drewFallbackGraphics = true;
-    graphics.circle(effect.x, effect.y, pulse);
-    graphics.stroke({ width: 3, color, alpha: alpha * 0.9 });
-    graphics.circle(effect.x, effect.y, Math.max(6, effect.radius * 0.2));
-    graphics.fill({ color, alpha: alpha * 0.16 });
-    if (!enhancedEffects) {
-      continue;
-    }
+  const graphics = takeSpellEffectGraphics(objects);
+  graphics.circle(effect.x, effect.y, pulse);
+  graphics.stroke({ width: 3, color, alpha: alpha * 0.9 });
+  graphics.circle(effect.x, effect.y, Math.max(6, effect.radius * 0.2));
+  graphics.fill({ color, alpha: alpha * 0.16 });
+  if (world.engineSettings.enhancedEffectsDefault !== false) {
     if (effect.kind === "fireball" || effect.kind === "flame-shield") {
       graphics.circle(effect.x, effect.y, effect.radius * 0.35 * (1 + progress));
       graphics.fill({ color: 0xf0df9a, alpha: alpha * 0.22 });
@@ -2080,7 +2124,7 @@ function drawSpellEffects(layer: Container, world: WorldState, missileAtlases: M
       graphics.circle(effect.x, effect.y, Math.max(5, effect.radius * 0.11));
       graphics.fill({ color: 0xffefb0, alpha: alpha * 0.5 });
     }
-    if (effect.kind === "blizzard" || effect.kind === "death-and-decay") {
+    if (persistent) {
       const tick = Math.floor(effect.age * 12);
       for (let index = 0; index < 8; index += 1) {
         const angle = (index * 2.399 + tick * 0.27) % (Math.PI * 2);
@@ -2105,18 +2149,28 @@ function drawSpellEffects(layer: Container, world: WorldState, missileAtlases: M
       graphics.stroke({ width: 2, color, alpha: alpha * 0.75 });
     }
   }
-  if (drewFallbackGraphics) {
-    layer.addChild(graphics);
-  }
+  layer.addChild(graphics);
 }
 
-function drawAreaSpellMissiles(layer: Container, world: WorldState, effect: WorldState["spellEffects"][number], atlas: MissileTextureAtlas, alpha: number): void {
+function takeSpellEffectGraphics(objects: RetainedUnitRenderObjects): Graphics {
+  return takeRetainedRenderSlot(objects, "graphics", () => {
+    const graphics = createTrackedGraphics();
+    retainedWorldDisplayRoots.add(graphics);
+    return graphics;
+  }, (graphics) => graphics.clear());
+}
+
+function takeSpellEffectSprite(texture: Texture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
+}
+
+function drawAreaSpellMissiles(layer: Container, world: WorldState, effect: WorldState["spellEffects"][number], atlas: MissileTextureAtlas, alpha: number, objects: RetainedUnitRenderObjects): void {
   const sourceArea = sourceAreaBombardmentForEffect(world, effect);
   const impacts = sourceAreaBombardmentVisualImpacts(world, effect, sourceArea);
   const frameTick = Math.floor(effect.age * missileFrameRate(world, atlas));
   for (const impact of impacts) {
     const texture = getMissileFrameTexture(atlas, (frameTick + impact.index) % Math.max(1, atlas.framesPerDirection));
-    const sprite = createTrackedSprite(texture);
+    const sprite = takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (retained) => { retained.texture = texture; });
     sprite.anchor.set(0.5);
     sprite.position.set(impact.x, impact.y);
     sprite.alpha = Math.max(0.08, alpha * (0.55 + ((impact.seed * 7) % 40) / 100));

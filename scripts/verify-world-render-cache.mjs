@@ -65,6 +65,13 @@ assert.match(rendererSource, /projectileRenderShapeKey[\s\S]*"projectile-text-v1
 assert.match(rendererSource, /function takeProjectileGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Projectile fallback Graphics must register for immediate-layer preservation");
 const projectileReconciliationSource = rendererSource.match(/function drawProjectiles[\s\S]*?(?=function projectileRenderShapeKey)/)?.[0] ?? "";
 assert.doesNotMatch(projectileReconciliationSource, /canResetForPool:/, "Projectile pooling must stay disabled without a complete reset contract");
+assert.equal((rendererSource.match(/kind: "spellEffect"/g) ?? []).length, 1, "Spell effects must reconcile exactly once for both draw strata");
+assert.match(rendererSource, /kind: "spellEffect"[\s\S]*liveKeys: new Set\(world\.spellEffects\.map\(\(effect\) => effect\.id\)\)[\s\S]*keyOf: \(effect\) => effect\.id/, "Spell-effect lifecycle must use stable effect IDs");
+assert.match(rendererSource, /spellEffectRenderShapeKey[\s\S]*"spell-effect-graphics-v1"[\s\S]*`spell-effect-sprites-\$\{impacts\.length\}-v1`[\s\S]*"spell-effect-sprite-1-v1"/, "Spell-effect shape key must distinguish Graphics, single-Sprite, and exact multi-Sprite records");
+assert.match(rendererSource, /function takeSpellEffectGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Spell-effect Graphics must register for immediate-layer preservation");
+assert.match(rendererSource, /const signature = JSON\.stringify\(\[effect, world\.tick, world\.tickRate, world\.engineSettings, world\.spellDefinitions, world\.missileDefinitions, world\.tileSize, retainedRenderResourceId\(atlas\)\]\)/, "Spell-effect signature must include every world/resource dependency");
+const spellEffectReconciliationSource = rendererSource.match(/function drawSpellEffects[\s\S]*?(?=function spellEffectRenderShapeKey)/)?.[0] ?? "";
+assert.doesNotMatch(spellEffectReconciliationSource, /canResetForPool:/, "Spell-effect pooling must stay disabled without a complete reset contract");
 
 const sourceFile = ts.createSourceFile("worldRenderCache.ts", cacheSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const executableSource = sourceFile.statements
@@ -93,7 +100,22 @@ const retainedLastSeenFunctionNames = new Set([
   "takeProjectileGraphics",
   "takeProjectileSprite",
   "takeProjectileText",
-  "drawDamageHitProjectile"
+  "drawDamageHitProjectile",
+  "drawSpellEffects",
+  "spellEffectRenderShapeKey",
+  "drawSpellEffectVisual",
+  "takeSpellEffectGraphics",
+  "takeSpellEffectSprite",
+  "drawAreaSpellMissiles",
+  "sourceAreaBombardmentForEffect",
+  "sourceAreaBombardmentVisualImpacts",
+  "sourceAreaBombardmentVisualPulseTick",
+  "sourceStableVisualHash",
+  "spellEffectMissileFrame",
+  "spellEffectSpriteScale",
+  "spellColor",
+  "missileFrameRate",
+  "sourceMissileSleepTicks"
 ]);
 const retainedLastSeenExecutable = rendererFile.statements
   .filter((statement) => ts.isFunctionDeclaration(statement) && statement.name && retainedLastSeenFunctionNames.has(statement.name.text))
@@ -109,10 +131,10 @@ const loadRetainedLastSeenRenderer = Function(
     "beginRetainedUnitRender", "circleIntersectsViewport", "compareLastSeenBuildingDrawOrder", "createRetainedWorldDisplayRecord",
     "createTrackedGraphics", "createTrackedSprite", "createTrackedText", "detachRetainedWorldDisplayRecord", "destroyRetainedWorldDisplayRecord",
     "finishRetainedUnitRender", "getCorpseFrameNumber", "getFrameTexture", "getMissileFrameTexture", "getLastSeenBuildingFrameNumber", "isDamageHitProjectile", "isFireLikeProjectile", "isLastSeenBuildingVisible", "isLightningLikeProjectile",
-    "missileFrameNumber", "missileSpriteScale", "projectileDrawPosition", "reconcileWorldRenderKind", "retainedCorpseStrata", "retainedProjectileStrata", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
-    "retainedWorldDisplayRoots", "retainedWorldRenderCacheFor", "siegeProjectileFallbackColor", "sourceLastSeenFancyBuildingMirror", "sourceMissileVisualRole", "sourcePlayerColor", "spriteDirectionForFacing",
+    "missileFrameNumber", "missileSpriteScale", "projectileDrawPosition", "reconcileWorldRenderKind", "retainedCorpseStrata", "retainedProjectileStrata", "retainedSpellEffectStrata", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
+    "retainedWorldDisplayRoots", "retainedWorldRenderCacheFor", "siegeProjectileFallbackColor", "sourceDefaultGameSpeed", "sourceLastSeenFancyBuildingMirror", "sourceMissileVisualRole", "sourcePlayerColor", "spriteDirectionForFacing",
     "takeRetainedRenderSlot"
-  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawCorpses, drawLastSeenBuildings, drawProjectiles };`
+  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawCorpses, drawLastSeenBuildings, drawProjectiles, drawSpellEffects };`
 );
 
 const trackerFile = ts.createSourceFile("displayObjectPerformance.ts", trackerSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -278,6 +300,7 @@ tracked.setDisplayObjectPerformanceCapture(true);
 const lastSeenPrepared = new WeakMap();
 const corpsePrepared = new WeakMap();
 const projectilePrepared = new WeakMap();
+const spellEffectPrepared = new WeakMap();
 let currentProjectileFrame = 0;
 const lastSeenRoots = new WeakSet();
 const lastSeenCaches = new WeakMap();
@@ -343,6 +366,7 @@ const retainedLastSeen = loadRetainedLastSeenRenderer({
   },
   retainedCorpseStrata: corpsePrepared,
   retainedProjectileStrata: projectilePrepared,
+  retainedSpellEffectStrata: spellEffectPrepared,
   retainedLastSeenBuildings: lastSeenPrepared,
   retainedRenderResourceId: (resource) => {
     if (!resource) return 0;
@@ -357,6 +381,7 @@ const retainedLastSeen = loadRetainedLastSeenRenderer({
   retainedWorldDisplayRoots: lastSeenRoots,
   retainedWorldRenderCacheFor: lastSeenCacheFor,
   siegeProjectileFallbackColor: () => 0x5f554b,
+  sourceDefaultGameSpeed: (world) => world.tickRate,
   sourceLastSeenFancyBuildingMirror: () => false,
   sourceMissileVisualRole: (_world, projectile) => projectile.visualRole ?? "arrow",
   sourcePlayerColor: (world) => world.engineSettings.projectileColor ?? 0xd6d0a3,
@@ -713,6 +738,151 @@ for (const [layer, cache] of [[primaryProjectileLayer, lastSeenCaches.get(primar
 assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Production projectile split/world-replacement disposal must return tracked live delta to zero");
 tracked.setDisplayObjectPerformanceCapture(false);
 
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const effectFixture = (id, drawLevel, kind, overrides = {}) => ({
+  id, drawLevel, kind, player: 0, x: drawLevel, y: drawLevel, radius: 30,
+  age: 0.1, duration: 1, sourceTypeId: null, sourceUnitId: null, missileId: null, spellId: null,
+  ...overrides
+});
+let spellEffectsBelow40 = [
+  effectFixture("lower-effect-sprite", 10, "fireball", { missileId: "missile" }),
+  effectFixture("lower-effect-graphics", 20, "explosion"),
+  effectFixture("lower-effect-area", 30, "blizzard", { missileId: "area", spellId: "spell-blizzard" })
+];
+let spellEffectsAtLeast40 = [effectFixture("upper-effect-graphics", 40, "death-coil")];
+const areaDefinition = { fields: 2, shards: 3, startOffsetX: -32, startOffsetY: -32 };
+const spellEffectWorld = {
+  spellEffects: [...spellEffectsBelow40, ...spellEffectsAtLeast40], tick: 0, tickRate: 30, tileSize: 32,
+  engineSettings: { gameSpeed: 30, enhancedEffectsDefault: true },
+  spellDefinitions: [{ id: "spell-blizzard", areaBombardments: [areaDefinition] }],
+  missileDefinitions: [{ id: "area", blizzardSpeed: 10 }]
+};
+const spellAtlas = { frameCount: 4, framesPerDirection: 4, numDirections: 1, sleep: 1, frameWidth: 32, frameHeight: 32 };
+const spellEffectAtlases = new Map([["missile", spellAtlas], ["area", spellAtlas]]);
+const primarySpellEffectLayer = new Container();
+const splitSpellEffectLayer = new Container();
+const spellEffectUnitSentinel = new Container();
+const drawSpellEffectFrame = (layer, world = spellEffectWorld, below40 = spellEffectsBelow40, atLeast40 = spellEffectsAtLeast40, atlases = spellEffectAtlases) => {
+  layer.removeChildren();
+  spellEffectPrepared.set(layer, { world, effects: { below40, atLeast40 } });
+  retainedLastSeen.drawSpellEffects(layer, world, atlases, below40);
+  layer.addChild(spellEffectUnitSentinel);
+  retainedLastSeen.drawSpellEffects(layer, world, atlases, atLeast40);
+};
+const spellReconciliationsBefore = lastSeenReconciliations;
+drawSpellEffectFrame(primarySpellEffectLayer);
+assert.equal(lastSeenReconciliations, spellReconciliationsBefore + 1, "Production spell-effect renderer must reconcile once across strata");
+const primarySpellEffectCache = lastSeenCaches.get(primarySpellEffectLayer);
+const spellRecords = primarySpellEffectCache.kinds.spellEffect.active;
+const singleSpellRecord = spellRecords.get("lower-effect-sprite").value;
+const graphicsSpellRecord = spellRecords.get("lower-effect-graphics").value;
+const areaSpellRecord = spellRecords.get("lower-effect-area").value;
+const upperSpellRecord = spellRecords.get("upper-effect-graphics").value;
+assert.deepEqual(primarySpellEffectLayer.children, [
+  singleSpellRecord.root, graphicsSpellRecord.root, areaSpellRecord.root,
+  graphicsSpellRecord.unitObjects.graphics[0], spellEffectUnitSentinel,
+  upperSpellRecord.root, upperSpellRecord.unitObjects.graphics[0]
+], "Production spell effects must preserve exact lower/unit/upper painter order");
+const singleSpellSprite = singleSpellRecord.unitObjects.sprites[0];
+const spellGraphics = graphicsSpellRecord.unitObjects.graphics[0];
+const areaSprites = [...areaSpellRecord.unitObjects.sprites];
+assert.equal(singleSpellSprite.texture, Texture.EMPTY);
+assert.equal(singleSpellSprite.anchor.x, 0.5);
+assert.equal(singleSpellSprite.anchor.y, 0.5);
+assert.equal(singleSpellSprite.position.x, 10);
+assert.equal(singleSpellSprite.position.y, 10);
+assert.equal(singleSpellSprite.alpha, 0.9);
+assert.equal(singleSpellSprite.scale.x, 1.35);
+assert.equal(singleSpellSprite.scale.y, 1.35);
+assert.equal(lastSeenRoots.has(spellGraphics), true, "Spell-effect Graphics must register for immediate-layer preservation");
+assert.ok(spellGraphics.getLocalBounds().width > 0, "Spell-effect fallback must draw non-empty geometry");
+assert.equal(areaSprites.length, 3, "Persistent spell effect must retain the exact configured shard count");
+for (const sprite of areaSprites) {
+  assert.equal(sprite.anchor.x, 0.5);
+  assert.equal(sprite.anchor.y, 0.5);
+  assert.equal(sprite.scale.x, 1.0625);
+  assert.equal(sprite.scale.y, 1.0625);
+}
+const areaPositionsBefore = areaSprites.map((sprite) => [sprite.position.x, sprite.position.y]);
+const areaTexturesBefore = areaSprites.map((sprite) => sprite.texture);
+const areaAlphasBefore = areaSprites.map((sprite) => sprite.alpha);
+spellEffectWorld.tickRate = 1;
+drawSpellEffectFrame(primarySpellEffectLayer);
+assert.equal(spellRecords.get("lower-effect-sprite").value.unitObjects.sprites[0], singleSpellSprite, "Tick-rate change must retain Sprite identity");
+assert.equal(singleSpellSprite.texture, Texture.WHITE, "Tick-rate change must update retained spell frame");
+spellEffectWorld.tickRate = 30;
+spellEffectsBelow40[0].age = 0.01;
+spellEffectsBelow40[0].x = 14;
+spellEffectsBelow40[0].y = 16;
+spellEffectsBelow40[1].age = 0.6;
+spellEffectsBelow40[2].age = 0.2;
+spellEffectsBelow40[1].x = 80;
+spellEffectWorld.tick = 10;
+drawSpellEffectFrame(primarySpellEffectLayer);
+assert.equal(spellRecords.get("lower-effect-sprite").value.unitObjects.sprites[0], singleSpellSprite);
+assert.equal(singleSpellSprite.texture, Texture.WHITE, "Spell frame change must update retained Sprite texture");
+assert.equal(singleSpellSprite.position.x, 14);
+assert.equal(singleSpellSprite.position.y, 16);
+assert.equal(singleSpellSprite.alpha, 0.99);
+assert.equal(spellRecords.get("lower-effect-graphics").value.unitObjects.graphics[0], spellGraphics);
+assert.ok(spellGraphics.getLocalBounds().minX > 40, "Spell fallback update must clear stale geometry");
+assert.deepEqual(areaSpellRecord.unitObjects.sprites, areaSprites, "Persistent spell update must retain every Sprite identity");
+assert.ok(areaSprites.some((sprite, index) => sprite.position.x !== areaPositionsBefore[index][0] || sprite.position.y !== areaPositionsBefore[index][1]), "Persistent pulse tick must update impact positions");
+assert.ok(areaSprites.some((sprite, index) => sprite.texture !== areaTexturesBefore[index]), "Persistent age change must update shard textures");
+assert.ok(areaSprites.some((sprite, index) => sprite.alpha !== areaAlphasBefore[index]), "Persistent age change must update shard alpha");
+const alternateSpellAtlases = new Map(spellEffectAtlases);
+singleSpellSprite.anchor.y = 0;
+singleSpellSprite.scale.y = 9;
+drawSpellEffectFrame(primarySpellEffectLayer, spellEffectWorld, spellEffectsBelow40, spellEffectsAtLeast40, alternateSpellAtlases);
+assert.equal(singleSpellSprite.anchor.y, 0.5, "Atlas-map identity change must reset spell Sprite anchor");
+assert.equal(singleSpellSprite.scale.y, 1.35, "Atlas-map identity change must reset spell Sprite scale");
+const spellCreatedAfterWarmup = tracked.snapshotDisplayObjectPerformance().trackedCreated;
+for (let frame = 0; frame < 300; frame += 1) drawSpellEffectFrame(primarySpellEffectLayer);
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, spellCreatedAfterWarmup, "300 unchanged spell-effect frames must create zero display objects");
+const shapeSpellLayer = new Container();
+const shapeEffect = effectFixture("shape-effect", 10, "blizzard", { missileId: "area", spellId: "spell-blizzard" });
+const shapeSpellWorld = { ...spellEffectWorld, spellEffects: [shapeEffect], spellDefinitions: [{ id: "spell-blizzard", areaBombardments: [{ ...areaDefinition, shards: 2 }] }] };
+drawSpellEffectFrame(shapeSpellLayer, shapeSpellWorld, [shapeEffect], []);
+const twoSpriteShape = lastSeenCaches.get(shapeSpellLayer).kinds.spellEffect.active.get("shape-effect").value;
+shapeSpellWorld.spellDefinitions[0].areaBombardments[0].shards = 4;
+drawSpellEffectFrame(shapeSpellLayer, shapeSpellWorld, [shapeEffect], []);
+const fourSpriteShape = lastSeenCaches.get(shapeSpellLayer).kinds.spellEffect.active.get("shape-effect").value;
+assert.notEqual(fourSpriteShape.root, twoSpriteShape.root, "Persistent shard-count change must replace incompatible record");
+assert.equal(twoSpriteShape.root.destroyed, true, "Persistent shard-count change must destroy old record");
+shapeEffect.missileId = null;
+drawSpellEffectFrame(shapeSpellLayer, shapeSpellWorld, [shapeEffect], []);
+const graphicsShape = lastSeenCaches.get(shapeSpellLayer).kinds.spellEffect.active.get("shape-effect").value;
+assert.notEqual(graphicsShape.root, fourSpriteShape.root, "Multi-Sprite-to-Graphics transition must replace record");
+assert.equal(fourSpriteShape.root.destroyed, true, "Multi-Sprite-to-Graphics transition must destroy old record");
+assert.equal(lastSeenCaches.get(shapeSpellLayer).kinds.spellEffect.pool.length, 0, "Spell-effect pooling must remain disabled");
+disposeWorldRenderCache(lastSeenCaches.get(shapeSpellLayer), detachLastSeenRecord, destroyLastSeenRecord);
+lastSeenCaches.delete(shapeSpellLayer);
+spellEffectPrepared.delete(shapeSpellLayer);
+drawSpellEffectFrame(splitSpellEffectLayer);
+assert.notEqual(lastSeenCaches.get(splitSpellEffectLayer).kinds.spellEffect.active.get("lower-effect-sprite").value.root, singleSpellRecord.root, "Split viewport must own independent spell-effect objects");
+drawSpellEffectFrame(primarySpellEffectLayer, spellEffectWorld, spellEffectsBelow40.filter(({ id }) => id !== "lower-effect-sprite"), spellEffectsAtLeast40);
+assert.equal(primarySpellEffectCache.kinds.spellEffect.dormant.get("lower-effect-sprite").value.root, singleSpellRecord.root, "Culled spell effect must detach to dormant");
+drawSpellEffectFrame(primarySpellEffectLayer);
+assert.equal(primarySpellEffectCache.kinds.spellEffect.active.get("lower-effect-sprite").value.root, singleSpellRecord.root, "Spell-effect cull re-entry must retain identity");
+spellEffectWorld.spellEffects = spellEffectWorld.spellEffects.filter(({ id }) => id !== "upper-effect-graphics");
+spellEffectsAtLeast40 = [];
+drawSpellEffectFrame(primarySpellEffectLayer);
+assert.equal(upperSpellRecord.root.destroyed, true, "Spell-effect expiry/removal must destroy exact record");
+assert.equal(primarySpellEffectCache.kinds.spellEffect.pool.length, 0, "Spell-effect pool must stay empty without reset contract");
+const replacementSpellBelow = [effectFixture("lower-effect-sprite", 10, "fireball", { missileId: "missile" })];
+const replacementSpellWorld = { ...spellEffectWorld, spellEffects: replacementSpellBelow };
+drawSpellEffectFrame(primarySpellEffectLayer, replacementSpellWorld, replacementSpellBelow, []);
+assert.notEqual(lastSeenCaches.get(primarySpellEffectLayer).kinds.spellEffect.active.get("lower-effect-sprite").value.root, singleSpellRecord.root, "World replacement with same spell-effect ID must create new identity");
+assert.equal(singleSpellRecord.root.destroyed, true, "Spell-effect world replacement must destroy old identity");
+for (const [layer, cache] of [[primarySpellEffectLayer, lastSeenCaches.get(primarySpellEffectLayer)], [splitSpellEffectLayer, lastSeenCaches.get(splitSpellEffectLayer)]]) {
+  disposeWorldRenderCache(cache, detachLastSeenRecord, destroyLastSeenRecord);
+  lastSeenCaches.delete(layer);
+  spellEffectPrepared.delete(layer);
+}
+assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Spell-effect split/world-replacement disposal must return tracked live delta to zero");
+tracked.setDisplayObjectPerformanceCapture(false);
+
 let nextIdentity = 1;
 const created = [];
 const destroyed = [];
@@ -846,6 +1016,21 @@ assert.deepEqual(
   "Projectile dormant cache must retain the newest 64 records"
 );
 assert.equal(projectileDormantCache.kinds.projectile.pool.length, 0, "Projectile pool must stay empty without reset contract");
+
+const spellDormantCache = createWorldRenderCache({});
+const spellLiveKeys = new Set();
+for (let index = 0; index < 66; index += 1) {
+  const key = `dormant-effect-${index}`;
+  spellLiveKeys.add(key);
+  reconcileWorldRenderKind({ ...options(spellDormantCache, "spellEffect", [{ key, shape: "spell-effect-graphics-v1" }], new Set(spellLiveKeys)), canResetForPool: undefined });
+}
+reconcileWorldRenderKind({ ...options(spellDormantCache, "spellEffect", [], spellLiveKeys), canResetForPool: undefined });
+assert.deepEqual(
+  [...spellDormantCache.kinds.spellEffect.dormant.keys()],
+  Array.from({ length: 64 }, (_, index) => `dormant-effect-${index + 2}`),
+  "Spell-effect dormant cache must retain newest 64 records"
+);
+assert.equal(spellDormantCache.kinds.spellEffect.pool.length, 0, "Spell-effect pool must stay empty without reset contract");
 
 for (const startingState of ["active", "dormant"]) {
   const shapeCache = createWorldRenderCache({});
