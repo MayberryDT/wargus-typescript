@@ -4,6 +4,8 @@ Scope: this file applies to the entire repository.
 
 ## Execution Host
 
+When an in-scope command genuinely requires sudo, use the host-local configured authentication non-interactively. Do not pause to ask Tyler for sudo credentials; keep credential values out of Git and logs.
+
 All future implementation, build, test, verifier, game-runtime, and browser work for this project must run on the SSH host `halla`, not on the local workstation.
 
 - Use an isolated checkout under `/home/halla/workspaces/` and confirm `hostname` is `halla` before starting project processes.
