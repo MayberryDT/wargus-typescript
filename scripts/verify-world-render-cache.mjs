@@ -5,6 +5,7 @@ import ts from "typescript";
 
 const cacheSource = readFileSync(new URL("../src/view/worldRenderCache.ts", import.meta.url), "utf8");
 const rendererSource = readFileSync(new URL("../src/view/renderWorld.ts", import.meta.url), "utf8");
+const mainSource = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 const trackerSource = readFileSync(new URL("../src/performance/displayObjectPerformance.ts", import.meta.url), "utf8");
 const trackedPixiConstructors = new Set(["Container", "Graphics", "Sprite", "Text", "BitmapText"]);
 const assertNoDirectPixiConstruction = (source, fileName) => {
@@ -36,6 +37,8 @@ assertNoDirectPixiConstruction(rendererSource, "renderWorld.ts");
 assert.match(rendererSource, /drawUnits\(unitLayer,/, "Primary viewport must reconcile retained unit records");
 assert.match(rendererSource, /drawUnits\(renderer\.unitLayer,/, "Secondary viewports must own independent retained unit records");
 assert.match(rendererSource, /disposeRetainedWorldRenderCache\(renderers\[rendererIndex\]\.unitLayer\)/, "Closed secondary viewports must dispose their exact cache owner");
+assert.match(rendererSource, /export function disposeRetainedWorldRenderCaches\(worldLayer: Container, unitLayer: Container\)[\s\S]*sourceViewportPaneRenderers\.get\(worldLayer\)[\s\S]*disposeRetainedWorldRenderCache\(renderer\.unitLayer\)/, "Coordinator disposal must destroy primary and every split-view cache");
+assert.equal((mainSource.match(/disposeRetainedWorldRenderCaches\(worldLayer, unitLayer\)/g) ?? []).length, 3, "Map replacement, save-load replacement, and page teardown must dispose retained caches explicitly");
 assert.match(rendererSource, /shapeKeyOf: \(unit\) => unitRenderShapeKey\(/, "Unit records must recreate only from an explicit complete child-shape key");
 assert.match(rendererSource, /beginRetainedUnitRender\(record\)[\s\S]*finishRetainedUnitRender\(record\)/, "Changed units must update reusable child slots in one bounded render pass");
 assert.doesNotMatch(rendererSource, /destroyLayerChildren\(record\.root\)/, "Visual-state updates must not destroy retained unit children");
@@ -43,8 +46,8 @@ assert.match(rendererSource, /takeRetainedRenderSlot\(objects, "graphics"/, "Ret
 assert.match(rendererSource, /takeRetainedRenderSlot\(objects, "sprites"/, "Retained unit sprites must update texture without recreation");
 assert.match(rendererSource, /takeRetainedRenderSlot\(objects, "texts"/, "Retained unit text must update content without recreation");
 assert.match(rendererSource, /retainedSceneOrder\(records, \(record\) => record\.root, \(record\) => record\.unitObjects\.graphics\)/, "Unit painter order must flatten roots before graphics overlays");
-assert.match(rendererSource, /const root = createWorldRenderRecordRoot\(\);\s*retainedWorldDisplayRoots\.add\(root\)/, "Every retained unit root must register before immediate-layer cleanup");
-assert.match(rendererSource, /const graphics = createTrackedGraphics\(\);\s*retainedWorldDisplayRoots\.add\(graphics\)/, "Every flattened retained Graphics overlay must register before immediate-layer cleanup");
+assert.match(rendererSource, /const root = createWorldRenderRecordRoot\(kind\);\s*retainedWorldDisplayRoots\.add\(root\)/, "Every retained unit root must register before immediate-layer cleanup");
+assert.match(rendererSource, /const graphics = createTrackedGraphics\(undefined, objects\.performanceKind\);\s*retainedWorldDisplayRoots\.add\(graphics\)/, "Every flattened retained Graphics overlay must register before immediate-layer cleanup");
 assert.match(rendererSource, /if \(!\(child instanceof Container \&\& retainedWorldDisplayRoots\.has\(child\)\)\) \{\s*destroyImmediateWorldDisplayObject\(child, \{ children: true \}\);\s*\}/, "Immediate-layer cleanup must preserve registered retained objects and destroy only immediate objects");
 assert.match(rendererSource, /replaceWorldRenderCacheOwner\(existing, world, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord\)/, "Production cache lookup must execute world-owner replacement disposal");
 assert.match(rendererSource, /function unitRenderSignature[\s\S]*sourceDeclaredReactionRangeForUnit\(world, unit\)/, "Unit signature must include the live AI/person reaction-range dependency");
@@ -147,6 +150,21 @@ const trackerJavascript = ts.transpileModule(trackerExecutable, {
 }).outputText;
 const loadTracker = Function("exports", "Container", "Graphics", "Sprite", "Text", `${trackerJavascript}\nreturn { createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, destroyTrackedDisplayObject, resetDisplayObjectPerformance, setDisplayObjectPerformanceCapture, snapshotDisplayObjectPerformance };`);
 const tracked = loadTracker({}, Container, Graphics, Sprite, Text);
+const zeroPlan022 = () => ({ worldRenderCache: {
+  unit: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
+  lastSeenBuilding: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
+  corpse: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
+  projectile: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
+  spellEffect: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 }
+} });
+
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const taggedRoot = tracked.createTrackedContainer("unit");
+taggedRoot.addChild(tracked.createTrackedGraphics(undefined, "unit"));
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, trackedDestroyed: 0, windowLiveDelta: 2 }, "Plan 022 unit creation must extend the existing tracked counter namespace");
+tracked.destroyTrackedDisplayObject(taggedRoot, { children: true }, "unit");
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, trackedDestroyed: 2, windowLiveDelta: 0 }, "Plan 022 unit disposal must extend the existing tracked counter namespace");
 
 tracked.resetDisplayObjectPerformance();
 tracked.setDisplayObjectPerformanceCapture(true);
@@ -213,7 +231,7 @@ for (const record of [pixiA, pixiB]) {
   tracked.destroyTrackedDisplayObject(record.root, { children: true });
 }
 assert.deepEqual(tracked.snapshotDisplayObjectPerformance(), {
-  scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true, trackedCreated: 8, trackedDestroyed: 8, windowLiveDelta: 0
+  scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true, trackedCreated: 8, trackedDestroyed: 8, windowLiveDelta: 0, plan022: zeroPlan022()
 }, "Tracked retained record disposal must return exact tree counts to zero");
 tracked.setDisplayObjectPerformanceCapture(false);
 
@@ -291,7 +309,7 @@ assert.notEqual(replacementRecord.root, firstProductionA.root, "Same stable ID a
 disposeWorldRenderCache(replacementCache, detachPixiRecord, destroyPixiRecord);
 disposeWorldRenderCache(productionCacheB, detachPixiRecord, destroyPixiRecord);
 assert.deepEqual(tracked.snapshotDisplayObjectPerformance(), {
-  scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true, trackedCreated: 12, trackedDestroyed: 12, windowLiveDelta: 0
+  scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true, trackedCreated: 12, trackedDestroyed: 12, windowLiveDelta: 0, plan022: zeroPlan022()
 }, "Production world replacement and split closure disposal must return exact tracked counts to zero");
 tracked.setDisplayObjectPerformanceCapture(false);
 

@@ -1,5 +1,5 @@
 import { Application, BlurFilter, Container, Graphics, type Texture } from "pixi.js";
-import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText } from "../performance/displayObjectPerformance";
+import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, type WorldRenderPerformanceKind } from "../performance/displayObjectPerformance";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
 import { isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
@@ -56,7 +56,7 @@ type RetainedWorldDisplayRecord = {
   unitObjects: RetainedUnitRenderObjects;
 };
 
-type RetainedUnitRenderObjects = RetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>;
+type RetainedUnitRenderObjects = RetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>> & { performanceKind: WorldRenderPerformanceKind };
 
 interface RenderWorldArgs {
   world: WorldState;
@@ -491,6 +491,13 @@ function retainedWorldRenderCacheFor(layer: Container, world: WorldState): World
   return owned;
 }
 
+export function disposeRetainedWorldRenderCaches(worldLayer: Container, unitLayer: Container): void {
+  disposeRetainedWorldRenderCache(unitLayer);
+  for (const renderer of sourceViewportPaneRenderers.get(worldLayer) ?? []) {
+    disposeRetainedWorldRenderCache(renderer.unitLayer);
+  }
+}
+
 export function disposeRetainedWorldRenderCache(layer: Container): void {
   retainedLastSeenBuildings.delete(layer);
   retainedCorpseStrata.delete(layer);
@@ -513,13 +520,13 @@ function destroyRetainedWorldDisplayRecord(record: RetainedWorldDisplayRecord): 
   detachRetainedWorldDisplayRecord(record);
   record.root.removeChildren();
   for (const object of [...record.unitObjects.graphics, ...record.unitObjects.sprites, ...record.unitObjects.texts]) {
-    destroyWorldRenderRecordRoot(object, { children: true });
+    destroyWorldRenderRecordRoot(object, { children: true }, record.unitObjects.performanceKind);
   }
-  destroyWorldRenderRecordRoot(record.root, { children: true });
+  destroyWorldRenderRecordRoot(record.root, { children: true }, record.unitObjects.performanceKind);
 }
 
-function createRetainedWorldDisplayRecord(): RetainedWorldDisplayRecord {
-  const root = createWorldRenderRecordRoot();
+function createRetainedWorldDisplayRecord(kind: WorldRenderPerformanceKind): RetainedWorldDisplayRecord {
+  const root = createWorldRenderRecordRoot(kind);
   retainedWorldDisplayRoots.add(root);
   return {
     root,
@@ -528,7 +535,7 @@ function createRetainedWorldDisplayRecord(): RetainedWorldDisplayRecord {
     unitAtlases: null,
     missileAtlases: null,
     statusDecorationAtlas: null,
-    unitObjects: createRetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>()
+    unitObjects: Object.assign(createRetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>(), { performanceKind: kind })
   };
 }
 
@@ -553,7 +560,7 @@ function reconcileUnits(
     liveKeys: new Set(world.units.filter((unit) => unit.hitPoints > 0).map((unit) => unit.id)),
     keyOf: (unit) => unit.id,
     shapeKeyOf: (unit) => unitRenderShapeKey(world, unit, selected, controlGroups, sourceShowOrdersVisible, manifest, unitAtlases, missileAtlases, statusDecorationAtlas, prepared),
-    create: createRetainedWorldDisplayRecord,
+    create: () => createRetainedWorldDisplayRecord("unit"),
     update: (record, stateUnit) => {
       const signature = unitRenderSignature(world, stateUnit, selected, controlGroups, sourceShowOrdersVisible, manifest, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
       if (
@@ -720,7 +727,7 @@ function finishRetainedUnitRender(record: RetainedWorldDisplayRecord): void {
 
 function takeUnitGraphics(objects: RetainedUnitRenderObjects): Graphics {
   return takeRetainedRenderSlot(objects, "graphics", () => {
-    const graphics = createTrackedGraphics();
+    const graphics = createTrackedGraphics(undefined, objects.performanceKind);
     retainedWorldDisplayRoots.add(graphics);
     return graphics;
   }, (graphics) => graphics.clear());
@@ -733,23 +740,23 @@ function takeUnitSpriteSlot(texture: UnitSpriteTexture, objects: RetainedUnitRen
 }
 
 function takeUnitMainSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture, objects.performanceKind));
 }
 
 function takeUnitBurningSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture, objects.performanceKind));
 }
 
 function takeUnitHealthSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture, objects.performanceKind));
 }
 
 function takeUnitVariableBarSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture, objects.performanceKind));
 }
 
 function takeUnitStatusDecorationSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture, objects.performanceKind));
 }
 
 function takeUnitText(textValue: string, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedText> {
@@ -762,7 +769,7 @@ function takeUnitText(textValue: string, objects: RetainedUnitRenderObjects): Re
       fontWeight: "700",
       stroke: { color: "#111111", width: 3 }
     }
-  }), (text) => { text.text = textValue; });
+  }, objects.performanceKind), (text) => { text.text = textValue; });
 }
 
 function colorForTile(world: WorldState, tile: number): number {
@@ -1600,7 +1607,7 @@ function drawLastSeenBuildings(layer: Container, world: WorldState, unitAtlases:
       liveKeys: new Set(world.lastSeenBuildings.map((building) => building.unitId)),
       keyOf: (building) => building.unitId,
       shapeKeyOf: (building) => unitAtlases.has(building.typeId) ? "last-seen-sprite-v1" : "last-seen-graphics-v1",
-      create: createRetainedWorldDisplayRecord,
+      create: () => createRetainedWorldDisplayRecord("lastSeenBuilding"),
       update: (record, building) => {
         const atlas = unitAtlases.get(building.typeId);
         const frameNumber = atlas ? getLastSeenBuildingFrameNumber(building, atlas.numDirections, animationById) : null;
@@ -1651,14 +1658,14 @@ function drawLastSeenBuildingVisual(layer: Container, world: WorldState, buildin
 
 function takeLastSeenBuildingGraphics(objects: RetainedUnitRenderObjects): Graphics {
   return takeRetainedRenderSlot(objects, "graphics", () => {
-    const graphics = createTrackedGraphics();
+    const graphics = createTrackedGraphics(undefined, objects.performanceKind);
     retainedWorldDisplayRoots.add(graphics);
     return graphics;
   }, (graphics) => graphics.clear());
 }
 
 function takeLastSeenBuildingSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture, objects.performanceKind), (sprite) => { sprite.texture = texture; });
 }
 
 function isLastSeenBuildingVisible(world: WorldState, building: WorldState["lastSeenBuildings"][number]): boolean {
@@ -1725,7 +1732,7 @@ function drawCorpses(
         const frameNumber = getCorpseFrameNumber(corpse, world, atlas?.numDirections ?? 0, animationById);
         return atlas && frameNumber !== null ? "corpse-sprite-v1" : "corpse-graphics-v1";
       },
-      create: createRetainedWorldDisplayRecord,
+      create: () => createRetainedWorldDisplayRecord("corpse"),
       update: (record, corpse) => {
         const atlas = unitAtlases.get(corpse.typeId);
         const frameNumber = getCorpseFrameNumber(corpse, world, atlas?.numDirections ?? 0, animationById);
@@ -1780,14 +1787,14 @@ function drawCorpseVisual(
 
 function takeCorpseGraphics(objects: RetainedUnitRenderObjects): Graphics {
   return takeRetainedRenderSlot(objects, "graphics", () => {
-    const graphics = createTrackedGraphics();
+    const graphics = createTrackedGraphics(undefined, objects.performanceKind);
     retainedWorldDisplayRoots.add(graphics);
     return graphics;
   }, (graphics) => graphics.clear());
 }
 
 function takeCorpseSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture, objects.performanceKind), (sprite) => { sprite.texture = texture; });
 }
 
 function getLastSeenBuildingFrameNumber(building: WorldState["lastSeenBuildings"][number], numDirections: number, animationById: WorldRenderSnapshot["animationById"]): number {
@@ -1817,7 +1824,7 @@ function drawProjectiles(layer: Container, world: WorldState, missileAtlases: Ma
       liveKeys: new Set(world.projectiles.map((projectile) => projectile.id)),
       keyOf: (projectile) => projectile.id,
       shapeKeyOf: (projectile) => projectileRenderShapeKey(projectile, missileAtlases),
-      create: createRetainedWorldDisplayRecord,
+      create: () => createRetainedWorldDisplayRecord("projectile"),
       update: (record, projectile) => {
         const atlas = projectile.missileId ? missileAtlases.get(projectile.missileId) : undefined;
         const frameNumber = atlas ? missileFrameNumber(world, projectile, atlas) : null;
@@ -1938,14 +1945,14 @@ function drawProjectileVisual(
 
 function takeProjectileGraphics(objects: RetainedUnitRenderObjects): Graphics {
   return takeRetainedRenderSlot(objects, "graphics", () => {
-    const graphics = createTrackedGraphics();
+    const graphics = createTrackedGraphics(undefined, objects.performanceKind);
     retainedWorldDisplayRoots.add(graphics);
     return graphics;
   }, (graphics) => graphics.clear());
 }
 
 function takeProjectileSprite(texture: Texture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture, objects.performanceKind), (sprite) => { sprite.texture = texture; });
 }
 
 function takeProjectileText(projectile: WorldState["projectiles"][number], objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedText> {
@@ -1960,7 +1967,7 @@ function takeProjectileText(projectile: WorldState["projectiles"][number], objec
     };
   };
   return takeRetainedRenderSlot(objects, "texts", () => {
-    const text = createTrackedText({ text: textValue });
+    const text = createTrackedText({ text: textValue }, objects.performanceKind);
     apply(text);
     return text;
   }, apply);
@@ -2053,7 +2060,7 @@ function drawSpellEffects(layer: Container, world: WorldState, missileAtlases: M
       liveKeys: new Set(world.spellEffects.map((effect) => effect.id)),
       keyOf: (effect) => effect.id,
       shapeKeyOf: (effect) => spellEffectRenderShapeKey(world, effect, missileAtlases),
-      create: createRetainedWorldDisplayRecord,
+      create: () => createRetainedWorldDisplayRecord("spellEffect"),
       update: (record, effect) => {
         const atlas = effect.missileId ? missileAtlases.get(effect.missileId) : undefined;
         const signature = JSON.stringify([effect, world.tick, world.tickRate, world.engineSettings, world.spellDefinitions, world.missileDefinitions, world.tileSize, retainedRenderResourceId(atlas)]);
@@ -2154,14 +2161,14 @@ function drawSpellEffectVisual(layer: Container, world: WorldState, effect: Worl
 
 function takeSpellEffectGraphics(objects: RetainedUnitRenderObjects): Graphics {
   return takeRetainedRenderSlot(objects, "graphics", () => {
-    const graphics = createTrackedGraphics();
+    const graphics = createTrackedGraphics(undefined, objects.performanceKind);
     retainedWorldDisplayRoots.add(graphics);
     return graphics;
   }, (graphics) => graphics.clear());
 }
 
 function takeSpellEffectSprite(texture: Texture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
-  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture, objects.performanceKind), (sprite) => { sprite.texture = texture; });
 }
 
 function drawAreaSpellMissiles(layer: Container, world: WorldState, effect: WorldState["spellEffects"][number], atlas: MissileTextureAtlas, alpha: number, objects: RetainedUnitRenderObjects): void {
@@ -2170,7 +2177,7 @@ function drawAreaSpellMissiles(layer: Container, world: WorldState, effect: Worl
   const frameTick = Math.floor(effect.age * missileFrameRate(world, atlas));
   for (const impact of impacts) {
     const texture = getMissileFrameTexture(atlas, (frameTick + impact.index) % Math.max(1, atlas.framesPerDirection));
-    const sprite = takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (retained) => { retained.texture = texture; });
+    const sprite = takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture, objects.performanceKind), (retained) => { retained.texture = texture; });
     sprite.anchor.set(0.5);
     sprite.position.set(impact.x, impact.y);
     sprite.alpha = Math.max(0.08, alpha * (0.55 + ((impact.seed * 7) % 40) / 100));
