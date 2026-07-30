@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 const root = process.cwd();
 const read = (file) => readFileSync(resolve(root, file), "utf8");
 const performanceContract = read("plans/PERFORMANCE-ACCEPTANCE.md");
+const wave2Recovery = read("plans/WAVE-2-RECOVERY-AMENDMENT.md");
 const hallaPolicy = read("plans/HALLA-EXECUTION-POLICY.md");
 const roadmap = read("plans/README.md");
 const detailedPlans = [
@@ -23,12 +24,32 @@ assert.ok(
   "missing incremental/absolute split"
 );
 assert.match(performanceContract, /no new budget-failure key/i);
-assert.match(performanceContract, /frame p95 regression.*5%/i);
+assert.match(performanceContract, /median.*frame p95.*5%/is);
+assert.match(performanceContract, /pooled.*frame p95.*5%/is);
 assert.match(performanceContract, /targeted work-reduction proof/i);
 assert.match(performanceContract, /Wave 5.*every absolute shared budget/i);
 assert.match(performanceContract, /afterWorstTrialBudgetFailureKeys ⊆ acceptedPlan018WorstTrialBudgetFailureKeys/);
 assert.match(performanceContract, /incrementalReady =\n  captureComplete\n  && validityAndComparabilityPass\n  && fixedTickPass\n  && noNewBudgetFailuresPass\n  && frameP95RegressionPass\n  && targetedWorkReductionProofPass\n  && cleanupAndIntegrityPass/);
 assert.match(performanceContract, /absoluteReleaseReady =\n  incrementalReady\n  && everyAbsoluteSharedBudgetPass/);
+assert.match(performanceContract, /exactly seven independent valid trials per row/i);
+assert.match(performanceContract, /median.*seven.*trial.*p95/is);
+assert.match(performanceContract, /nearest-rank p95 of all raw frame samples/i);
+assert.match(performanceContract, /both.*no greater than 5%/i);
+assert.match(performanceContract, /0\.1 ms decision precision/i);
+assert.match(performanceContract, /schema-version 4/i);
+assert.match(performanceContract, /20260730T062702Z/);
+assert.match(performanceContract, /6bc0def2ac32baa619b718e5e3f9eb504c3c29f10e5051bbbb06cfd43549d962/);
+assert.match(performanceContract, /realRegression.*false/i);
+assert.match(performanceContract, /preserve.*historical.*packet/i);
+
+assert.match(wave2Recovery, /Every measured row needs exactly seven independent valid trials/i);
+assert.match(wave2Recovery, /median.*trial.*p95/i);
+assert.match(wave2Recovery, /pooled.*raw-frame.*p95/i);
+assert.match(wave2Recovery, /schema-version 4/i);
+assert.match(wave2Recovery, /20260730T062702Z/);
+assert.match(wave2Recovery, /6bc0def2ac32baa619b718e5e3f9eb504c3c29f10e5051bbbb06cfd43549d962/);
+assert.match(wave2Recovery, /baseline capture path.*must be.*independently reviewed/is);
+assert.doesNotMatch(wave2Recovery, /Every measured row still needs three independent valid trials/i);
 
 for (const [file, plan] of detailedPlans) {
   assert.match(plan, /incrementalReady =\n  captureComplete\n  && validityAndComparabilityPass\n  && fixedTickPass\n  && noNewBudgetFailuresPass\n  && frameP95RegressionPass\n  && targetedWorkReductionProofPass\n  && cleanupAndIntegrityPass/, `${file} must use the incremental algorithm verbatim.`);

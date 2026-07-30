@@ -34,12 +34,13 @@ video/render groups, Git worktrees, SHA-256 retained artifacts.
   not delete them.
 - Run browser/performance captures serially. Use unique ports, exact PID
   ownership, the global exclusive capture lock, and clean only owned PIDs.
-- Every measured row still needs three independent valid trials, exact
+- Every measured row needs exactly seven independent valid trials, exact
   environment/profile/fingerprint comparability, exact 600-tick deterministic
-  proof, and worst-trial nearest-rank aggregation.
+  proof, and retained raw frame samples.
 - Incremental acceptance requires: no new budget-failure key relative to the
-  accepted Plan 018 row, worst frame-p95 regression no greater than 5%, and a
-  focused deterministic proof that the plan removes its named hot work.
+  accepted Plan 018 row; both median trial-p95 and pooled raw-frame p95
+  regression no greater than 5%; and a focused deterministic proof that the
+  plan removes its named hot work.
 - A baseline-failing absolute budget may remain failed during Plans 019–025 and
   Waves 2–4; record it without calling it passed.
 - Wave 5 release acceptance still requires every absolute shared budget to
@@ -51,6 +52,27 @@ video/render groups, Git worktrees, SHA-256 retained artifacts.
 - Do not deploy until Plans 019–025, combined Wave 4 verification, independent
   review, and preview smoke are accepted and the existing deployment
   authorization boundary is reached.
+
+The seven-trial acceptance amendment is authorized by the complete retained
+paired packet `.artifacts/diagnostics/plan019-paired-ab/20260730T062702Z/` and
+manifest SHA-256
+`6bc0def2ac32baa619b718e5e3f9eb504c3c29f10e5051bbbb06cfd43549d962`.
+Independent review confirmed `realRegression: false`: median paired frame-p95
+regression `0%`, only `2/15` pairs over 5%, equal pooled p95 values of
+`66.60000000000582 ms`, pooled regression `0%`, and all three classification
+conditions false. New capture summaries therefore use schema-version 4 and
+require both robust p95 components. Absolute budgets, no-new-failure checks,
+replacement limits, comparability, deterministic proof, cleanup, locking, raw
+evidence, and checksums remain unchanged.
+
+The repository currently tracks only the successor runner. Before a fresh
+seven-trial Plan 018 baseline can be captured, a baseline capture path must be
+added and independently reviewed. It must implement the same schema-version 4
+trial, lifecycle, raw-sample, lock, cleanup, and checksum contract. Until that
+path produces an independently accepted packet and its exact identity is
+pinned in the successor runner, successor browser capture is intentionally
+blocked. Preserve the accepted three-trial Plan 018 packet and every failed or
+diagnostic packet as immutable historical evidence.
 
 ---
 
@@ -174,7 +196,7 @@ git commit -m "Authorize incremental performance acceptance"
 **Interfaces:**
 - Consumes: `WARGUS_PERF_ACCEPTANCE_MODE=incremental|absolute-release`,
   accepted Plan 018 directory/manifest identity, assigned canonical rows.
-- Produces: schema-version 3 matrix summaries with both incremental and
+- Produces: schema-version 4 matrix summaries with both incremental and
   absolute verdicts, plus exact invalid-attempt diagnostics.
 
 - [ ] **Step 1: Copy the independently approved harnesses into tracked scripts**
@@ -205,8 +227,9 @@ noNewBudgetFailures =
 
 It must prove that one render sample is insufficient, two paired samples pass,
 an after-only budget key fails incremental acceptance, an inherited baseline
-failure does not, `>5%` p95 regression fails, and absolute mode additionally
-requires an empty after-failure set.
+failure does not, one noisy trial among seven passes, either robust p95
+component over 5% fails, and absolute mode additionally requires an empty
+after-failure set.
 
 - [ ] **Step 3: Correct real input pairing**
 
@@ -228,7 +251,7 @@ invalid record:
 }
 ```
 
-- [ ] **Step 4: Implement schema-version 3 incremental verdicts**
+- [ ] **Step 4: Implement schema-version 4 incremental verdicts**
 
 Load each accepted baseline trial's failure union and emit:
 
@@ -247,6 +270,12 @@ acceptance: {
 `accepted` must select the verdict named by
 `WARGUS_PERF_ACCEPTANCE_MODE`. The harness must still exit nonzero when the
 selected verdict is false.
+
+Schema-version 4 requires exactly seven valid trials per row, retains every
+raw frame sample, and replaces worst-trial frame-p95 fields with median-trial
+and pooled-frame p95 values, raw regression percentages, and independent
+component verdicts. Both component gates use the reviewed 0.1 ms decision
+precision and must pass; a combined caller-supplied pass cannot bypass either.
 
 - [ ] **Step 5: Run non-browser and negative checks**
 
@@ -407,8 +436,8 @@ evidence update.
 - Modify: `plans/README.md`
 
 **Interfaces:**
-- Consumes: tracked schema-version 3 harness, reviewed plan branches, accepted
-  Plan 018 baseline.
+- Consumes: tracked schema-version 4 harness, reviewed plan branches, accepted
+  seven-trial schema-version 4 Plan 018 baseline.
 - Produces: one fresh checksum-verified incremental packet per plan.
 
 - [ ] **Step 1: Independently review the tracked harness**
@@ -421,19 +450,19 @@ freshness, and checksums before browser execution.
 
 Run exact 600-tick proof and rows `3,5,7` at the Plan 019 implementation SHA
 with `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Do not reuse either failed
-stamp. Stop on a new exhausted replacement, new budget failure, p95 regression
-over 5%, drift, or cleanup failure.
+stamp. Stop on a new exhausted replacement, new budget failure, either robust
+p95 regression over 5%, drift, or cleanup failure.
 
 - [ ] **Step 3: Capture remediated Plan 020 serially**
 
 Run row `6` at the new implementation SHA. It must have no new budget failure,
-no more than 5% frame-p95 regression, and the focused 600-tick one-rebuild
-proof.
+no more than 5% median trial-p95 regression, no more than 5% pooled raw-frame
+p95 regression, and the focused 600-tick one-rebuild proof.
 
 - [ ] **Step 4: Capture Plan 021 serially**
 
 Run one fresh rows `3,4,6` packet at the reviewed implementation SHA with the
-schema-version 3 harness and `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Preserve
+schema-version 4 harness and `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Preserve
 the old immutable packet as failed historical evidence; never alter its
 manifest.
 
@@ -472,9 +501,10 @@ parity gate on the exact combined SHA.
 
 - [ ] **Step 3: Run the full incremental matrix**
 
-Capture all seven rows, three valid trials each, with
+Capture all seven rows, exactly seven valid trials each, with
 `WARGUS_PERF_ACCEPTANCE_MODE=incremental`. Require no new budget failures,
-no row over 5% p95 regression, exact comparability, and clean lifecycle.
+no row over 5% for either robust p95 regression, exact comparability, and clean
+lifecycle.
 
 - [ ] **Step 4: Commit the integration packet**
 
@@ -486,4 +516,3 @@ absolute budget failures, and verdict. Only `READY` opens Wave 3.
 
 Refresh Plan 022/023 drift bases against the combined SHA, then execute Waves
 3–5 under their existing ownership tables and the amended acceptance modes.
-

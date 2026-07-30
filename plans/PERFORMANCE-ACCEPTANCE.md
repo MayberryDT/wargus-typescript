@@ -14,7 +14,7 @@ Capture the following seven matrix rows:
 | 6 | combat-100 | 1280×720 |
 | 7 | command-18 | 1024×768 |
 
-Run three independent valid trials per row. Each trial uses a fresh profile
+Run exactly seven independent valid trials per row. Each trial uses a fresh profile
 page and deterministic profile; browser cache may be prewarmed outside the
 measurement window, but runtime world state may not be reused.
 
@@ -52,8 +52,9 @@ next-render-callback latency for every outcome.
 
 For each trial, calculate p50, p95, p99, mean, maximum, threshold counts, and
 sample count with nearest-rank percentiles. Report each trial separately and
-aggregate each matrix row by its worst trial-level budget result; do not pool
-samples across trials.
+aggregate each matrix row's absolute budgets by its worst trial-level budget
+result. Do not pool samples across trials for absolute budgets. The incremental
+frame-p95 regression gate has the explicit pooled calculation below.
 
 | Metric | Profiles | Budget |
 |---|---|---:|
@@ -103,16 +104,67 @@ incrementalReady =
   && cleanupAndIntegrityPass
 ```
 
-`captureComplete` requires every assigned row's three valid trials and durable
+`captureComplete` requires exactly seven valid trials for every assigned row
+and durable
 evidence. `validityAndComparabilityPass` requires the shared renderer,
 environment, profile, viewport, fingerprint, trial, and replacement rules.
 `fixedTickPass` preserves the shared determinism comparison.
-`frameP95RegressionPass` allows no frame p95 regression greater than 5% versus
-the accepted worst-trial baseline.
+`frameP95RegressionPass` requires both the median-trial and pooled-frame gates
+below to pass.
 `targetedWorkReductionProofPass` requires targeted work-reduction proof: the
 plan's direct timing and work-reduction evidence; it cannot be replaced by
 a count-only claim. `cleanupAndIntegrityPass` requires checksums, retained raw
 artifacts, and exact owned-process/port cleanup.
+
+### Robust frame-p95 regression arithmetic
+
+For each row, keep all seven trial-level frame p95 values and every raw frame
+sample. Calculate:
+
+```text
+baselineMedianTrialFrameP95 = nearest-rank p50 of the seven baseline trial p95 values
+afterMedianTrialFrameP95 = nearest-rank p50 of the seven successor trial p95 values
+baselinePooledFrameP95 = nearest-rank p95 of all raw frame samples from the seven baseline trials
+afterPooledFrameP95 = nearest-rank p95 of all raw frame samples from the seven successor trials
+
+medianTrialFrameP95RegressionPercent =
+  ((afterMedianTrialFrameP95 - baselineMedianTrialFrameP95)
+    / baselineMedianTrialFrameP95) * 100
+
+pooledFrameP95RegressionPercent =
+  ((afterPooledFrameP95 - baselinePooledFrameP95)
+    / baselinePooledFrameP95) * 100
+```
+
+Both regressions must be no greater than 5%. Report the raw values and raw
+percentages unchanged. For the pass/fail decision only, round each compared
+p95 value to the captured timestamp's 0.1 ms decision precision, then compare
+`after * 100 <= baseline * 105` with the reviewed scale-aware floating-point
+tolerance. Exactly 5% passes; the smallest meaningful 0.1 ms step above the
+boundary fails. Missing or extra trials, missing raw samples, non-finite data,
+invalid comparability, incomplete lifecycle, or checksum failure fails closed.
+
+New matrix summaries use schema-version 4. Schema-version 4 removes the
+worst-frame-p95 comparison fields and records the median-trial and pooled-frame
+values, raw regression percentages, and both component verdicts. A
+schema-version 3 baseline cannot be used by the schema-version 4 successor
+runner.
+
+This amendment is evidence-driven by the retained paired diagnostic at
+`.artifacts/diagnostics/plan019-paired-ab/20260730T062702Z/`, whose
+`sha256.json` SHA-256 is
+`6bc0def2ac32baa619b718e5e3f9eb504c3c29f10e5051bbbb06cfd43549d962`.
+Its independently reviewed classification was `realRegression: false`:
+median paired frame-p95 regression `0%`, `2/15` pairs over 5%, baseline and
+Plan 019 pooled frame p95 both `66.60000000000582 ms`, and pooled regression
+`0%`. All three real-regression conditions were false. This establishes that
+the isolated worst-of-three result was not a repeatable Plan 019 slowdown and
+justifies replacing that unstable comparison without changing any absolute
+budget.
+
+Preserve every historical baseline, failed successor packet, paired diagnostic
+packet, manifest, and report. Do not relabel schema-version 3 packets as
+schema-version 4 evidence.
 
 The absolute-release verdict is:
 
