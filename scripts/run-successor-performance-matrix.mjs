@@ -209,7 +209,8 @@ function createRunDirectory() {
   if (configured && path.resolve(configured) !== expected) throw new Error(`WARGUS_PERF_ARTIFACT_DIR must be ${expected}.`);
   const created = createArtifactDirectory({ preflight, plan: PLAN_ID, commit: captureSha, stamp });
   const existing = readdirSync(created.directory);
-  const allowedExisting = new Set(["fixed-tick-proof.json", ...(BASELINE_CAPTURE ? ["baseline-coordinator-preflight.json", "baseline-build.json"] : [])]);
+  const provenance = captureProvenanceConfiguration({ baseline: BASELINE_CAPTURE, coordinatorRoot: process.env.WARGUS_COORDINATOR_ROOT, coordinatorCommit: process.env.WARGUS_COORDINATOR_COMMIT });
+  const allowedExisting = allowedPreCaptureFiles({ baseline: BASELINE_CAPTURE, external: provenance.mode === "external" });
   if (existing.some((name) => !allowedExisting.has(name)) || !existing.includes("fixed-tick-proof.json")) throw new Error("Performance artifact stamp has missing or unexpected pre-capture files: " + existing.join(", "));
   copyFileSync(new URL(import.meta.url), path.join(created.directory, "capture-harness.mjs"));
   copyFileSync(SUMMARY_PUBLISHER_SOURCE, path.join(created.directory, "checksummed-summary-publisher.mjs"));
@@ -250,7 +251,8 @@ function runTargetedWorkReductionProof(directory, captureSha) {
 }
 function validateFixedProof(fixedProof, captureSha, sourceHash) {
   const verifierPath = process.env.WARGUS_FIXED_VERIFIER_PATH?.trim() || "scripts/verify-successor-fixed-tick.mjs";
-  if (BASELINE_CAPTURE && !path.isAbsolute(verifierPath)) throw new Error("Baseline fixed-tick proof requires an absolute WARGUS_FIXED_VERIFIER_PATH.");
+  const provenance = captureProvenanceConfiguration({ baseline: BASELINE_CAPTURE, coordinatorRoot: process.env.WARGUS_COORDINATOR_ROOT, coordinatorCommit: process.env.WARGUS_COORDINATOR_COMMIT });
+  if (provenance.mode === "external" && !path.isAbsolute(verifierPath)) throw new Error("External coordinator fixed-tick proof requires an absolute WARGUS_FIXED_VERIFIER_PATH.");
   const expectedCommand = `WARGUS_PERF_PLAN=${PLAN_ID} WARGUS_CAPTURE_SHA=${captureSha} WARGUS_PERF_FIXED_TICK_OFFSET=${FIXED_TICK_OFFSET} node ${verifierPath}`;
   if (fixedProof.commit !== captureSha) throw new Error("fixed-tick-proof.json capture SHA does not match WARGUS_CAPTURE_SHA.");
   if (fixedProof.equalityVerdict !== "pass") throw new Error("fixed-tick-proof.json equality verdict must be pass.");
@@ -283,21 +285,35 @@ function environmentRecord(run, executable, allocation, monitor, captureLock) {
 }
 
 function reviewedHarnessProvenance() {
-  if (!BASELINE_CAPTURE) return {
+  const provenance = captureProvenanceConfiguration({ baseline: BASELINE_CAPTURE, coordinatorRoot: process.env.WARGUS_COORDINATOR_ROOT, coordinatorCommit: process.env.WARGUS_COORDINATOR_COMMIT });
+  if (provenance.mode === "local") return {
     coordinatorRoot: process.cwd(),
     coordinatorCommit: command("git", ["rev-parse", "HEAD"]),
     controllerCommit: command("git", ["log", "-1", "--format=%H", "--", "scripts/lib/browser-execution-controller.mjs"])
   };
-  const coordinatorRoot = process.env.WARGUS_COORDINATOR_ROOT?.trim();
-  const coordinatorCommit = process.env.WARGUS_COORDINATOR_COMMIT?.trim();
-  if (!coordinatorRoot || !path.isAbsolute(coordinatorRoot) || !coordinatorCommit) throw new Error("Baseline capture requires absolute WARGUS_COORDINATOR_ROOT and WARGUS_COORDINATOR_COMMIT.");
+  const { coordinatorRoot, coordinatorCommit } = provenance;
   const expectedHarness = realpathSync(path.join(coordinatorRoot, "scripts/run-successor-performance-matrix.mjs"));
-  if (expectedHarness !== realpathSync(new URL(import.meta.url))) throw new Error("Baseline capture is not executing the reviewed coordinator harness.");
+  if (expectedHarness !== realpathSync(new URL(import.meta.url))) throw new Error("Capture is not executing the reviewed external coordinator harness.");
   const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: coordinatorRoot, encoding: "utf8", timeout: 5000 }).trim();
   const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: coordinatorRoot, encoding: "utf8", timeout: 5000 }).trim();
-  if (head !== coordinatorCommit || status !== "") throw new Error("Baseline coordinator provenance requires the exact clean reviewed commit.");
+  if (head !== coordinatorCommit || status !== "") throw new Error("External coordinator provenance requires the exact clean reviewed commit.");
   const controllerCommit = execFileSync("git", ["log", "-1", "--format=%H", "--", "scripts/lib/browser-execution-controller.mjs"], { cwd: coordinatorRoot, encoding: "utf8", timeout: 5000 }).trim();
   return { coordinatorRoot, coordinatorCommit, controllerCommit };
+}
+
+function captureProvenanceConfiguration({ baseline, coordinatorRoot, coordinatorCommit }) {
+  const rootProvided = coordinatorRoot !== undefined;
+  const commitProvided = coordinatorCommit !== undefined;
+  const root = coordinatorRoot?.trim() || null;
+  const commit = coordinatorCommit?.trim() || null;
+  if (!rootProvided && !commitProvided && !baseline) return { mode: "local", coordinatorRoot: null, coordinatorCommit: null };
+  if (!root || !commit) throw new Error("External capture requires both WARGUS_COORDINATOR_ROOT and WARGUS_COORDINATOR_COMMIT.");
+  if (!path.isAbsolute(root)) throw new Error("WARGUS_COORDINATOR_ROOT must be absolute.");
+  return { mode: "external", coordinatorRoot: root, coordinatorCommit: commit };
+}
+
+function allowedPreCaptureFiles({ baseline, external }) {
+  return new Set(["fixed-tick-proof.json", ...(baseline && external ? ["baseline-coordinator-preflight.json", "baseline-build.json"] : []), ...(!baseline && external ? ["successor-coordinator-preflight.json", "successor-build.json"] : [])]);
 }
 
 function acceptedBaselineIdentity(artifactRoot, environment = process.env) {

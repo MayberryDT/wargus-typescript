@@ -10,6 +10,8 @@ import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/c
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
 const fixedTickSource = readFileSync("scripts/verify-successor-fixed-tick.mjs", "utf8");
 const baselineCoordinatorSource = readFileSync("scripts/run-plan018-seven-trial-baseline.mjs", "utf8");
+const wave2CoordinatorSource = readFileSync("scripts/run-wave2-successor-capture.mjs", "utf8");
+const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 assert.match(source, /schemaVersion: 4/, "Seven-trial robust summaries must use schema version 4.");
 assert.doesNotMatch(source, /afterWorstFrameP95Ms|baselineWorstFrameP95Ms|worstFrameP95Ms/,
   "Schema-v4 summaries and baseline loading must not retain worst-trial frame-p95 fields.");
@@ -22,7 +24,8 @@ const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "realPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
   "targetedVerifierPaths", "acceptedBaselineIdentity", "validateAcceptedBaselineSummary", "validateCaptureAttribution",
-  "captureConfiguration", "baselineReadiness", "robustFrameP95Acceptance", "successorAcceptance", "errorRecord"
+  "captureConfiguration", "captureProvenanceConfiguration", "allowedPreCaptureFiles", "baselineReadiness",
+  "robustFrameP95Acceptance", "successorAcceptance", "errorRecord"
 ]);
 
 assert.equal(JSON.stringify(helpers.captureConfiguration({
@@ -58,6 +61,41 @@ const baselineGuard = spawnSync(process.execPath, ["scripts/run-plan018-seven-tr
   cwd: process.cwd(), encoding: "utf8", env: { ...process.env, WARGUS_BASELINE_COORDINATOR_GUARD_CHECK: "1" }
 });
 assert.equal(baselineGuard.status, 0, `Baseline coordinator guard failed:\n${baselineGuard.stdout}${baselineGuard.stderr}`);
+
+assert.equal(JSON.stringify(helpers.captureProvenanceConfiguration({ baseline: false })), JSON.stringify({ mode: "local", coordinatorRoot: null, coordinatorCommit: null }));
+assert.equal(JSON.stringify(helpers.captureProvenanceConfiguration({ baseline: false, coordinatorRoot: "/reviewed", coordinatorCommit: "abc" })), JSON.stringify({ mode: "external", coordinatorRoot: "/reviewed", coordinatorCommit: "abc" }));
+assert.equal(JSON.stringify(helpers.captureProvenanceConfiguration({ baseline: true, coordinatorRoot: "/reviewed", coordinatorCommit: "abc" })), JSON.stringify({ mode: "external", coordinatorRoot: "/reviewed", coordinatorCommit: "abc" }));
+assert.throws(() => helpers.captureProvenanceConfiguration({ baseline: true }), /coordinator.*root.*commit/i);
+assert.throws(() => helpers.captureProvenanceConfiguration({ baseline: false, coordinatorRoot: "/reviewed" }), /coordinator.*root.*commit/i);
+assert.throws(() => helpers.captureProvenanceConfiguration({ baseline: false, coordinatorRoot: "", coordinatorCommit: "" }), /coordinator.*root.*commit/i);
+assert.deepEqual([...helpers.allowedPreCaptureFiles({ baseline: false, external: false })].sort(), ["fixed-tick-proof.json"]);
+assert.deepEqual([...helpers.allowedPreCaptureFiles({ baseline: true, external: true })].sort(), ["baseline-build.json", "baseline-coordinator-preflight.json", "fixed-tick-proof.json"]);
+assert.deepEqual([...helpers.allowedPreCaptureFiles({ baseline: false, external: true })].sort(), ["fixed-tick-proof.json", "successor-build.json", "successor-coordinator-preflight.json"]);
+
+const expectedWave2Captures = {
+  "019": { targetSha: "5935a17f456868051c2c16b2f0d8d2b4da56d115", rows: "3,5,7" },
+  "020": { targetSha: "9bab6b0e3f7d260148cc1c0f5c1c231098046e19", rows: "6" },
+  "021": { targetSha: "c4238c6ae0aaa093785b52f6f71e9569395bf08e", rows: "3,4,6" }
+};
+for (const [planId, expected] of Object.entries(expectedWave2Captures)) {
+  assert.match(wave2CoordinatorSource, new RegExp(expected.targetSha));
+  const guard = spawnSync(process.execPath, ["scripts/run-wave2-successor-capture.mjs"], {
+    cwd: process.cwd(), encoding: "utf8", env: { ...process.env, WARGUS_PERF_PLAN: planId, WARGUS_WAVE2_COORDINATOR_GUARD_CHECK: "1" }
+  });
+  assert.equal(guard.status, 0, `Wave 2 coordinator guard failed for Plan ${planId}:\n${guard.stdout}${guard.stderr}`);
+  const identity = JSON.parse(guard.stdout);
+  assert.deepEqual(identity, { planId, ...expected, acceptanceMode: "incremental", trialCountPerRow: 7, schemaVersion: 4 });
+}
+const rejectedWave2Plan = spawnSync(process.execPath, ["scripts/run-wave2-successor-capture.mjs"], {
+  cwd: process.cwd(), encoding: "utf8", env: { ...process.env, WARGUS_PERF_PLAN: "022", WARGUS_WAVE2_COORDINATOR_GUARD_CHECK: "1" }
+});
+assert.notEqual(rejectedWave2Plan.status, 0, "The Step 5 coordinator must reject plans outside 019-021.");
+const rejectedWave2Mode = spawnSync(process.execPath, ["scripts/run-wave2-successor-capture.mjs"], {
+  cwd: process.cwd(), encoding: "utf8", env: { ...process.env, WARGUS_PERF_PLAN: "019", WARGUS_PERF_ACCEPTANCE_MODE: "absolute-release", WARGUS_WAVE2_COORDINATOR_GUARD_CHECK: "1" }
+});
+assert.notEqual(rejectedWave2Mode.status, 0, "The Step 5 coordinator must reject non-incremental acceptance mode.");
+assert.doesNotMatch(wave2CoordinatorSource, /comm=,args=|process\.argv/, "Coordinator evidence must not capture process argv.");
+assert.equal(packageJson.scripts["capture:wave2-successor"], "node scripts/run-wave2-successor-capture.mjs");
 
 assert.equal(helpers.commandPairReady({
   inputToCommandDelta: 2,
