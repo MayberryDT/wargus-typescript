@@ -139,13 +139,13 @@ coordinator refresh before Plan 022 implementation resumes.
 | Preparation parity | `node scripts/verify-render-preparation.mjs` | accepted Plan 021 IDs, order, strata, indexes, and view independence remain exact |
 | Runtime smoke | `npm run verify:browser-runtime-smoke` | exit 0 under the Halla policy |
 | Playable session | `npm run verify:browser-playable-session` | world replacement and gameplay rendering pass |
-
-Accepted-base recovery: `campaigns/human-exp/levelx10h.smp.gz` can enter an unbounded synchronous defensive-auto-attack pathfinding burst immediately after its briefing is dismissed. If the full playable verifier reproduces the accepted-base stack `sourceAttackTargetPathResult -> findPathResult -> searchReachable -> footprintSearchCost`, preserve that failure as inherited Plan 024 evidence, run the remaining representative maps plus Plan 022 renderer-specific browser and visual gates, and continue. Integrate the reviewed Plan 022 renderer slice without declaring the inherited map green. Plan 024 must eliminate the burst, after which the coordinator reruns the full unfiltered playable verifier and backfills Plan 022 browser acceptance before final closeout.
 | Native viewport | `npm run verify:browser-native-viewport` | active/split viewport rendering and disposal pass |
 | Determinism | `npm run verify:runtime-determinism` | fixed-tick simulation and save output unchanged |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `army-100`, `army-200`, and `combat-100` rows at 1280×720 | exactly seven valid trials per row; `incrementalReady` passes |
+
+Accepted-base recovery: `campaigns/human-exp/levelx10h.smp.gz` can enter an unbounded synchronous defensive-auto-attack pathfinding burst immediately after its briefing is dismissed. If the full playable verifier reproduces the accepted-base stack `sourceAttackTargetPathResult -> findPathResult -> searchReachable -> footprintSearchCost`, preserve that failure as inherited Plan 024 evidence, run the remaining representative maps plus Plan 022 renderer-specific browser and visual gates, and continue. Integrate the reviewed Plan 022 renderer slice without declaring the inherited map green. Plan 024 must eliminate the burst, after which the coordinator reruns the full unfiltered playable verifier and backfills Plan 022 browser acceptance before final closeout.
 
 Before implementation, run only the pre-existing typecheck, preparation,
 direct-Pixi diff, determinism, asset, and build gates. The new render-cache
