@@ -160,7 +160,7 @@ individual exit packets or integration alone.
 | 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED — INCREMENTAL | implementation `177a41f`; accepted target `5935a17`; packet `20260730T090753875Z` | [019](evidence/019.md) | 2026-07-30 | — |
 | 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED — INCREMENTAL | implementation `c397841`; remediated target `9bab6b0`; packet `20260730T092706827Z` | [020](evidence/020.md) | 2026-07-30 | — |
 | 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED — INCREMENTAL | implementation `786b7ea`; accepted target `a97eae1`; packet `20260730T101718413Z` | [021](evidence/021.md) | 2026-07-30 | — |
-| 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | TODO | — | — | — | — |
+| 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | IMPLEMENTED-REVIEWED — PERF BACKFILL AFTER 024 | implementation `2c47191`; integration `1f58164`; pre-024 packet `20260730T182358247Z` | [022](evidence/022.md) | 2026-07-30 | Plan 024 scheduler correction and exact recapture |
 | 023 | Add a deterministic spatial occupancy index | 3 — Structural optimization | P1 | 018, 019, 020 | TODO | — | — | — | — |
 | 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |
 | 025 | Make visibility and fog dirty-driven | 4 — High-risk scheduling | P1 | 018, 019, 022, 023 | TODO | — | — | — | — |
