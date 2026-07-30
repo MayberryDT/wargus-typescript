@@ -22,11 +22,11 @@ try {
   const profiles = require(join(output, "performanceProfiles.js"));
   const displayObjects = require(join(output, "displayObjectPerformance.js"));
   const zeroPlan022 = () => ({ worldRenderCache: {
-    unit: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-    lastSeenBuilding: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-    corpse: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-    projectile: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-    spellEffect: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 }
+    unit: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    lastSeenBuilding: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    corpse: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    projectile: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+    spellEffect: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 }
   } });
   assert.deepEqual(metrics.summarizePerformanceSamples([]), { sampleCount: 0, meanMs: null, p50Ms: null, p95Ms: null, p99Ms: null, maxMs: null, effectiveFps: null, over16_7Ms: 0, over33_3Ms: 0, over50Ms: 0 });
   const singleton = metrics.summarizePerformanceSamples([12]);

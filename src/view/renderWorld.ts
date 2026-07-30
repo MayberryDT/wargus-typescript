@@ -1,5 +1,5 @@
 import { Application, BlurFilter, Container, Graphics, type Texture } from "pixi.js";
-import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, type WorldRenderPerformanceKind } from "../performance/displayObjectPerformance";
+import { clearWorldRenderCachePerformanceOwner, destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, recordWorldRenderCachePerformance, type WorldRenderPerformanceKind } from "../performance/displayObjectPerformance";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
 import { isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
@@ -17,7 +17,7 @@ import { sourceSelectedOrderRenderState } from "./sourceSelectedOrders";
 import { prepareWorldRenderSnapshot, type PreparedRenderStrata, type WorldRenderSnapshot, type WorldViewport } from "./renderPreparation";
 import { getStatusBarTexture, getStatusDecorationTexture, type StatusDecorationAtlas } from "./statusDecorationAtlas";
 import { fogByteToAlpha, sourceCompletedBarColor, sourceCompletedBarShadow, sourceMapAreaRect, sourcePlayerColor, sourceViewportModeRects } from "./sourceUiHelpers";
-import { beginRetainedRenderSlots, createRetainedRenderSlots, disposeWorldRenderCache, finishRetainedRenderSlots, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot, type RetainedRenderSlots, type WorldRenderCache } from "./worldRenderCache";
+import { beginRetainedRenderSlots, createRetainedRenderSlots, disposeWorldRenderCache, finishRetainedRenderSlots, reconcileWorldRenderKind as reconcileWorldRenderKindBase, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot, type ReconcileWorldRenderKindOptions, type RetainedRenderSlots, type WorldRenderCache } from "./worldRenderCache";
 
 const mapRenderKeys = new WeakMap<Container, string>();
 const fogRenderKeys = new WeakMap<Container, string>();
@@ -29,6 +29,17 @@ const fogAtlasIds = new WeakMap<FogTextureAtlas, number>();
 const sourceFogBlurFilters = new WeakMap<Container, BlurFilter>();
 const retainedWorldDisplayRoots = new WeakSet<Container>();
 const retainedWorldRenderCaches = new WeakMap<Container, WorldRenderCache<RetainedWorldDisplayRecord>>();
+
+function reconcileWorldRenderKind<T, I>(options: ReconcileWorldRenderKindOptions<T, I>) {
+  const result = reconcileWorldRenderKindBase(options);
+  const state = options.cache.kinds[options.kind];
+  recordWorldRenderCachePerformance(options.cache, options.kind, result.actions, {
+    active: state.active.size,
+    dormant: state.dormant.size,
+    pooled: state.pool.length
+  });
+  return result;
+}
 const retainedLastSeenBuildings = new WeakMap<
   Container,
   { world: WorldState; buildings: readonly WorldState["lastSeenBuildings"][number][] }
@@ -487,7 +498,10 @@ function clearImmediateWorldLayer(layer: Container): void {
 function retainedWorldRenderCacheFor(layer: Container, world: WorldState): WorldRenderCache<RetainedWorldDisplayRecord> {
   const existing = retainedWorldRenderCaches.get(layer);
   const owned = replaceWorldRenderCacheOwner(existing, world, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
-  if (owned !== existing) retainedWorldRenderCaches.set(layer, owned);
+  if (owned !== existing) {
+    if (existing) clearWorldRenderCachePerformanceOwner(existing);
+    retainedWorldRenderCaches.set(layer, owned);
+  }
   return owned;
 }
 
@@ -506,6 +520,7 @@ export function disposeRetainedWorldRenderCache(layer: Container): void {
   const cache = retainedWorldRenderCaches.get(layer);
   if (!cache) return;
   disposeWorldRenderCache(cache, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
+  clearWorldRenderCachePerformanceOwner(cache);
   retainedWorldRenderCaches.delete(layer);
 }
 

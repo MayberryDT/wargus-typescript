@@ -39,6 +39,8 @@ assert.match(rendererSource, /drawUnits\(renderer\.unitLayer,/, "Secondary viewp
 assert.match(rendererSource, /disposeRetainedWorldRenderCache\(renderers\[rendererIndex\]\.unitLayer\)/, "Closed secondary viewports must dispose their exact cache owner");
 assert.match(rendererSource, /export function disposeRetainedWorldRenderCaches\(worldLayer: Container, unitLayer: Container\)[\s\S]*sourceViewportPaneRenderers\.get\(worldLayer\)[\s\S]*disposeRetainedWorldRenderCache\(renderer\.unitLayer\)/, "Coordinator disposal must destroy primary and every split-view cache");
 assert.equal((mainSource.match(/disposeRetainedWorldRenderCaches\(worldLayer, unitLayer\)/g) ?? []).length, 3, "Map replacement, save-load replacement, and page teardown must dispose retained caches explicitly");
+assert.match(rendererSource, /function reconcileWorldRenderKind[\s\S]*recordWorldRenderCachePerformance\(options\.cache, options\.kind, result\.actions/, "Every production reconciliation must publish cache reuse and state through Plan 018 telemetry");
+assert.match(rendererSource, /disposeWorldRenderCache\(cache[\s\S]*clearWorldRenderCachePerformanceOwner\(cache\)/, "Exact cache disposal must clear its telemetry owner");
 assert.match(rendererSource, /shapeKeyOf: \(unit\) => unitRenderShapeKey\(/, "Unit records must recreate only from an explicit complete child-shape key");
 assert.match(rendererSource, /beginRetainedUnitRender\(record\)[\s\S]*finishRetainedUnitRender\(record\)/, "Changed units must update reusable child slots in one bounded render pass");
 assert.doesNotMatch(rendererSource, /destroyLayerChildren\(record\.root\)/, "Visual-state updates must not destroy retained unit children");
@@ -148,23 +150,33 @@ const trackerExecutable = trackerFile.statements
 const trackerJavascript = ts.transpileModule(trackerExecutable, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
 }).outputText;
-const loadTracker = Function("exports", "Container", "Graphics", "Sprite", "Text", `${trackerJavascript}\nreturn { createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, destroyTrackedDisplayObject, resetDisplayObjectPerformance, setDisplayObjectPerformanceCapture, snapshotDisplayObjectPerformance };`);
+const loadTracker = Function("exports", "Container", "Graphics", "Sprite", "Text", `${trackerJavascript}\nreturn { clearWorldRenderCachePerformanceOwner, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, destroyTrackedDisplayObject, recordWorldRenderCachePerformance, resetDisplayObjectPerformance, setDisplayObjectPerformanceCapture, snapshotDisplayObjectPerformance };`);
 const tracked = loadTracker({}, Container, Graphics, Sprite, Text);
 const zeroPlan022 = () => ({ worldRenderCache: {
-  unit: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-  lastSeenBuilding: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-  corpse: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-  projectile: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 },
-  spellEffect: { trackedCreated: 0, trackedDestroyed: 0, windowLiveDelta: 0 }
+  unit: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+  lastSeenBuilding: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+  corpse: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+  projectile: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 },
+  spellEffect: { trackedCreated: 0, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 }
 } });
 
 tracked.resetDisplayObjectPerformance();
 tracked.setDisplayObjectPerformanceCapture(true);
 const taggedRoot = tracked.createTrackedContainer("unit");
 taggedRoot.addChild(tracked.createTrackedGraphics(undefined, "unit"));
-assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, trackedDestroyed: 0, windowLiveDelta: 2 }, "Plan 022 unit creation must extend the existing tracked counter namespace");
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, reused: 0, trackedDestroyed: 0, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 2 }, "Plan 022 unit creation must extend the existing tracked counter namespace");
 tracked.destroyTrackedDisplayObject(taggedRoot, { children: true }, "unit");
-assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, trackedDestroyed: 2, windowLiveDelta: 0 }, "Plan 022 unit disposal must extend the existing tracked counter namespace");
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, reused: 0, trackedDestroyed: 2, active: 0, dormant: 0, pooled: 0, activeHighWater: 0, dormantHighWater: 0, pooledHighWater: 0, windowLiveDelta: 0 }, "Plan 022 unit disposal must extend the existing tracked counter namespace");
+const telemetryOwner = {};
+tracked.recordWorldRenderCachePerformance(telemetryOwner, "unit", [{ type: "reuse" }, { type: "reattach" }], { active: 2, dormant: 1, pooled: 0 });
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, reused: 2, trackedDestroyed: 2, active: 2, dormant: 1, pooled: 0, activeHighWater: 2, dormantHighWater: 1, pooledHighWater: 0, windowLiveDelta: 0 }, "Plan 022 telemetry must report reuse, current cache state, and high-water marks through the existing snapshot");
+const telemetryOwnerB = {};
+tracked.recordWorldRenderCachePerformance(telemetryOwnerB, "unit", [{ type: "reuse" }], { active: 3, dormant: 0, pooled: 1 });
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, reused: 3, trackedDestroyed: 2, active: 5, dormant: 1, pooled: 1, activeHighWater: 5, dormantHighWater: 1, pooledHighWater: 1, windowLiveDelta: 0 }, "Independent viewport owners must aggregate without sharing mutable cache state");
+tracked.clearWorldRenderCachePerformanceOwner(telemetryOwner);
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, reused: 3, trackedDestroyed: 2, active: 3, dormant: 0, pooled: 1, activeHighWater: 5, dormantHighWater: 1, pooledHighWater: 1, windowLiveDelta: 0 }, "Exact owner disposal must remove only that viewport state");
+tracked.clearWorldRenderCachePerformanceOwner(telemetryOwnerB);
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance().plan022.worldRenderCache.unit, { trackedCreated: 2, reused: 3, trackedDestroyed: 2, active: 0, dormant: 0, pooled: 0, activeHighWater: 5, dormantHighWater: 1, pooledHighWater: 1, windowLiveDelta: 0 }, "All owner disposal must return current cache state to zero without erasing capture high-water evidence");
 
 tracked.resetDisplayObjectPerformance();
 tracked.setDisplayObjectPerformanceCapture(true);
@@ -1087,6 +1099,65 @@ const poolOverflow = reconcileWorldRenderKind(options(poolCapCache, "projectile"
 assert.deepEqual(poolCapCache.kinds.projectile.pool.map(({ key }) => key), poolItems.slice(0, 64).map(({ key }) => key), "Pool overflow must retain deterministic first records");
 assert.ok(poolOverflow.actions.some(({ type, key }) => type === "destroy" && key === "pool-64"));
 
+const deterministicChurnFrames = 5 * 60 * 60;
+const churnLimits = { unit: 256, lastSeenBuilding: 128, corpse: 64, projectile: 64, spellEffect: 64 };
+const churnHighWater = {};
+for (const kind of Object.keys(churnLimits)) {
+  const churnCache = createWorldRenderCache({});
+  const liveKeys = new Set();
+  let activeHighWater = 0;
+  let dormantHighWater = 0;
+  let pooledHighWater = 0;
+  let churnIdentity = 0;
+  const churnOptions = (items, live, pooling = false) => ({
+    cache: churnCache, worldIdentity: churnCache.worldIdentity, kind, items, liveKeys: live,
+    keyOf: (item) => item.key, shapeKeyOf: (item) => item.shape,
+    create: () => ({ identity: ++churnIdentity }), update: () => {}, attach: () => {}, detach: () => {}, destroy: () => {},
+    ...(pooling ? { canResetForPool: () => true } : {}), reorder: () => {}
+  });
+  const observe = () => {
+    const state = churnCache.kinds[kind];
+    activeHighWater = Math.max(activeHighWater, state.active.size);
+    dormantHighWater = Math.max(dormantHighWater, state.dormant.size);
+    pooledHighWater = Math.max(pooledHighWater, state.pool.length);
+    assert.ok(state.dormant.size <= churnLimits[kind], `${kind} deterministic churn exceeded its dormant cap`);
+    assert.ok(state.pool.length <= (kind === "projectile" || kind === "spellEffect" ? 64 : 0), `${kind} deterministic churn exceeded its pool cap`);
+  };
+  for (let frame = 0; frame < deterministicChurnFrames; frame += 1) {
+    const key = `${kind}-churn-${frame}`;
+    liveKeys.add(key);
+    reconcileWorldRenderKind(churnOptions([{ key, shape: `${kind}-shape` }], liveKeys));
+    observe();
+  }
+  reconcileWorldRenderKind(churnOptions([], liveKeys));
+  observe();
+  if (kind === "projectile" || kind === "spellEffect") {
+    const poolCache = createWorldRenderCache({});
+    let poolIdentity = 0;
+    const poolOptions = (items) => ({
+      cache: poolCache, worldIdentity: poolCache.worldIdentity, kind, items, liveKeys: new Set(items.map(({ key }) => key)),
+      keyOf: (item) => item.key, shapeKeyOf: (item) => item.shape, create: () => ({ identity: ++poolIdentity }),
+      update: () => {}, attach: () => {}, detach: () => {}, destroy: () => {}, canResetForPool: () => true, reorder: () => {}
+    });
+    for (let frame = 0; frame < deterministicChurnFrames; frame += 1) {
+      reconcileWorldRenderKind(poolOptions([{ key: `${kind}-pool-${frame}`, shape: `${kind}-pool-shape` }]));
+      reconcileWorldRenderKind(poolOptions([]));
+      pooledHighWater = Math.max(pooledHighWater, poolCache.kinds[kind].pool.length);
+      assert.ok(poolCache.kinds[kind].pool.length <= 64, `${kind} deterministic pooling churn exceeded its cap`);
+    }
+    disposeWorldRenderCache(poolCache, () => {}, () => {});
+  }
+  churnHighWater[kind] = { active: activeHighWater, dormant: dormantHighWater, pooled: pooledHighWater };
+  disposeWorldRenderCache(churnCache, () => {}, () => {});
+}
+assert.deepEqual(churnHighWater, {
+  unit: { active: 1, dormant: 256, pooled: 0 },
+  lastSeenBuilding: { active: 1, dormant: 128, pooled: 0 },
+  corpse: { active: 1, dormant: 64, pooled: 0 },
+  projectile: { active: 1, dormant: 64, pooled: 1 },
+  spellEffect: { active: 1, dormant: 64, pooled: 1 }
+}, "Five simulated minutes at 60 FPS must preserve every per-kind active, dormant, and pool bound");
+
 const deterministicRun = () => {
   let identity = 0;
   const order = [];
@@ -1176,4 +1247,4 @@ assert.deepEqual(disposeWorldRenderCache(disposalCache, () => assert.fail("Secon
 disposeWorldRenderCache(cacheA, (value) => detached.push(value.identity), (value) => destroyed.push(value.identity));
 assert.equal(cacheA.kinds.unit.active.size + cacheA.kinds.unit.dormant.size + cacheA.kinds.unit.pool.length, 0);
 
-console.log("World render cache lifecycle verified (identity, ownership, order, bounds, pooling, and disposal).");
+console.log("World render cache lifecycle verified (identity, ownership, order, bounds, pooling, disposal, and " + deterministicChurnFrames + " deterministic churn frames; high-water " + JSON.stringify(churnHighWater) + ").");
