@@ -202,6 +202,43 @@ export function removeOwnedBrowserProfile({ profilePath, root }) {
   return { profilePath: resolvedProfile, removed: true };
 }
 
+export function validateCapturedArmTrial(trial) {
+  if (!trial || trial.valid !== true || trial.profile !== IDENTITY.profile || trial.durationMs !== IDENTITY.durationMs || !Number.isFinite(trial.actualDurationMs) || trial.actualDurationMs < IDENTITY.durationMs) throw new InvalidArmError("Captured arm identity or 30-second duration is invalid.");
+  if (trial.started?.profile !== IDENTITY.profile) throw new InvalidArmError("Captured arm start structure is invalid.");
+  validateRuntimeSnapshot("15-second", trial.t15);
+  validateRuntimeSnapshot("30-second", trial.stopped);
+  for (const [metric, samplesName] of [["frame", "frameSamples"], ["update", "updateSamples"], ["renderPreparation", "renderPreparationSamples"]]) {
+    const samples = trial.stopped[samplesName];
+    const stats = trial.statistics?.[metric];
+    if (!stats || stats.sampleCount !== samples.length || [stats.p50Ms, stats.p95Ms, stats.p99Ms, stats.meanMs, stats.maxMs].some((value) => !Number.isFinite(value) || value < 0)) throw new InvalidArmError(`Captured arm statistics for ${metric} must be finite and match its samples.`);
+    for (const threshold of ["over50Ms", "over100Ms"]) {
+      const count = stats.thresholdCounts?.[threshold];
+      if (!Number.isInteger(count) || count < 0 || count > samples.length) throw new InvalidArmError(`Captured arm statistics threshold ${metric}.${threshold} is invalid.`);
+    }
+  }
+  const stoppedScheduler = trial.stopped.scheduler;
+  const statisticsScheduler = trial.statistics?.scheduler;
+  if (!statisticsScheduler || statisticsScheduler.droppedDeltaSeconds !== stoppedScheduler.droppedDeltaSeconds || statisticsScheduler.maxBacklogSeconds !== stoppedScheduler.maxBacklogSeconds) throw new InvalidArmError("Captured arm statistics scheduler does not match the 30-second scheduler snapshot.");
+  return trial;
+}
+
+export function finalizeCapturedArmTrial(trial) {
+  validateCapturedArmTrial(trial);
+  return trial;
+}
+
+function validateRuntimeSnapshot(label, snapshot) {
+  if (!snapshot || typeof snapshot !== "object") throw new InvalidArmError(`Captured arm is missing its ${label} runtime snapshot.`);
+  if (snapshot.profile !== IDENTITY.profile || !Number.isFinite(snapshot.worldTick) || snapshot.worldTick < 0 || !snapshot.heap || typeof snapshot.heap.supported !== "boolean") throw new InvalidArmError(`Captured arm ${label} runtime structure is invalid.`);
+  for (const samplesName of ["frameSamples", "updateSamples", "renderPreparationSamples"]) {
+    const samples = snapshot[samplesName];
+    if (!Array.isArray(samples) || samples.length === 0) throw new InvalidArmError(`Captured arm ${label} ${samplesName} must be non-empty.`);
+    if (samples.some((value) => !Number.isFinite(value) || value < 0)) throw new InvalidArmError(`Captured arm ${label} requires finite non-negative ${samplesName}.`);
+  }
+  const scheduler = snapshot.scheduler;
+  if (!scheduler || !Number.isFinite(scheduler.droppedDeltaSeconds) || scheduler.droppedDeltaSeconds < 0 || !Number.isFinite(scheduler.maxBacklogSeconds) || scheduler.maxBacklogSeconds < 0) throw new InvalidArmError(`Captured arm ${label} scheduler values are invalid.`);
+}
+
 export function buildSupportingPairedMetrics({ baseTrials, plan019Trials }) {
   classifyPairedDiagnostic({ baseTrials, plan019Trials });
   return baseTrials.map((base, index) => {
@@ -275,7 +312,11 @@ export function validatePublicationPacket(directory, summary) {
   const schedule = buildAlternatingPairs(IDENTITY.pairCount);
   if (!Array.isArray(summary.pairs) || summary.pairs.length !== schedule.length) throw new Error("READY packet requires exactly 15 summary pairs.");
   const pairsDocument = JSON.parse(readFileSync(path.join(directory, "pairs.json"), "utf8"));
+  if (pairsDocument.schemaVersion !== 1) throw new Error("pairs.json schemaVersion must be exactly 1.");
+  if (stableJson(pairsDocument.schedule) !== stableJson(schedule)) throw new Error("pairs.json must contain the exact canonical alternating schedule.");
   if (stableJson(pairsDocument.completed) !== stableJson(summary.pairs)) throw new Error("pairs.json completed references do not exactly match summary pairs.");
+  const expectedCurrentValidTrials = summary.pairs.flatMap((pair) => pair.arms.map(({ arm, orderIndex, replacement, stamp, file }) => ({ pair: pair.pair, arm, orderIndex, replacement, stamp, file })));
+  if (stableJson(pairsDocument.currentValidTrials) !== stableJson(expectedCurrentValidTrials)) throw new Error("pairs.json currentValidTrials must be the exact 30-arm summary/raw reference projection.");
   const trialFiles = [];
   const stamps = new Set();
   for (const expected of schedule) {
@@ -859,7 +900,7 @@ async function captureArmAttempt({ coordinator, worktree, pair, orderIndex, repl
     if (!t15 || !stopped) throw new InvalidArmError("Required 15-second and 30-second runtime snapshots are missing.");
     const completedAt = process.hrtime.bigint();
     resources.push(resourceRecord("post-capture", worktree, pair, replacement, Number(completedAt - startedAt) / 1e6));
-    return {
+    const trial = {
       schemaVersion: 1,
       pair,
       arm: worktree.arm,
@@ -882,6 +923,7 @@ async function captureArmAttempt({ coordinator, worktree, pair, orderIndex, repl
       statistics: statistics(stopped),
       resources
     };
+    return finalizeCapturedArmTrial(trial);
   } catch (error) {
     captureError = error instanceof InvalidArmError || error instanceof ResourceSafetyError
       ? error

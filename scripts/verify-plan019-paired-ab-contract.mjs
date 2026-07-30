@@ -602,6 +602,8 @@ const {
   cleanupTrackedController,
   createOwnedBrowserProfile,
   removeOwnedBrowserProfile,
+  finalizeCapturedArmTrial,
+  validateCapturedArmTrial,
   validatePublicationPacket
 } = await import("./run-plan019-paired-ab-diagnostic.mjs");
 
@@ -755,6 +757,25 @@ try {
   const packetSummary = writePublicationFixture(packetDirectory);
   assert.equal(validatePublicationPacket(packetDirectory, packetSummary).trialFiles.length, 30);
 
+  for (const [label, mutate, pattern] of [
+    ["schema", (value) => { value.schemaVersion = 2; }, /schemaVersion/i],
+    ["schedule", (value) => { value.schedule[0].order.reverse(); }, /canonical.*schedule/i],
+    ["missing projection", (value) => { delete value.currentValidTrials; }, /currentValidTrials/i],
+    ["extra projection", (value) => { value.currentValidTrials.push({ ...value.currentValidTrials[0], pair: 99 }); }, /currentValidTrials/i],
+    ["mismatched projection", (value) => { value.currentValidTrials[0].file = "wrong.json"; }, /currentValidTrials/i]
+  ]) {
+    const projectionDirectory = mkdtempSync(path.join(tmpdir(), `wargus-plan019-projection-${label.replaceAll(" ", "-")}-`));
+    try {
+      const projectionSummary = writePublicationFixture(projectionDirectory);
+      const pairsPath = path.join(projectionDirectory, "pairs.json");
+      const pairsValue = JSON.parse(readFileSync(pairsPath, "utf8"));
+      mutate(pairsValue);
+      writeFileSync(pairsPath, `${JSON.stringify(pairsValue, null, 2)}
+`);
+      assert.throws(() => validatePublicationPacket(projectionDirectory, projectionSummary), pattern, `${label} pairs projection must fail closed.`);
+    } finally { rmSync(projectionDirectory, { recursive: true, force: true }); }
+  }
+
   const missingDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-packet-missing-"));
   try {
     const missingSummary = writePublicationFixture(missingDirectory);
@@ -839,7 +860,8 @@ function writePublicationFixture(directory, { writeTrials = true } = {}) {
     }))
   }));
   for (const name of ["environment.json", "resources.json", "lifecycle.json"]) writeFileSync(path.join(directory, name), "{}\n");
-  writeFileSync(path.join(directory, "pairs.json"), `${JSON.stringify({ schemaVersion: 1, completed: pairs }, null, 2)}\n`);
+  const currentValidTrials = pairs.flatMap((pair) => pair.arms.map(({ arm, orderIndex, replacement, stamp, file }) => ({ pair: pair.pair, arm, orderIndex, replacement, stamp, file })));
+  writeFileSync(path.join(directory, "pairs.json"), `${JSON.stringify({ schemaVersion: 1, schedule: buildAlternatingPairs(15), completed: pairs, currentValidTrials, invalid: [] }, null, 2)}\n`);
   if (writeTrials) for (const pair of pairs) for (const arm of pair.arms) {
     writeFileSync(path.join(directory, arm.file), `${JSON.stringify({ pair: pair.pair, arm: arm.arm, orderIndex: arm.orderIndex, stamp: arm.stamp, replacement: arm.replacement, valid: true })}\n`);
   }
@@ -852,5 +874,57 @@ function writePublicationFixture(directory, { writeTrials = true } = {}) {
     supportingPairedMetrics: Array.from({ length: 15 }, (_, index) => ({ pair: index + 1 })),
     pairs,
     lifecycle: { cleanupPass: true, profilesRemoved: true, worktreesRemoved: true, lockReleased: true, finalizationPass: true }
+  };
+}
+
+
+const validCapturedArm = capturedArmFixture();
+assert.deepEqual(validateCapturedArmTrial(validCapturedArm), validCapturedArm);
+assert.deepEqual(finalizeCapturedArmTrial(validCapturedArm), validCapturedArm);
+for (const [label, mutate, pattern] of [
+  ["missing 15-second snapshot", (trial) => { trial.t15 = null; }, /15-second/i],
+  ["missing 30-second snapshot", (trial) => { trial.stopped = null; }, /30-second/i],
+  ["empty frame samples", (trial) => { trial.stopped.frameSamples = []; }, /frameSamples/i],
+  ["nonfinite update samples", (trial) => { trial.stopped.updateSamples[0] = Number.NaN; }, /finite.*updateSamples/i],
+  ["empty render samples", (trial) => { trial.stopped.renderPreparationSamples = []; }, /renderPreparationSamples/i],
+  ["nonfinite statistics", (trial) => { trial.statistics.frame.p95Ms = Number.NaN; }, /statistics.*finite/i],
+  ["invalid scheduler dropped", (trial) => { trial.stopped.scheduler.droppedDeltaSeconds = -1; trial.statistics.scheduler.droppedDeltaSeconds = -1; }, /scheduler/i],
+  ["invalid scheduler backlog", (trial) => { trial.stopped.scheduler.maxBacklogSeconds = Number.POSITIVE_INFINITY; trial.statistics.scheduler.maxBacklogSeconds = Number.POSITIVE_INFINITY; }, /scheduler/i]
+]) {
+  const invalid = structuredClone(validCapturedArm);
+  mutate(invalid);
+  assert.throws(() => finalizeCapturedArmTrial(invalid), pattern, `${label} must be rejected before a trial can be returned valid.`);
+}
+
+function capturedArmFixture() {
+  const scheduler = { droppedDeltaSeconds: 0, maxBacklogSeconds: 0.1 };
+  const snapshot = (worldTick) => ({
+    profile: "army-100",
+    worldTick,
+    heap: { supported: true, usedJsHeapSize: worldTick },
+    scheduler: { ...scheduler },
+    frameSamples: [10, 20, 30],
+    updateSamples: [1, 2, 3],
+    renderPreparationSamples: [0.1, 0.2, 0.3]
+  });
+  return {
+    pair: 1,
+    arm: "base",
+    orderIndex: 0,
+    replacement: 0,
+    stamp: "pair-01-base-attempt-1",
+    valid: true,
+    profile: "army-100",
+    durationMs: 30000,
+    actualDurationMs: 30001,
+    started: { profile: "army-100" },
+    t15: snapshot(450),
+    stopped: snapshot(900),
+    statistics: {
+      frame: { sampleCount: 3, p50Ms: 20, p95Ms: 30, p99Ms: 30, meanMs: 20, maxMs: 30, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
+      update: { sampleCount: 3, p50Ms: 2, p95Ms: 3, p99Ms: 3, meanMs: 2, maxMs: 3, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
+      renderPreparation: { sampleCount: 3, p50Ms: 0.2, p95Ms: 0.3, p99Ms: 0.3, meanMs: 0.2, maxMs: 0.3, thresholdCounts: { over50Ms: 0, over100Ms: 0 } },
+      scheduler: { ...scheduler }
+    }
   };
 }
