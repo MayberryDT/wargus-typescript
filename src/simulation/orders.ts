@@ -7,6 +7,7 @@ import { findPath, findPathResult } from "./pathfinding";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
 import { findWorldUnitById } from "./worldSelectors";
+import { invalidateWorldOccupancyIndex, queryWorldOccupantsAtTile, queryWorldOccupantsInFootprint, registerWorldOccupant, snapshotWorldOccupant, transitionWorldOccupant, unregisterWorldOccupant } from "./occupancyIndex";
 
 export { sourceDefaultGameSpeed } from "./world";
 export { findNextIdleWorker, isGoldOrWoodWorkerUnit, isIdleWorkerForPlayer } from "./workerSelection";
@@ -15,6 +16,36 @@ const MISSILE_SPEED_TO_PIXELS_PER_SECOND = 16;
 const FALLBACK_RAISED_SKELETON_LIFETIME_SECONDS = 40;
 const SOURCE_AI_RESOURCE_SEARCH_RANGE_TILES = 15;
 const compareSourceIds = new Intl.Collator().compare;
+
+function appendWorldUnits(world: WorldState, ...units: WorldUnit[]): void {
+  for (const unit of units) {
+    world.units.push(unit);
+    registerWorldOccupant(world, unit);
+  }
+}
+
+function replaceWorldUnits(world: WorldState, units: WorldUnit[]): void {
+  const retainedUnits = new Set(units);
+  for (const unit of world.units) {
+    if (!retainedUnits.has(unit)) unregisterWorldOccupant(world, unit);
+  }
+  world.units = units;
+  invalidateWorldOccupancyIndex(world);
+}
+
+function moveWorldUnit(world: WorldState, unit: WorldUnit, x: number, y: number): void {
+  const previous = snapshotWorldOccupant(world, unit);
+  unit.x = x;
+  unit.y = y;
+  transitionWorldOccupant(world, unit, previous);
+}
+
+function resizeWorldUnitFootprint(world: WorldState, unit: WorldUnit, tileWidth: number, tileHeight: number): void {
+  const previous = snapshotWorldOccupant(world, unit);
+  unit.tileWidth = tileWidth;
+  unit.tileHeight = tileHeight;
+  transitionWorldOccupant(world, unit, previous);
+}
 
 export type PendingWorldCommandName = "move" | "attack-move" | "attack-ground" | "patrol" | "follow" | "repair" | "harvest" | "unload-transport" | "build-oil-platform";
 export type PendingWorldCommand = PendingWorldCommandName | { kind: "build"; buildingTypeId: string } | { kind: "spell"; command: TargetedSpellCommand };
@@ -3873,7 +3904,7 @@ export function issueLoadTransportOrder(world: WorldState, transportId: string):
     transport.cargo.push(unit);
     world.events.push({ kind: "unit-loaded", unitId: unit.id, transportId: transport.id, player: unit.player });
   }
-  world.units = world.units.filter((unit) => !loadedIds.has(unit.id));
+  replaceWorldUnits(world, world.units.filter((unit) => !loadedIds.has(unit.id)));
   clearReferencesToUnavailableUnits(world, loadedIds);
   emitSoundEvent(world, "transport-docking", transport.player, transport.x, transport.y);
   return true;
@@ -4067,7 +4098,7 @@ function unloadTransportCargoNear(world: WorldState, transport: WorldUnit, cente
     return false;
   }
   transport.cargo = remaining;
-  world.units.push(...unloaded);
+  appendWorldUnits(world, ...unloaded);
   transport.order = null;
   world.events.push({ kind: "units-unloaded", unitIds: unloaded.map((unit) => unit.id), transportId: transport.id, player: transport.player });
   emitSoundEvent(world, "transport-docking", transport.player, transport.x, transport.y);
@@ -4965,7 +4996,7 @@ function startBuildingFoundation(world: WorldState, builder: WorldUnit, player: 
   const replacedResourcesHeld = replacedUnits.length > 0 ? Math.max(0, Math.floor(replacedUnits[0]?.resourcesHeld ?? 0)) : 0;
   if (replacedUnits.length > 0) {
     const replacedUnitIds = new Set(replacedUnits.map((unit) => unit.id));
-    world.units = world.units.filter((unit) => !replacedUnitIds.has(unit.id));
+    replaceWorldUnits(world, world.units.filter((unit) => !replacedUnitIds.has(unit.id)));
     clearReferencesToUnavailableUnits(world, replacedUnitIds);
   }
   const building = createWorldUnit({
@@ -4981,7 +5012,7 @@ function startBuildingFoundation(world: WorldState, builder: WorldUnit, player: 
   building.hitPoints = Math.max(1, Math.floor(building.maxHitPoints * 0.1));
   const builderInside = !buildingDefinition.builderOutside;
   building.construction = { builderId: builder.id, builderInside, remainingSeconds: totalSeconds, totalSeconds };
-  world.units.push(building);
+  appendWorldUnits(world, building);
   recordPlayerUnitCreated(world, building);
 
   emitSoundEvent(world, "placement-success", builder.player, building.x, building.y);
@@ -5058,8 +5089,7 @@ function releaseBuilderFromConstruction(world: WorldState, builder: WorldUnit, b
   builder.order = null;
   builder.moveQueue = [];
   const position = nearestBuilderReleasePosition(world, builder, building);
-  builder.x = position.x;
-  builder.y = position.y;
+  moveWorldUnit(world, builder, position.x, position.y);
 }
 
 function issueSourceConstructionCompleteBuilderOrder(world: WorldState, builder: WorldUnit, building: WorldUnit): void {
@@ -5229,8 +5259,8 @@ function startOilPlatformConstruction(world: WorldState, builder: WorldUnit, oil
   platform.hitPoints = Math.max(1, Math.floor(platform.maxHitPoints * 0.1));
   const builderInside = !platformDefinition.builderOutside;
   platform.construction = { builderId: builder.id, builderInside, remainingSeconds: totalSeconds, totalSeconds };
-  world.units = world.units.filter((unit) => unit.id !== oilPatch.id);
-  world.units.push(platform);
+  replaceWorldUnits(world, world.units.filter((unit) => unit.id !== oilPatch.id));
+  appendWorldUnits(world, platform);
   recordPlayerUnitCreated(world, platform);
   clearReferencesToUnavailableUnits(world, new Set([oilPatch.id]));
   emitSoundEvent(world, "placement-success", builder.player, platform.x, platform.y);
@@ -5254,7 +5284,7 @@ function startOilPlatformConstruction(world: WorldState, builder: WorldUnit, oil
     pathIndex: path.length > 1 ? 1 : 0
   };
   if (builderInside) {
-    hideBuilderInsideConstruction(builder, platform);
+    hideBuilderInsideConstruction(world, builder, platform);
     builder.order = null;
   }
   return true;
@@ -5433,7 +5463,7 @@ export function issueCancelConstructionOrder(world: WorldState, buildingId: stri
     builder.order = null;
   }
   restoreOilPatchForRemovedPlatform(world, building);
-  world.units = world.units.filter((unit) => unit.id !== building.id);
+  replaceWorldUnits(world, world.units.filter((unit) => unit.id !== building.id));
   clearReferencesToDeadUnits(world, new Set([building.id]));
   return true;
 }
@@ -5848,8 +5878,7 @@ function stepHoldPositionOrder(world: WorldState, unit: WorldUnit): void {
   if (unit.order?.kind !== "hold") {
     return;
   }
-  unit.x = unit.order.anchorX;
-  unit.y = unit.order.anchorY;
+  moveWorldUnit(world, unit, unit.order.anchorX, unit.order.anchorY);
   let target = unit.order.targetId ? findUnit(world, unit.order.targetId) : undefined;
   if (!canContinueAttackingTarget(world, unit, target) || !isInAttackRange(unit, target, world)) {
     target = findNearestEnemyInRange(world, unit);
@@ -6288,8 +6317,7 @@ function tryTeleportThroughFollowTarget(world: WorldState, unit: WorldUnit, tele
     return true;
   }
   const exit = tileToWorldCenter(world, exitTile.x, exitTile.y);
-  unit.x = exit.x;
-  unit.y = exit.y;
+  moveWorldUnit(world, unit, exit.x, exit.y);
   unit.order = null;
   unit.moveQueue = [];
   updateUnitFacing(unit, destination.x - unit.x, destination.y - unit.y);
@@ -9332,7 +9360,7 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
     }
     const building = startBuildingFoundation(world, unit, player, buildingDefinition, order.tileX, order.tileY);
     if (building.construction?.builderInside) {
-      hideBuilderInsideConstruction(unit, building);
+      hideBuilderInsideConstruction(world, unit, building);
       unit.order = null;
     }
     return;
@@ -9357,7 +9385,7 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
   }
 
   if (building.construction.builderInside) {
-    hideBuilderInsideConstruction(unit, building);
+    hideBuilderInsideConstruction(world, unit, building);
     unit.order = null;
     return;
   }
@@ -9379,10 +9407,9 @@ function failPendingConstructionAtArrival(world: WorldState, builder: WorldUnit)
   startNextQueuedMove(world, builder);
 }
 
-function hideBuilderInsideConstruction(builder: WorldUnit, building: WorldUnit): void {
+function hideBuilderInsideConstruction(world: WorldState, builder: WorldUnit, building: WorldUnit): void {
   builder.hiddenInConstructionId = building.id;
-  builder.x = building.x;
-  builder.y = building.y;
+  moveWorldUnit(world, builder, building.x, building.y);
 }
 
 function progressConstruction(world: WorldState, building: WorldUnit, tickSeconds: number, builder: WorldUnit): void {
@@ -9600,7 +9627,7 @@ function stepLoadTransportOrder(world: WorldState, unit: WorldUnit, tickSeconds:
   unit.order = null;
   unit.moveQueue = [];
   transport.cargo.push(unit);
-  world.units = world.units.filter((candidate) => candidate.id !== unit.id);
+  replaceWorldUnits(world, world.units.filter((candidate) => candidate.id !== unit.id));
   clearReferencesToUnavailableUnits(world, new Set([unit.id]));
   world.events.push({ kind: "unit-loaded", unitId: unit.id, transportId: transport.id, player: unit.player });
   emitSoundEvent(world, "transport-docking", transport.player, transport.x, transport.y);
@@ -9717,7 +9744,7 @@ function stepProductionOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
     });
     trainedUnit.lifetimeSeconds = sourceDecayRateLifetimeSeconds(unit.decayRate) ?? trainedUnit.lifetimeSeconds;
     applyResearchedUpgradesToUnit(world, trainedUnit);
-    world.units.push(trainedUnit);
+    appendWorldUnits(world, trainedUnit);
     recordPlayerUnitCreated(world, trainedUnit);
     issueOnReadyOrder(world, trainedUnit);
     if (!trainedUnit.order) {
@@ -10744,8 +10771,7 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
   const distance = Math.hypot(dx, dy);
   updateUnitFacing(unit, dx, dy, tickSeconds);
   if (distance <= Math.max(2, unit.speed * tickSeconds)) {
-    unit.x = nextWaypoint.x;
-    unit.y = nextWaypoint.y;
+    moveWorldUnit(world, unit, nextWaypoint.x, nextWaypoint.y);
     if (unit.order.pathIndex >= unit.order.path.length - 1) {
       if (unit.order.kind === "move" || unit.order.kind === "attack-move") {
         unit.order = null;
@@ -10776,8 +10802,7 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
     }
     return;
   }
-  unit.x = nextX;
-  unit.y = nextY;
+  moveWorldUnit(world, unit, nextX, nextY);
 }
 
 function retryBlockedMoveOrder(world: WorldState, unit: WorldUnit): void {
@@ -10820,7 +10845,7 @@ function resolveStackedMovableUnit(world: WorldState, unit: WorldUnit): void {
     return;
   }
   const unitTile = worldToTile(world, unit.x, unit.y);
-  const blocker = world.units.find((candidate) => {
+  const blocker = queryWorldOccupantsAtTile(world, unitTile.x, unitTile.y).find((candidate) => {
     if (
       candidate.id === unit.id
       || candidate.hitPoints <= 0
@@ -10842,8 +10867,7 @@ function resolveStackedMovableUnit(world: WorldState, unit: WorldUnit): void {
   if (!escape) {
     return;
   }
-  unit.x = escape.x * world.tileSize + world.tileSize / 2;
-  unit.y = escape.y * world.tileSize + world.tileSize / 2;
+  moveWorldUnit(world, unit, escape.x * world.tileSize + world.tileSize / 2, escape.y * world.tileSize + world.tileSize / 2);
   if (unit.order && "path" in unit.order) {
     if (unit.order.kind === "move") {
       const planned = planMoveOrder(world, unit, unit.order.targetX, unit.order.targetY);
@@ -12241,7 +12265,7 @@ function isForestRegrowthTileOccupied(world: WorldState, tileX: number, tileY: n
   const right = left + world.tileSize;
   const top = tileY * world.tileSize;
   const bottom = top + world.tileSize;
-  return world.units.some((unit) => {
+  return queryWorldOccupantsAtTile(world, tileX, tileY).some((unit) => {
     if (unit.hitPoints <= 0 || isInvisibleUtilityUnit(unit) || isUnitInsideResourceSource(unit)) {
       return false;
     }
@@ -13697,7 +13721,7 @@ function createHolyVisionRevealer(world: WorldState, player: number, x: number, 
   revealer.order = null;
   revealer.moveQueue = [];
   world.nextUnitSerial += 1;
-  world.units.push(revealer);
+  appendWorldUnits(world, revealer);
   return revealer;
 }
 
@@ -14049,7 +14073,7 @@ function castRaiseDeadAt(world: WorldState, caster: WorldUnit, x: number, y: num
   }
   world.corpses = (world.corpses ?? []).filter((candidate) => candidate.id !== corpse.id);
   const skeleton = createRaisedSkeleton(world, caster.player, skeletonDefinition, spawn.x, spawn.y, spellSummonLifetimeSeconds(world, "spell-raise-dead", skeletonDefinition.id, FALLBACK_RAISED_SKELETON_LIFETIME_SECONDS));
-  world.units.push(skeleton);
+  appendWorldUnits(world, skeleton);
   recordPlayerUnitCreated(world, skeleton);
   addSpellEffect(world, "raise-dead", caster.player, skeleton.x, skeleton.y, sourceSpellVisualRadius(world, "spell-raise-dead", 44), sourceSpellAnimationDuration(world, "spell-raise-dead", 0.9), null, sourceSpellCastSound(world, "spell-raise-dead"), sourceSpellMissileId(world, "spell-raise-dead"), "spell-raise-dead");
   return finishSpellCast(world, caster, 1.4);
@@ -14404,7 +14428,7 @@ function applySourceCaptureOwnership(world: WorldState, caster: WorldUnit, targe
 }
 
 function removeSourceCaptureCaster(world: WorldState, caster: WorldUnit): void {
-  world.units = world.units.filter((unit) => unit.id !== caster.id);
+  replaceWorldUnits(world, world.units.filter((unit) => unit.id !== caster.id));
   clearReferencesToUnavailableUnits(world, new Set([caster.id]));
 }
 
@@ -14585,8 +14609,7 @@ function castSourceSpawnPortalAt(world: WorldState, caster: WorldUnit, spellId: 
   const existingPortal = caster.sourceSpellGoalId ? findUnit(world, caster.sourceSpellGoalId) : undefined;
   const owner = portal.currentPlayer ? caster.player : 15;
   if (existingPortal && existingPortal.hitPoints > 0 && existingPortal.typeId === unitDefinition.id) {
-    existingPortal.x = spawn.x * world.tileSize + (existingPortal.tileWidth * world.tileSize) / 2;
-    existingPortal.y = spawn.y * world.tileSize + (existingPortal.tileHeight * world.tileSize) / 2;
+    moveWorldUnit(world, existingPortal, spawn.x * world.tileSize + (existingPortal.tileWidth * world.tileSize) / 2, spawn.y * world.tileSize + (existingPortal.tileHeight * world.tileSize) / 2);
     existingPortal.player = owner;
     existingPortal.lifetimeSeconds = sourceCyclesToSeconds(world, portal.timeToLive ?? 0);
     addSpellEffect(world, "summon", caster.player, existingPortal.x, existingPortal.y, sourceSpellVisualRadius(world, spellId, 42), sourceSpellAnimationDuration(world, spellId, 0.65), caster.typeId, sourceSpellCastSound(world, spellId), sourceSpellMissileId(world, spellId), spellId);
@@ -14602,7 +14625,7 @@ function castSourceSpawnPortalAt(world: WorldState, caster: WorldUnit, spellId: 
   });
   unit.lifetimeSeconds = sourceCyclesToSeconds(world, portal.timeToLive ?? 0);
   world.nextUnitSerial += 1;
-  world.units.push(unit);
+  appendWorldUnits(world, unit);
   caster.sourceSpellGoalId = unit.id;
   recordPlayerUnitCreated(world, unit);
   addSpellEffect(world, "summon", caster.player, unit.x, unit.y, sourceSpellVisualRadius(world, spellId, 42), sourceSpellAnimationDuration(world, spellId, 0.65), caster.typeId, sourceSpellCastSound(world, spellId), sourceSpellMissileId(world, spellId), spellId);
@@ -14630,8 +14653,7 @@ function castSourceTeleportAt(world: WorldState, caster: WorldUnit, spellId: str
     refundSpellMana(world, caster, spellId, spell.manaCost);
     return false;
   }
-  caster.x = tile.x * world.tileSize + (caster.tileWidth * world.tileSize) / 2;
-  caster.y = tile.y * world.tileSize + (caster.tileHeight * world.tileSize) / 2;
+  moveWorldUnit(world, caster, tile.x * world.tileSize + (caster.tileWidth * world.tileSize) / 2, tile.y * world.tileSize + (caster.tileHeight * world.tileSize) / 2);
   caster.order = null;
   caster.moveQueue = [];
   addSpellEffect(world, "summon", caster.player, caster.x, caster.y, sourceSpellVisualRadius(world, spellId, 42), sourceSpellAnimationDuration(world, spellId, 0.65), caster.typeId, sourceSpellCastSound(world, spellId), sourceSpellMissileId(world, spellId), spellId);
@@ -14699,7 +14721,7 @@ function castSourceSummonAt(world: WorldState, caster: WorldUnit, spellId: strin
   });
   unit.lifetimeSeconds = spellSummonLifetimeSeconds(world, spellId, unitDefinition.id, sourceCyclesToSeconds(world, summon.timeToLive ?? 99000));
   world.nextUnitSerial += 1;
-  world.units.push(unit);
+  appendWorldUnits(world, unit);
   recordPlayerUnitCreated(world, unit);
   addSpellEffect(world, "summon", caster.player, unit.x, unit.y, sourceSpellVisualRadius(world, spellId, 42), sourceSpellAnimationDuration(world, spellId, 0.65), caster.typeId, sourceSpellCastSound(world, spellId), sourceSpellMissileId(world, spellId), spellId);
   return finishSpellCast(world, caster, 1);
@@ -15006,7 +15028,7 @@ function castEyeOfKilroggAt(world: WorldState, caster: WorldUnit, x: number, y: 
   const eye = createWorldUnit({ unit: eyeDefinition, id: `${eyeDefinition.id}-${world.nextUnitSerial}`, player: caster.player, tileX: spawn.x, tileY: spawn.y, tileset: world.map.setup?.tileset ?? null });
   eye.lifetimeSeconds = spellCallbackUnitLifetimeSeconds(world, spellId, eyeDefinition.id, 25);
   world.nextUnitSerial += 1;
-  world.units.push(eye);
+  appendWorldUnits(world, eye);
   recordPlayerUnitCreated(world, eye);
   if (isSelfTargetedEyeOfVision(world, caster, x, y)) {
     issueExploreOrder(world, eye.id);
@@ -15704,8 +15726,7 @@ function transformUnitType(world: WorldState, unit: WorldUnit, toTypeId: string)
   unit.decayRate = Math.max(0, definition.decayRate ?? 0);
   unit.frameWidth = tileWidth === 1 ? 72 : tileWidth * 32;
   unit.frameHeight = tileHeight === 1 ? 72 : tileHeight * 32;
-  unit.tileWidth = tileWidth;
-  unit.tileHeight = tileHeight;
+  resizeWorldUnitFootprint(world, unit, tileWidth, tileHeight);
   unit.radius = footprint.radius;
   unit.boxWidth = footprint.boxWidth;
   unit.boxHeight = footprint.boxHeight;
@@ -16219,7 +16240,7 @@ function removeDeadUnits(world: WorldState, expiredUnitIds: Set<string> = new Se
   if (deadUnitIds.size > 0) {
     clearReferencesToDeadUnits(world, deadUnitIds);
   }
-  world.units = world.units.filter((unit) => unit.hitPoints > 0);
+  replaceWorldUnits(world, world.units.filter((unit) => unit.hitPoints > 0));
   removeDeadCargoUnits(world, deadUnitIds);
 }
 
@@ -16261,7 +16282,7 @@ function restoreOilPatchForRemovedPlatform(world: WorldState, platform: WorldUni
     tileset: world.map.setup?.tileset ?? null
   });
   world.nextUnitSerial += 1;
-  world.units.push(patch);
+  appendWorldUnits(world, patch);
 }
 
 function buildingOntopRule(unit: WargusUnit): Extract<NonNullable<WargusUnit["buildingRules"]>[number], { kind: "ontop" }> | null {
@@ -16473,7 +16494,7 @@ function addDeadVisionRevealer(world: WorldState, unit: WorldUnit): void {
   revealer.order = null;
   revealer.moveQueue = [];
   world.nextUnitSerial += 1;
-  world.units.push(revealer);
+  appendWorldUnits(world, revealer);
 }
 
 function addDeathExplosionEffect(world: WorldState, unit: WorldUnit): void {
@@ -18652,11 +18673,11 @@ export function canPlaceReachableBuilding(world: WorldState, builder: WorldUnit,
   });
   building.hitPoints = Math.max(1, Math.floor(building.maxHitPoints * 0.1));
   building.construction = { builderId: builder.id, remainingSeconds: 1, totalSeconds: 1 };
-  world.units = [...originalUnits.filter((unit) => !replacedUnitIds.has(unit.id)), building];
+  replaceWorldUnits(world, [...originalUnits.filter((unit) => !replacedUnitIds.has(unit.id)), building]);
   try {
     return sourceUnitInteractionPath(world, builder, building, sourceTouchRange(world, builder)).length > 0 || isInTouchRange(builder, building, world);
   } finally {
-    world.units = originalUnits;
+    replaceWorldUnits(world, originalUnits);
   }
 }
 
@@ -18684,14 +18705,14 @@ function inspectBuildSiteApproach(world: WorldState, builder: WorldUnit, buildin
     tileY,
     tileset: world.map.setup?.tileset ?? null
   });
-  world.units = [...originalUnits.filter((unit) => !replacedUnitIds.has(unit.id)), probe];
+  replaceWorldUnits(world, [...originalUnits.filter((unit) => !replacedUnitIds.has(unit.id)), probe]);
   try {
     return {
       path: sourceUnitInteractionPath(world, builder, probe, sourceTouchRange(world, builder)),
       inTouchRange: isInTouchRange(builder, probe, world)
     };
   } finally {
-    world.units = originalUnits;
+    replaceWorldUnits(world, originalUnits);
   }
 }
 
@@ -18752,7 +18773,7 @@ function satisfiesOntopRule(
   height: number,
   rule: { typeId: string }
 ): boolean {
-  return world.units.some((unit) => (
+  return queryWorldOccupantsInFootprint(world, tileX, tileY, width, height).some((unit) => (
     unit.hitPoints > 0
     && unit.typeId === rule.typeId
     && footprintTileGap(world, tileX, tileY, width, height, unit) === 0
@@ -18768,7 +18789,8 @@ function satisfiesDistanceRule(
   rule: { typeId: string; distance: number; distanceType: string }
 ): boolean {
   const minDistance = Math.max(0, Math.floor(rule.distance));
-  for (const unit of world.units) {
+  const candidates = queryWorldOccupantsInFootprint(world, tileX - minDistance, tileY - minDistance, width + minDistance * 2, height + minDistance * 2);
+  for (const unit of candidates) {
     if (unit.hitPoints <= 0 || unit.typeId !== rule.typeId) {
       continue;
     }
@@ -18808,7 +18830,7 @@ function footprintContainsTile(world: WorldState, unit: WorldUnit, tileX: number
 }
 
 function isOccupiedByAnyLiveUnit(world: WorldState, tileX: number, tileY: number, ignoredUnitId?: string, ignoredUnitIds: Set<string> = new Set()): boolean {
-  return world.units.some((unit) => unit.id !== ignoredUnitId && !ignoredUnitIds.has(unit.id) && unit.hitPoints > 0 && footprintContainsTile(world, unit, tileX, tileY));
+  return queryWorldOccupantsAtTile(world, tileX, tileY).some((unit) => unit.id !== ignoredUnitId && !ignoredUnitIds.has(unit.id) && unit.hitPoints > 0 && footprintContainsTile(world, unit, tileX, tileY));
 }
 
 function isFootprintOpenForUnitSpawn(world: WorldState, tileX: number, tileY: number, unit: WorldUnit, movingUnitId?: string): boolean {
