@@ -652,6 +652,7 @@ function sampleStats(values) { const sorted = values.filter((value) => Number.is
 function budgetFailures(trial) { const frame = trial.statistics.frame; const result = { frameP95: exceeds(frame.p95Ms, BUDGETS.frameP95), frameP99: exceeds(frame.p99Ms, BUDGETS.frameP99), framesOver50: !frame.sampleCount || frame.thresholdCounts.over50Ms / frame.sampleCount * 100 > BUDGETS.over50Percent, schedulerDropped: trial.stopped.scheduler.droppedDeltaSeconds !== BUDGETS.dropped, schedulerBacklog: exceeds(trial.stopped.scheduler.maxBacklogSeconds, BUDGETS.backlog), heap: trial.heapGrowthPercent === null || exceeds(trial.heapGrowthPercent, BUDGETS.heap) }; if (trial.row.profile === "command-18") { result.inputToCommandP95 = exceeds(trial.statistics.inputToCommand.p95Ms, BUDGETS.command); result.inputToNextRenderP95 = exceeds(trial.statistics.inputToNextRender.p95Ms, BUDGETS.render); } return result; }
 function robustFrameP95Acceptance({ baselineTrials, afterTrials }) {
   if (baselineTrials?.length !== 7 || afterTrials?.length !== 7) throw new Error("Robust frame-p95 acceptance requires exactly seven baseline and seven successor trials.");
+  if (![baselineTrials, afterTrials].every((trials) => Array.from({ length: 7 }, (_, index) => Object.hasOwn(trials, index)).every(Boolean))) throw new Error("Robust frame-p95 acceptance requires dense arrays containing exactly seven trial records.");
   const validate = (trials, label) => trials.map((trial, index) => {
     if (!Number.isFinite(trial?.frameP95Ms) || trial.frameP95Ms < 0) throw new Error(`${label} trial ${index + 1} requires a finite non-negative frame p95.`);
     if (!Array.isArray(trial.frameSamples) || trial.frameSamples.length === 0 || trial.frameSamples.some((value) => !Number.isFinite(value) || value < 0)) throw new Error(`${label} trial ${index + 1} requires finite non-negative raw frame samples.`);
@@ -673,7 +674,9 @@ function robustFrameP95Acceptance({ baselineTrials, afterTrials }) {
     const scaledAfter = decisionAfter * 100;
     const scaledThreshold = decisionBase * 105;
     const tolerance = Number.EPSILON * Math.max(1, Math.abs(scaledAfter), Math.abs(scaledThreshold)) * 8;
-    return scaledAfter - scaledThreshold > tolerance;
+    const difference = scaledAfter - scaledThreshold;
+    if (![decisionBase, decisionAfter, scaledAfter, scaledThreshold, tolerance, difference].every(Number.isFinite)) throw new Error("Robust frame-p95 comparison requires finite rounded and scaled decision arithmetic.");
+    return difference > tolerance;
   };
   const baselineMedianTrialFrameP95Ms = nearestRank(baseline.map((trial) => trial.frameP95Ms), .5);
   const afterMedianTrialFrameP95Ms = nearestRank(after.map((trial) => trial.frameP95Ms), .5);

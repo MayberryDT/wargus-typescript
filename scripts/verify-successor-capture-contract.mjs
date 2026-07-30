@@ -362,6 +362,14 @@ for (const trialCount of [6, 8]) {
   }), /exactly seven/i, `${trialCount} successor trials must fail closed.`);
 }
 assert.throws(() => helpers.robustFrameP95Acceptance({
+  baselineTrials: Array(7),
+  afterTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] }))
+}), /dense.*seven/i, "A sparse seven-slot baseline array must fail closed.");
+assert.throws(() => helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
+  afterTrials: Array(7)
+}), /dense.*seven/i, "A sparse seven-slot successor array must fail closed.");
+assert.throws(() => helpers.robustFrameP95Acceptance({
   baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
   afterTrials: Array.from({ length: 7 }, (_, index) => ({ frameP95Ms: index === 0 ? Number.NaN : 50, frameSamples: [50] }))
 }), /finite/i, "Non-finite trial p95 values must fail closed.");
@@ -369,6 +377,11 @@ assert.throws(() => helpers.robustFrameP95Acceptance({
   baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: 50, frameSamples: [50] })),
   afterTrials: Array.from({ length: 7 }, (_, index) => ({ frameP95Ms: 50, frameSamples: index === 0 ? [] : [50] }))
 }), /raw frame sample/i, "Missing raw frame samples must fail closed.");
+assert.throws(() => helpers.robustFrameP95Acceptance({
+  baselineTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: Number.MAX_VALUE / 2, frameSamples: [Number.MAX_VALUE / 2] })),
+  afterTrials: Array.from({ length: 7 }, () => ({ frameP95Ms: Number.MAX_VALUE, frameSamples: [Number.MAX_VALUE] }))
+}), /finite.*decision arithmetic/i,
+"Finite raw values that overflow rounded or scaled decision arithmetic must fail closed.");
 
 const inheritedFailure = helpers.successorAcceptance({
   mode: "incremental",
