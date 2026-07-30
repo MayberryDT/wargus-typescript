@@ -15,7 +15,7 @@
 
 ## Status
 
-- **Status:** TODO
+- **Status:** READY — WAVE 3 ENTRY VERIFIED
 - **Wave:** 3 — Structural optimization
 - **Priority:** P1
 - **Effort:** L
@@ -26,14 +26,14 @@
 - **Original planning base:** `8ac0006`, 2026-07-27
 - **Roadmap rewrite base:** `d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae`
   (`git rev-parse HEAD` printed the same SHA)
+- **Wave 3 concrete runtime base:** `6c5e0faa861e1ba7a931c913e561fb837c2afb01`
 
-Plans 019/020 are Plan 023's technical implementation dependencies; Plan 021
-is not consumed. The strict coordinator wave barrier is broader: Plans 019,
-020, and 021 must all pass their Wave 2 exit gates and integrate before any Wave
-3 executor starts. The coordinator then replaces the concrete drift SHA and
-refreshes the exact passability/query/mutation inventory below if an integrated
-seam changed. Never use a symbolic commit token. Until the barrier, technical
-handoffs, durable baselines, and concrete refresh are present, STOP.
+Plans 019/020 are Plan 023 technical implementation dependencies; Plan 021 is
+a coordinator wave barrier only. Accepted Wave 2 integration at
+`6c5e0faa861e1ba7a931c913e561fb837c2afb01` contains all three accepted plans
+and the combined schema-v4 gate. This refresh pins that concrete runtime base
+and the live query/mutation seams below; later closeout commits are
+documentation-only. Any unexplained code drift from this SHA is a STOP.
 
 ## Why this matters
 
@@ -45,11 +45,12 @@ predicate unchanged.
 
 ## Current state
 
-At the concrete rewrite base, occupancy blocking iterates the authoritative
-array and returns on the first blocking unit:
+At accepted concrete runtime base
+`6c5e0faa861e1ba7a931c913e561fb837c2afb01`, occupancy blocking still iterates
+the authoritative array and returns on the first blocking unit:
 
 ```ts
-// src/simulation/passability.ts:123-141
+// src/simulation/passability.ts:125-143
 function blockerCrossingCost(world: WorldState, tileX: number, tileY: number, movement: MovementKind, movingUnitId: string | undefined, blockers: Exclude<PassabilityBlockers, "none">): number {
   let crossesMovingOccupant = false;
   for (const unit of world.units) {
@@ -72,10 +73,10 @@ function blockerCrossingCost(world: WorldState, tileX: number, tileY: number, mo
 }
 ```
 
-Stack recovery uses legacy `.find(...)` first-match semantics:
+Stack recovery still uses authoritative-array `.find(...)` first-match semantics:
 
 ```ts
-// src/simulation/orders.ts:10821-10836
+// src/simulation/orders.ts:10822-10837
 const unitTile = worldToTile(world, unit.x, unit.y);
 const blocker = world.units.find((candidate) => {
   if (
@@ -94,28 +95,28 @@ const blocker = world.units.find((candidate) => {
 });
 ```
 
-At this base, the production mutation inventory before fixture exports begins
-contains:
+The accepted production mutation inventory before fixture exports begins is:
 
-| Occupancy mutation family | Rewrite-base seams |
+| Occupancy mutation family | Accepted-base seams |
 |---|---|
-| Membership/order | `world.units` filters/pushes at `orders.ts:3875`, `4069`, `4967`, `4983`, `5231-5232`, `5435`, `9602`, `9719`, `13699`, `14051`, `14406`, `14604`, `14701`, `15008`, `16221`, `16263`, `16475`; temporary array replace/restore at `18654/18658` and `18686/18693` |
-| Position/teleport/movement | unload `4059-4060`; builder release `5060-5061`; anchor snap `5850-5851`; teleport `6290-6291`, `14587-14588`, `14632-14633`; path movement `10746-10747`, `10778-10779`; stack escape `10844-10845`; death revealer placement `16469-16470` |
-| Footprint-shape transform | unit conversion writes `tileWidth`/`tileHeight` at `15706-15707` |
-| Predicate-only blocking state | `kind` at `15678`, `nonSolid` at `15749`, hit points, construction, hidden-in-construction, order/path activity, speed, and resource containment mutate at runtime seams; they are read live by existing predicates and do not change bucket membership |
-| Coordinator-owned same-world fixtures | `main.ts:913` filters fixture units; fixture selectors at `1183-1248` push at `1209` and `1247`; the spell fixture at `3163-3216` pushes at `3216`. The coordinator owns an occupancy invalidation immediately after each mutation. |
+| Membership/order | `world.units` filters/pushes at `orders.ts:3876`, `4070`, `4968`, `4984`, `5232-5233`, `5436`, `9603`, `9720`, `13700`, `14052`, `14407`, `14605`, `14702`, `15009`, `16222`, `16264`, `16476`; temporary array replace/restore at `18655/18659` and `18687/18694` |
+| Position/teleport/movement | unload `4060-4061`; builder release/snap `5061-5062`, `9384-9385`; anchor snap `5851-5852`; teleport `6291-6292`, `14588-14589`, `14633-14634`; path movement `10747-10748`, `10779-10780`; stack escape `10845-10846`; death-revealer placement `16470-16471` |
+| Footprint-shape transform | unit conversion writes `tileWidth`/`tileHeight` at `15707-15708` |
+| Predicate-only blocking state | `kind` at `15679`; `nonSolid` at `13695` and `15750`; hit points, construction, hidden-in-construction, order/path activity, speed, and resource containment mutate at runtime seams and are read live by existing predicates without changing bucket membership |
+| Coordinator-owned global-world profiles/fixtures | `main.ts` mutates `world.units` at `738`, `785`, `791`, `913`, `1209`, `1247`, `1302`, `1364`, `1427`, `1478`, `1528`, `1578`, `1646`, `1698`, `1764`, `2063`, `2086`, `2119`, `3216`, and `3317`. The coordinator owns immediate occupancy invalidation after every mutation and proves the first later query rebuilds. |
 
+Accepted Plan 020 keeps its first-write-wins transient ID index in
+`worldSelectors.ts`; Plan 023 must not merge that index with occupancy buckets.
 Projectile/effect coordinates are not unit occupancy. Cargo-unit coordinates
-while absent from `world.units` are not indexed. The executor must regenerate,
-classify, and commit the complete accepted-base inventory rather than relying
-only on this rewrite-base table.
+while absent from `world.units` are not indexed. This inventory is the frozen
+Plan 023 entry seam.
 
 Run before editing:
 
 ```bash
 test "$(hostname)" = halla
-git merge-base --is-ancestor d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae HEAD
-git diff --stat d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
+git merge-base --is-ancestor 6c5e0faa861e1ba7a931c913e561fb837c2afb01 HEAD
+git diff --stat 6c5e0faa861e1ba7a931c913e561fb837c2afb01..HEAD -- \
   src/main.ts src/simulation/passability.ts src/simulation/orders.ts \
   src/simulation/worldSelectors.ts src/simulation/occupancyIndex.ts \
   scripts/verify-terrain-metadata-cache.mjs scripts/verify-unit-index.mjs \
@@ -129,14 +130,12 @@ rg -n "world\.units\s*=|world\.units\.(push|splice|pop|shift|unshift|sort|revers
 rg -n "clearBrowserSmokeFixtures|world\.units\s*=|world\.units\.push" src/main.ts
 ```
 
-Expected: the rewrite base is an ancestor; later changes are accepted Plans
-018/019/020 or explained coordinator integration; Plan 019's terrain-only
-passability seam and Plan 020's unit-ID/invalidation seam are intact; every
-production occupancy query/mutation and the named same-world `main.ts` fixture
-mutation is classified. If accepted upstream work changes a cited seam, the
-Wave coordinator must amend this plan with the accepted concrete SHA, exact
-excerpts, complete inventories, and refreshed coordinator invalidation points
-before Plan 023 begins.
+Expected: the accepted Wave 2 runtime base is an ancestor; later changes are
+documentation-only closeout commits. Plan 019 terrain-only passability and Plan
+020 transient ID lookup/invalidation remain intact; every production occupancy
+query/mutation and accepted-base global-world `main.ts` profile/fixture mutation is classified.
+Any later code drift in a cited seam requires another coordinator refresh before
+Plan 023 implementation resumes.
 
 ## Commands you will need
 
@@ -152,7 +151,7 @@ before Plan 023 begins.
 | Runtime determinism | `npm run verify:runtime-determinism` | fixed-tick state/order/hash/save output unchanged |
 | Browser playable | `npm run verify:browser-playable-session` | movement, placement, transport, and combat pass |
 | Browser demo | `npm run verify:browser-demo-session` | deterministic demo behavior passes |
-| Browser fixture parity | `npm run verify:browser-runtime-smoke` | clear/single/mixed/spell same-world fixture invalidation and first-query rebuild preserve ordered outcomes |
+| Browser fixture parity | `npm run verify:browser-runtime-smoke` | all accepted global-world performance-profile and smoke-fixture mutations invalidate; first-query rebuilds preserve ordered outcomes |
 | Asset gate | `npm run verify:wargus-assets` | exit 0 |
 | Build | `npm run build` | exit 0 |
 | Performance | accepted Plan 018 `army-100`, `army-200`, `command-18` at both viewports, and `combat-100` rows | exactly seven valid trials per row; direct query and maintenance timing recorded; maintenance-inclusive cost does not regress; `incrementalReady` passes |
@@ -196,9 +195,10 @@ serially and never overlap another executor's capture.
   first-match assertion, or evidence requirement.
 
 The Wave coordinator owns shared `main`, performance-schema, package-script,
-and roadmap integration. In particular, it owns
-`invalidateWorldOccupancyIndex(world)` calls immediately after the same-world
-fixture filter at `src/main.ts:913` and pushes at `1209`, `1247`, and `3216`.
+and roadmap integration. In particular, it owns `invalidateWorldOccupancyIndex(world)` calls immediately
+after every accepted-base global-world `main.ts` mutation at `738`, `785`,
+`791`, `913`, `1209`, `1247`, `1302`, `1364`, `1427`, `1478`, `1528`, `1578`,
+`1646`, `1698`, `1764`, `2063`, `2086`, `2119`, `3216`, and `3317`.
 The Plan 023 branch must not edit `src/main.ts`; it supplies the invalidation API
 and focused rebuild/parity contract. Plan 023 emits plan-local namespaced
 diagnostics from its owned module; shared capture export is coordinator work.
@@ -225,9 +225,9 @@ diagnostics from its owned module; shared capture export is coordinator work.
   `world.units` mutation inventory, and unit-index invalidation. Plan 023 adds
   occupancy lifecycle calls at accepted `orders.ts` mutation owners without
   changing Plan 020's API, invalidation timing, or duplicate-ID behavior.
-- Coordinator-owned `src/main.ts` keeps same-world browser fixtures. The
-  coordinator owns occupancy invalidation immediately after their array filter/
-  push mutations and runs their parity gates; the Plan 023 branch only exports
+- Coordinator-owned `src/main.ts` keeps global-world performance profiles and
+  browser fixtures. The coordinator owns occupancy invalidation immediately
+  after every accepted-base array replacement/push and runs their parity gates; the Plan 023 branch only exports
   and tests the invalidation/rebuild contract.
 - `HALLA-EXECUTION-POLICY.md` governs host/browser execution, exact-owned
   process cleanup, serial captures, and durable artifacts.
@@ -271,7 +271,7 @@ Lifecycle ownership is exact:
 | Unregister | owning filter/removal seam calls `unregisterWorldOccupant` for each removed object before replacing the authoritative array |
 | Transition | owning mutation snapshots old covered tiles, performs the complete atomic position/footprint change, then calls `transitionWorldOccupant` before any later occupancy query |
 | Batch/temporary replacement | owning seam calls `invalidateWorldOccupancyIndex`; first query rebuilds from that temporary array, and restoration invalidates again |
-| Coordinator-owned same-world fixtures | after the filter at `src/main.ts:913` and pushes at `1209`, `1247`, and `3216`, the coordinator calls `invalidateWorldOccupancyIndex(world)`; the Plan 023 branch never edits `main.ts`, and the first later query rebuilds |
+| Coordinator-owned global-world profiles/fixtures | after each accepted-base `main.ts` mutation at `738`, `785`, `791`, `913`, `1209`, `1247`, `1302`, `1364`, `1427`, `1478`, `1528`, `1578`, `1646`, `1698`, `1764`, `2063`, `2086`, `2119`, `3216`, and `3317`, the coordinator calls `invalidateWorldOccupancyIndex(world)`; the Plan 023 branch never edits `main.ts`, and the first later query rebuilds |
 | Load/world replacement | no cache transfer; new `WorldState` builds independently on first query |
 | Unknown or failed validation | mark invalid and use authoritative full scan for that query; rebuild before the next indexed query |
 
@@ -317,7 +317,7 @@ Plans 018, 019, and 020—and their durable assigned artifacts/checksums resolve
 on Halla. Record the accepted environment, profile-definition hash, initial
 entity/effect fingerprint, per-trial/worst-trial results, Plan 019 terrain
 parity, Plan 020 first-match/index behavior, and exact integrated `orders.ts`
-and same-world `main.ts` mutation inventories.
+and global-world `main.ts` profile/fixture mutation inventories.
 
 Before migrating query consumers, capture direct legacy full-scan occupancy-
 query duration with the exact timer boundaries that the indexed path will use.
@@ -372,17 +372,19 @@ unit conversion, temporary build probes, world replacement, and save load.
 Predicate-only mutations remain live-read fixtures and must not reindex.
 
 The coordinator adds `invalidateWorldOccupancyIndex(world)` immediately after
-`clearBrowserSmokeFixtures` replaces `world.units` at `main.ts:913` and after
-fixture pushes at `main.ts:1209`, `1247`, and `3216`. The Plan 023 branch must
+every accepted-base global-world `main.ts` mutation: profile clear/population at
+`738`, `785`, `791`; fixture clearing at `913`; and fixture pushes at `1209`,
+`1247`, `1302`, `1364`, `1427`, `1478`, `1528`, `1578`, `1646`, `1698`, `1764`,
+`2063`, `2086`, `2119`, `3216`, and `3317`. The Plan 023 branch must
 not edit `main.ts`. The first later occupancy query rebuilds from the exact
-same-world array; browser fixture parity proves ordered candidates, first match,
-and final results are unchanged for clear, single, mixed, and spell fixtures.
+global-world array; browser/profile parity proves ordered candidates, first match,
+and final results are unchanged for every accepted performance profile and smoke fixture.
 
 **Verify:** a deterministic scenario hits every owned inventory row; former
 tiles clear, new tiles contain the unit in authoritative order, and no duplicate
-object membership exists. Each coordinator fixture mutation invalidates once,
-its first later query rebuilds once, and parity passes. Any uncovered production
-or named fixture mutation is a STOP.
+object membership exists. Each coordinator mutation invalidates once; the first later query after each
+synchronous mutation sequence rebuilds once, and parity passes. Any uncovered production
+or accepted-base global-world profile/fixture mutation is a STOP.
 
 ### Step 3: Migrate occupancy read paths with exact semantic parity
 
@@ -454,8 +456,10 @@ is durable and checksum-verified.
   and stack-recovery selection.
 - Every accepted-base membership/order and position/footprint mutation,
   including temporary replacement/restoration.
-- Coordinator-owned fixture filter at `main.ts:913` and pushes at `1209`,
-  `1247`, and `3216`: immediate invalidation, one first-query rebuild, exact
+- Coordinator-owned global-world profile/fixture mutations at `main.ts:738`,
+  `785`, `791`, `913`, `1209`, `1247`, `1302`, `1364`, `1427`, `1478`, `1528`,
+  `1578`, `1646`, `1698`, `1764`, `2063`, `2086`, `2119`, `3216`, and `3317`:
+  immediate invalidation, one first-query rebuild, exact
   candidate/order/first-match parity, and no Plan 023 branch edit to `main.ts`.
 - Live predicate-only hit point, construction, hidden/resource, `kind`,
   `nonSolid`, speed, and path changes without stale decisions/reindexing.
@@ -534,8 +538,8 @@ on `/tmp` as durable evidence.
   order and first-match behavior.
 - [ ] Complete mutation inventory has a register, unregister, transition,
   invalidation/rebuild, or live-predicate owner.
-- [ ] Coordinator integration invalidates after the named same-world `main.ts`
-  fixture mutations, and the first later query rebuilds with exact parity.
+- [ ] Coordinator integration invalidates after every accepted-base global-world
+  `main.ts` profile/fixture mutation, and the first later query rebuilds with exact parity.
 - [ ] Passability, stack recovery, and migrated queries preserve predicates,
   early exits, costs, iteration order, ties, and outcomes.
 - [ ] Save/load review proves no serialization and independent loaded cache.
@@ -554,8 +558,8 @@ on `/tmp` as durable evidence.
 - Any Wave 2 plan has not passed its exit gate and integrated, or Plans
   018/019/020 baselines, checksums, fingerprints, terrain parity, ID-index
   semantics, and mutation handoff fail.
-- Drift, passability/stack excerpts, the `orders.ts` inventory, or the named
-  same-world `main.ts` fixture seams differ without coordinator refresh.
+- Drift, passability/stack excerpts, the `orders.ts` inventory, or the accepted-base
+  global-world `main.ts` profile/fixture seams differ without coordinator refresh.
 - A membership/order/position/footprint mutation has no exact owner or permits
   same-tick stale membership.
 - A coordinator-owned fixture filter/push lacks immediate occupancy
@@ -595,7 +599,7 @@ owned processes; remove only exclusive artifacts.
 
 Every new `world.units` membership/order mutation or unit position/footprint
 write requires an inventory row, exact lifecycle call, transition fixture, and
-parity proof. Every new same-world fixture mutation in coordinator-owned
+parity proof. Every new global-world profile/fixture mutation in coordinator-owned
 `src/main.ts` requires an immediate coordinator-owned invalidation plus fixture
 parity before the next occupancy query. Predicate-only state stays live-read
 unless amended. Keep authoritative order, first-match behavior, save exclusion,

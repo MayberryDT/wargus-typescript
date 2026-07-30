@@ -13,7 +13,7 @@
 
 ## Status
 
-- **Status:** TODO
+- **Status:** READY — WAVE 3 ENTRY VERIFIED
 - **Wave:** 3 — Structural optimization
 - **Priority:** P1
 - **Effort:** L
@@ -23,13 +23,13 @@
 - **Original planning base:** `8ac0006`, 2026-07-27
 - **Roadmap rewrite base:** `d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae`
   (`git rev-parse HEAD` printed the same SHA)
+- **Wave 3 concrete runtime base:** `6c5e0faa861e1ba7a931c913e561fb837c2afb01`
 
-Plan 021's documentation rewrite is not the dependency. The Wave coordinator
-must first accept and integrate Plan 021 on top of accepted Plan 018, then
-replace the concrete drift SHA and refresh the excerpts, preparation API, and
-tracked-constructor inventory below if an integrated seam changed. Never use a
-symbolic commit token. Until that concrete refresh and the accepted Plan
-018/021 handoffs are present, STOP.
+Accepted Wave 2 integration at
+`6c5e0faa861e1ba7a931c913e561fb837c2afb01` contains accepted Plans 018 and
+021 plus the combined schema-v4 gate. This refresh pins that concrete runtime
+base and the live preparation/tracker seams below; later closeout commits are
+documentation-only. Any unexplained code drift from this SHA is a STOP.
 
 ## Why this matters
 
@@ -42,11 +42,12 @@ simulation state, visibility, view independence, or draw order.
 
 ## Current state
 
-At the concrete rewrite base, Plan 018's existing tracker is the only
-display-object lifecycle telemetry:
+At accepted concrete runtime base
+`6c5e0faa861e1ba7a931c913e561fb837c2afb01`, Plan 018’s existing tracker remains
+the only display-object lifecycle telemetry:
 
 ```ts
-// src/performance/displayObjectPerformance.ts:3-9
+// src/performance/displayObjectPerformance.ts:3-9,50-53
 export type DisplayObjectPerformanceSnapshot = {
   scope: "instrumented-pixi-scene-objects-textures-excluded";
   captureActive: boolean;
@@ -55,7 +56,6 @@ export type DisplayObjectPerformanceSnapshot = {
   windowLiveDelta: number;
 };
 
-// src/performance/displayObjectPerformance.ts:50-53
 export function destroyTrackedDisplayObject(object: Container, options?: DestroyOptions): void {
   const destroysChildren = typeof options === "boolean" ? options : Boolean(options?.children);
   if (captureActive) destroyed += destroysChildren ? displayObjectTreeSize(object) : 1;
@@ -63,43 +63,50 @@ export function destroyTrackedDisplayObject(object: Container, options?: Destroy
 }
 ```
 
-The renderer routes world allocation through `createTrackedContainer`,
+The renderer still routes world allocation through `createTrackedContainer`,
 `createTrackedGraphics`, `createTrackedSprite`, and `createTrackedText`, and
-routes destruction through `destroyTrackedDisplayObject`. The primary and
-secondary panes both destroy their unit-layer children before drawing:
+routes destruction through `destroyTrackedDisplayObject`. Accepted Plan 021 now
+supplies the ordered, culled, per-viewport snapshot consumed by both panes:
 
 ```ts
-// src/view/renderWorld.ts:74-80
+// src/view/renderPreparation.ts:30-39
+export interface WorldRenderSnapshot {
+  units: readonly WorldState["units"][number][];
+  corpses: PreparedRenderStrata<WorldState["corpses"][number]>;
+  projectiles: PreparedRenderStrata<WorldState["projectiles"][number]>;
+  spellEffects: PreparedRenderStrata<WorldState["spellEffects"][number]>;
+  animationById: ReadonlyMap<string, WargusAnimation>;
+  unitById: ReadonlyMap<string, WorldState["units"][number]>;
+  researchByBuildingId: ReadonlyMap<string, WorldState["activeResearch"][number]>;
+  pendingAttackBySourceId: ReadonlyMap<string, WorldState["pendingAttacks"][number]>;
+}
+
+// src/view/renderWorld.ts:66-75,191-199
+const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
 drawMap(mapLayer, world, tileAtlas, viewport);
 destroyLayerChildren(unitLayer);
-drawCorpses(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-drawLastSeenBuildings(unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-drawProjectiles(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-drawSpellEffects(unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-drawUnits(unitLayer, world, manifest, selectedUnitIds, controlGroups, sourceShowOrdersVisible, unitAtlases, missileAtlases, statusDecorationAtlas, viewport);
+drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
+// ...the remaining prepared strata preserve their accepted order...
+drawUnits(unitLayer, world, manifest, selectedUnitIds, controlGroups, sourceShowOrdersVisible, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
 
-// src/view/renderWorld.ts:196-203
-const viewport = worldViewportForRect(viewCamera, rect);
+const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
 drawMap(renderer.mapLayer, world, tileAtlas, viewport);
 destroyLayerChildren(renderer.unitLayer);
-drawCorpses(renderer.unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-drawLastSeenBuildings(renderer.unitLayer, world, manifest, unitAtlases, viewport, { maxDrawLevel: 39 });
-drawProjectiles(renderer.unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-drawSpellEffects(renderer.unitLayer, world, viewport, missileAtlases, { maxDrawLevel: 39 });
-drawUnits(renderer.unitLayer, world, manifest, selectedUnitIds, args.controlGroups ?? {}, args.sourceShowOrdersVisible === true, unitAtlases, missileAtlases, statusDecorationAtlas, viewport);
+drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
+// ...the secondary pane consumes its own prepared snapshot...
 ```
 
 `WorldUnit`, `WorldCorpse`, `WorldProjectile`, and `WorldSpellEffect` have
-stable `id` fields; last-seen buildings use `unitId`. Plan 021 must supply
-independent, ordered, culled snapshots for the active and every secondary
-viewport before this plan begins.
+stable `id` fields; last-seen buildings use `unitId`. The active and each
+secondary viewport receive an independent snapshot. This is the frozen Plan 022
+entry seam.
 
 Run before editing:
 
 ```bash
 test "$(hostname)" = halla
-git merge-base --is-ancestor d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae HEAD
-git diff --stat d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
+git merge-base --is-ancestor 6c5e0faa861e1ba7a931c913e561fb837c2afb01 HEAD
+git diff --stat 6c5e0faa861e1ba7a931c913e561fb837c2afb01..HEAD -- \
   src/view/renderWorld.ts src/view/renderPreparation.ts \
   src/view/worldRenderCache.ts \
   src/performance/displayObjectPerformance.ts src/main.ts \
@@ -110,17 +117,16 @@ git diff --stat d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
 rg -n "prepareWorldRenderSnapshot|destroyLayerChildren|createTracked|destroyTracked|trackedCreated|trackedDestroyed|windowLiveDelta|sourceViewportPaneRenderers" \
   src/view/renderWorld.ts src/view/renderPreparation.ts \
   src/performance/displayObjectPerformance.ts src/main.ts
-! git diff -U0 d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- \
+! git diff -U0 6c5e0faa861e1ba7a931c913e561fb837c2afb01..HEAD -- \
   src/view/renderWorld.ts src/view/worldRenderCache.ts | \
   rg '^\+.*(new (Container|Graphics|Sprite|Text|BitmapText)|\.destroy\()'
 ```
 
-Expected: the rewrite base is an ancestor; later changes are accepted Plans
-018/021 or explained coordinator integration; Plan 021 exposes one independent
-ordered snapshot per viewport; and every world constructor/destructor remains
-tracked by Plan 018. If accepted upstream work changes a cited seam, the Wave
-coordinator must amend this plan with the accepted concrete SHA and refreshed
-excerpts/inventory before Plan 022 begins.
+Expected: the accepted Wave 2 runtime base is an ancestor; later changes are
+documentation-only closeout commits. Plan 021 exposes one independent ordered,
+culled snapshot per viewport, and every world constructor/destructor remains
+tracked by Plan 018. Any later code drift in a cited seam requires another
+coordinator refresh before Plan 022 implementation resumes.
 
 ## Commands you will need
 
@@ -129,7 +135,7 @@ excerpts/inventory before Plan 022 begins.
 | Host/worktree | `test "$(hostname)" = halla && case "$(pwd -P)" in /home/halla/workspaces/*) ;; *) exit 1 ;; esac && test -f "$(git rev-parse --show-toplevel)/.git" && git status --short --branch` | Halla, linked isolated worktree path, assigned branch, understood status |
 | Typecheck | `./node_modules/.bin/tsc --noEmit` | exit 0 |
 | New cache-lifecycle verifier (created in Step 1) | `node scripts/verify-world-render-cache.mjs` | ownership, identity, reuse, ordering, bounds, invalidation, disposal, and tracked-counter cases pass |
-| Direct Pixi lifecycle additions | `! git diff -U0 d61125e4f8d42b9e7a4dfa544e1c5e52768c69ae..HEAD -- src/view/renderWorld.ts src/view/worldRenderCache.ts \| rg '^\+.*(new (Container\|Graphics\|Sprite\|Text\|BitmapText)\|\.destroy\()'` | no Plan 022-added direct Pixi constructor or `.destroy()` call bypasses Plan 018 wrappers |
+| Direct Pixi lifecycle additions | `! git diff -U0 6c5e0faa861e1ba7a931c913e561fb837c2afb01..HEAD -- src/view/renderWorld.ts src/view/worldRenderCache.ts \| rg '^\+.*(new (Container\|Graphics\|Sprite\|Text\|BitmapText)\|\.destroy\()'` | no Plan 022-added direct Pixi constructor or `.destroy()` call bypasses Plan 018 wrappers |
 | Preparation parity | `node scripts/verify-render-preparation.mjs` | accepted Plan 021 IDs, order, strata, indexes, and view independence remain exact |
 | Runtime smoke | `npm run verify:browser-runtime-smoke` | exit 0 under the Halla policy |
 | Playable session | `npm run verify:browser-playable-session` | world replacement and gameplay rendering pass |
