@@ -593,13 +593,19 @@ void readOnly; void bracketReadOnly; void constructed;
   const runtimeSource = ordersSource.slice(0, fixtureBoundary);
   const assignments = [...runtimeSource.matchAll(/world\.units\s*=/g)];
   const pushes = [...runtimeSource.matchAll(/world\.units\.push\s*\(/g)];
+  const appendCalls = runtimeSource.split("appendWorldUnits(").length - 2;
+  const replaceCalls = runtimeSource.split("replaceWorldUnits(").length - 2;
   const undetectableMutations = [...runtimeSource.matchAll(
     /world\.units\.(?:splice|pop|shift|unshift|sort|reverse|copyWithin|fill)\s*\(|world\.units\[[^\]]+\]\s*=/g
   )];
-  assert.equal(assignments.length, 11,
-    "Runtime inventory must retain seven filter replacements plus four temporary array swaps/restores.");
-  assert.equal(pushes.length, 11,
-    "Runtime inventory must retain eleven authoritative-array pushes.");
+  assert.equal(assignments.length, 1,
+    "Production assignments must be centralized in the occupancy-aware replacement helper.");
+  assert.equal(pushes.length, 1,
+    "Production pushes must be centralized in the occupancy-aware append helper.");
+  assert.equal(replaceCalls, 11,
+    "All eleven replacement seams must retain Plan 020 array-identity/length invalidation semantics.");
+  assert.equal(appendCalls, 11,
+    "All eleven append seams must retain Plan 020 length invalidation semantics.");
   assert.deepEqual(undetectableMutations, [],
     "Every same-reference, same-length runtime mutation requires an owned explicit invalidation case.");
 
@@ -617,7 +623,9 @@ void readOnly; void bracketReadOnly; void constructed;
       sameReferenceSameLength: undetectableMutations.length,
       unitIdWrites: productionIdWrites.length,
       sourceFilesScanned: productionSourceFiles.length,
-      total: assignments.length + pushes.length
+      appendCalls,
+      replaceCalls,
+      total: appendCalls + replaceCalls
     }
   }));
   console.log("Unit ID index verified (600 stable ticks, immutable IDs, first-match parity, lifecycle rebuilds, explicit invalidation, independent worlds, load identity, dead units, duplicates, diagnostics, and 22 runtime mutations).");

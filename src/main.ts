@@ -49,6 +49,7 @@ import { handleMinimapCommand } from "./view/minimapInput";
 import { handleWorldPointerDown } from "./view/worldPointerInput";
 import { loadCompleteWorldViewAssets, loadCoreWorldViewAssets } from "./view/worldViewAssets";
 import { isSourceHarvestableWoodTile, isTilePassable } from "./simulation/passability";
+import { invalidateWorldOccupancyIndex, resetWorldOccupancyDiagnostics, setWorldOccupancyParityMode, snapshotWorldOccupancyDiagnostics } from "./simulation/occupancyIndex";
 import { findPath, findPathResult } from "./simulation/pathfinding";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -593,6 +594,7 @@ declare global {
 const runtimeSearchParams = new URLSearchParams(window.location.search);
 const browserSmokeStateEnabled = runtimeSearchParams.has("smoke");
 const performanceSmokeEnabled = runtimeSearchParams.get("smoke") === "1";
+if (performanceSmokeEnabled) setWorldOccupancyParityMode("sampled");
 installPlaytestTelemetryHooks();
 installRuntimePerformanceHooks();
 
@@ -609,6 +611,7 @@ type RuntimePerformanceTelemetry = {
   inputToNextRender: RuntimePerformanceSnapshot["inputToNextRender"];
   scheduler: RuntimePerformanceSnapshot["scheduler"];
   displayObjects: ReturnType<typeof snapshotDisplayObjectPerformance>;
+  occupancy: ReturnType<typeof snapshotWorldOccupancyDiagnostics>;
 };
 
 type RuntimePerformanceBrowserSummary = RuntimePerformanceSnapshot & {
@@ -624,6 +627,7 @@ type RuntimePerformanceBrowserSummary = RuntimePerformanceSnapshot & {
   };
   heap: { supported: boolean; usedJsHeapSize: number | null; totalJsHeapSize: number | null; jsHeapSizeLimit: number | null };
   displayObjects: ReturnType<typeof snapshotDisplayObjectPerformance>;
+  occupancy: ReturnType<typeof snapshotWorldOccupancyDiagnostics>;
 };
 
 function installRuntimePerformanceHooks(): void {
@@ -644,6 +648,7 @@ function installRuntimePerformanceHooks(): void {
   window.__WARGUS_TS_PERF_START__ = (profileId) => {
     const profile = getPerformanceProfile(profileId);
     if (activePerformanceProfileId !== profile.id) applyPerformanceProfile(profile.id);
+    resetWorldOccupancyDiagnostics();
     resetDisplayObjectPerformance();
     setDisplayObjectPerformanceCapture(true);
     runtimePerformanceCollector.start(profile.id);
@@ -660,6 +665,7 @@ function installRuntimePerformanceHooks(): void {
   window.__WARGUS_TS_PERF_RESET__ = () => {
     runtimePerformanceCollector.reset();
     setDisplayObjectPerformanceCapture(false);
+    resetWorldOccupancyDiagnostics();
     resetDisplayObjectPerformance();
     performanceCaptureStartedAt = Number.POSITIVE_INFINITY;
     return runtimePerformanceSummary();
@@ -681,7 +687,8 @@ function runtimePerformanceTelemetry(): RuntimePerformanceTelemetry {
     inputToCommand: snapshot.inputToCommand,
     inputToNextRender: snapshot.inputToNextRender,
     scheduler: snapshot.scheduler,
-    displayObjects: snapshotDisplayObjectPerformance()
+    displayObjects: snapshotDisplayObjectPerformance(),
+    occupancy: snapshotWorldOccupancyDiagnostics()
   };
 }
 
@@ -709,7 +716,8 @@ function runtimePerformanceSummary(): RuntimePerformanceBrowserSummary {
       totalJsHeapSize: memory?.totalJSHeapSize ?? null,
       jsHeapSizeLimit: memory?.jsHeapSizeLimit ?? null
     },
-    displayObjects: snapshotDisplayObjectPerformance()
+    displayObjects: snapshotDisplayObjectPerformance(),
+    occupancy: snapshotWorldOccupancyDiagnostics()
   };
 }
 
@@ -719,6 +727,7 @@ function applyRequestedPerformanceProfile(): void {
   if (!requested) return;
   const profile = getPerformanceProfile(requested);
   applyPerformanceProfile(profile.id);
+  resetWorldOccupancyDiagnostics();
   resetDisplayObjectPerformance();
   setDisplayObjectPerformanceCapture(true);
   runtimePerformanceCollector.start(profile.id);
@@ -736,6 +745,7 @@ function applyPerformanceProfile(profileId: PerformanceProfileId): void {
   if (!localDefinition || !enemyDefinition) throw new Error("Performance profile combat definitions are unavailable.");
 
   world.units = [];
+  invalidateWorldOccupancyIndex(world);
   world.corpses = [];
   world.projectiles = [];
   world.pendingAttacks = [];
@@ -783,6 +793,7 @@ function applyPerformanceProfile(profileId: PerformanceProfileId): void {
   const localUnits = Array.from({ length: localCount }, (_, index) => makeUnit(index, localPlayerId, false));
   const enemyUnits = Array.from({ length: enemyCount }, (_, index) => makeUnit(index, enemyPlayerId, true));
   world.units.push(...localUnits, ...enemyUnits);
+  invalidateWorldOccupancyIndex(world);
 
   for (let index = 0; index < profile.buildingTypeIds.length; index += 1) {
     const typeId = profile.buildingTypeIds[index];
@@ -796,6 +807,7 @@ function applyPerformanceProfile(profileId: PerformanceProfileId): void {
       tileY: Math.max(2, world.map.height - 10),
       tileset: activeMap?.setup?.tileset ?? null
     }));
+    invalidateWorldOccupancyIndex(world);
   }
 
   const distantX = Math.max(world.tileSize * 4, (world.map.width - 8) * world.tileSize);
@@ -911,6 +923,7 @@ function clearBrowserSmokeFixtures(): void {
     return;
   }
   world.units = world.units.filter((unit) => !unit.id.startsWith("__smoke-fixture-"));
+  invalidateWorldOccupancyIndex(world);
   world.corpses = world.corpses.filter((corpse) => !corpse.id.startsWith("__smoke-fixture-"));
   world.activeResearch = world.activeResearch.filter((research) => !research.buildingId.startsWith("__smoke-fixture-"));
   world.queuedResearch = world.queuedResearch.filter((research) => !research.buildingId.startsWith("__smoke-fixture-"));
@@ -1207,6 +1220,7 @@ if (browserSmokeStateEnabled) {
     });
     readyBrowserSmokeFixtureUnit(unit);
     world.units.push(unit);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [unit.id]);
     pendingWorldCommand = null;
@@ -1245,6 +1259,7 @@ if (browserSmokeStateEnabled) {
       tileset: activeMap?.setup?.tileset ?? null
     })));
     world.units.push(...units);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, units.map((unit) => unit.id));
     pendingWorldCommand = null;
@@ -1300,6 +1315,7 @@ if (browserSmokeStateEnabled) {
       fixtureUnits.push(createFixtureUnit(topTierDefinition, topTierTypeId, baseTileX + 9));
     }
     world.units.push(...fixtureUnits);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [worker.id]);
     pendingWorldCommand = null;
@@ -1362,6 +1378,7 @@ if (browserSmokeStateEnabled) {
     const goldMine = createFixtureUnit(goldMineDefinition, 15, 6, 0);
     const dropoff = createFixtureUnit(dropoffDefinition, world.visibilityPlayer, 0, 4);
     world.units.push(selected, enemy, repairTarget, goldMine, dropoff);
+    invalidateWorldOccupancyIndex(world);
     const target = action === "attack"
       ? { x: enemy.x, y: enemy.y }
       : action === "repair"
@@ -1425,6 +1442,7 @@ if (browserSmokeStateEnabled) {
     const targetUnit = createFixtureUnit(targetDefinition, isShipyard ? world.visibilityPlayer : 15, 6, 0);
     targetUnit.resourcesHeld = Math.max(targetUnit.resourcesHeld, 5000);
     world.units.push(producer, targetUnit);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [producer.id]);
     pendingWorldCommand = null;
@@ -1476,6 +1494,7 @@ if (browserSmokeStateEnabled) {
     readyBrowserSmokeFixtureUnit(townHall);
     readyBrowserSmokeFixtureUnit(barracks);
     world.units.push(townHall, barracks);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [townHall.id]);
     pendingWorldCommand = null;
@@ -1526,6 +1545,7 @@ if (browserSmokeStateEnabled) {
     readyBrowserSmokeFixtureUnit(townHall);
     readyBrowserSmokeFixtureUnit(peasant);
     world.units.push(townHall, peasant);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [peasant.id]);
     pendingWorldCommand = null;
@@ -1576,6 +1596,7 @@ if (browserSmokeStateEnabled) {
     readyBrowserSmokeFixtureUnit(cargo);
     transport.cargo.push(cargo);
     world.units.push(transport);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [transport.id]);
     pendingWorldCommand = null;
@@ -1644,6 +1665,7 @@ if (browserSmokeStateEnabled) {
     readyBrowserSmokeFixtureUnit(dropoff);
     readyBrowserSmokeFixtureUnit(tanker);
     world.units.push(platform, dropoff, tanker);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [tanker.id]);
     pendingWorldCommand = null;
@@ -1696,6 +1718,7 @@ if (browserSmokeStateEnabled) {
     readyBrowserSmokeFixtureUnit(patch);
     readyBrowserSmokeFixtureUnit(tanker);
     world.units.push(patch, tanker);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [tanker.id]);
     pendingWorldCommand = null;
@@ -1762,6 +1785,7 @@ if (browserSmokeStateEnabled) {
       createdUnits.push(dependency);
     }
     world.units.push(...createdUnits);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [producer.id]);
     pendingWorldCommand = null;
@@ -2061,6 +2085,7 @@ if (browserSmokeStateEnabled) {
       });
       readyBrowserSmokeFixtureUnit(producer);
       world.units.push(producer);
+      invalidateWorldOccupancyIndex(world);
       if (!issueTrainUnitOrder(world, producer.id, unitDefinition.id, world.unitDefinitions)) {
         return { ok: false, error: "unable to start cancel train fixture production", ...browserSmokeCommandResult() };
       }
@@ -2084,6 +2109,7 @@ if (browserSmokeStateEnabled) {
       });
       readyBrowserSmokeFixtureUnit(building);
       world.units.push(building);
+      invalidateWorldOccupancyIndex(world);
       if (!issueResearchOrder(world, building.id, upgradeDefinition.id, world.upgradeDefinitions)) {
         return { ok: false, error: "unable to start cancel research fixture", ...browserSmokeCommandResult() };
       }
@@ -2117,6 +2143,7 @@ if (browserSmokeStateEnabled) {
       readyBrowserSmokeFixtureUnit(building);
       building.construction = { builderId: builder.id, builderInside: false, remainingSeconds: 30, totalSeconds: 60 };
       world.units.push(builder, building);
+      invalidateWorldOccupancyIndex(world);
       return selectFixtureUnit(building);
     }
     return { ok: false, error: `unknown cancel fixture ${kind}`, ...browserSmokeCommandResult() };
@@ -3214,6 +3241,7 @@ if (browserSmokeStateEnabled) {
     const enemyBuilding = createFixtureUnit("unit-farm", enemyPlayer, 6, 0);
     const createdUnits = [caster, friendly, enemy, enemyUndead, friendlyUndead, enemyBuilding].filter((unit): unit is WorldUnit => Boolean(unit));
     world.units.push(...createdUnits);
+    invalidateWorldOccupancyIndex(world);
     world.corpses.push({
       id: `__smoke-fixture-corpse-${world.tick}-${world.corpses.length}`,
       typeId: "unit-grunt",
@@ -3315,6 +3343,7 @@ if (browserSmokeStateEnabled) {
       createdUnits.push(dependency);
     }
     world.units.push(...createdUnits);
+    invalidateWorldOccupancyIndex(world);
     updateVisibility(world);
     selectedUnitIds = clampSelectionToSourceLimit(world, [building.id]);
     pendingWorldCommand = null;

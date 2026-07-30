@@ -13,6 +13,7 @@ try {
     resolve(root, "node_modules/typescript/bin/tsc"),
     "--ignoreConfig",
     "src/simulation/occupancyIndex.ts",
+    "src/simulation/passability.ts",
     "--outDir", output,
     "--target", "ES2022",
     "--module", "CommonJS",
@@ -26,9 +27,11 @@ try {
   assert.equal(compiler.status, 0, `Occupancy-index fixture compile failed:\n${compiler.stdout}${compiler.stderr}`);
 
   const occupancy = createRequire(import.meta.url)(join(output, "simulation/occupancyIndex.js"));
+  const passability = createRequire(import.meta.url)(join(output, "simulation/passability.js"));
   occupancy.setWorldOccupancyParityMode("full");
   const makeUnit = (id, tileX, tileY, tileWidth = 1, tileHeight = 1) => ({
-    id, x: tileX * 32 + 16, y: tileY * 32 + 16, tileWidth, tileHeight
+    id, x: tileX * 32 + 16, y: tileY * 32 + 16, tileWidth, tileHeight,
+    hitPoints: 30, kind: "land", nonSolid: false, speed: 10, order: null, hiddenInConstructionId: null
   });
   const local = makeUnit("local", 4, 4);
   const units = [
@@ -43,6 +46,25 @@ try {
   assert.equal(diagnostics["plan023.occupancy.queries"], 1);
   assert.ok(diagnostics["plan023.occupancy.candidatesVisited"] < 10,
     `One local tile query must not visit the full ${units.length}-unit array.`);
+  const movingBlocker = makeUnit("moving-blocker", 3, 3);
+  movingBlocker.order = { kind: "move", path: [{ x: 3, y: 3 }, { x: 4, y: 3 }], pathIndex: 1 };
+  const passabilityWorld = { map: { width: 8, height: 8 }, tileSize: 32, tiles: Array(64).fill(0), tilesetTerrain: null, units: [movingBlocker] };
+  assert.equal(passability.isTilePassable(passabilityWorld, 3, 3, "land"), false,
+    "Live solid occupants must block the migrated passability consumer.");
+  assert.equal(passability.unitFootprintPathPlanningCost(passabilityWorld, 3, 3, makeUnit("walker", 2, 3)), 5,
+    "An actively moving occupant must retain the legacy path-planning crossing cost.");
+  movingBlocker.hitPoints = 0;
+  assert.equal(passability.isTilePassable(passabilityWorld, 3, 3, "land"), true,
+    "Predicate-only hit-point changes must be observed live without reindexing.");
+  movingBlocker.hitPoints = 30;
+  movingBlocker.hiddenInConstructionId = "foundation";
+  assert.equal(passability.isTilePassable(passabilityWorld, 3, 3, "land"), true,
+    "Predicate-only construction hiding must be observed live without reindexing.");
+  movingBlocker.hiddenInConstructionId = null;
+  movingBlocker.order = null;
+  assert.equal(passability.unitFootprintPathPlanningCost(passabilityWorld, 3, 3, makeUnit("walker-2", 2, 3)), Number.POSITIVE_INFINITY,
+    "Stationary occupancy must retain the legacy path-planning blocking result.");
+
   const duplicateA = makeUnit("duplicate", 8, 8, 2, 2);
   const duplicateB = makeUnit("duplicate", 8, 8);
   const edge = makeUnit("edge", 0, 0, 3, 3);
@@ -120,6 +142,7 @@ try {
   const ordersSource = readFileSync(resolve(root, "src/simulation/orders.ts"), "utf8");
   const passabilitySource = readFileSync(resolve(root, "src/simulation/passability.ts"), "utf8");
   const saveSource = readFileSync(resolve(root, "src/wargus/saveGame.ts"), "utf8");
+  const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
   const fixtureBoundary = ordersSource.indexOf("export function runPlan014AiScoutEligibilityFixture");
   const runtimeOrdersSource = ordersSource.slice(0, fixtureBoundary);
   assert.equal(runtimeOrdersSource.split("appendWorldUnits(").length - 2, 11, "All eleven production append seams must route through registration.");
@@ -131,6 +154,10 @@ try {
   assert.ok(runtimeOrdersSource.includes("queryWorldOccupantsAtTile(world, unitTile.x, unitTile.y).find"),
     "Stack recovery must retain first-match semantics over ordered tile candidates.");
   assert.equal(/occupancy(?:Index|Cache|Diagnostics)/i.test(saveSource), false, "Transient occupancy state must not enter save serialization.");
+  assert.equal(mainSource.split("invalidateWorldOccupancyIndex(world);").length - 1, 20,
+    "Every coordinator-owned global-world mutation must invalidate occupancy immediately.");
+  assert.ok(mainSource.includes("if (performanceSmokeEnabled) setWorldOccupancyParityMode(\"sampled\");"),
+    "Performance/development capture must explicitly enable deterministic sampled parity.");
 } finally {
   rmSync(output, { recursive: true, force: true });
 }
