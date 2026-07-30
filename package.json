@@ -203,7 +203,8 @@
     "verify:browser-spell-session": "node scripts/verify-browser-spell-session.mjs",
     "verify:browser-train-session": "node scripts/verify-browser-train-session.mjs",
     "verify:simulation-scheduler-fast16": "node scripts/verify-simulation-scheduler.mjs --fast16-only",
-    "verify:plan019-paired-ab-contract": "node scripts/verify-plan019-paired-ab-contract.mjs"
+    "verify:plan019-paired-ab-contract": "node scripts/verify-plan019-paired-ab-contract.mjs",
+    "diagnose:plan019-paired-ab": "node scripts/run-plan019-paired-ab-diagnostic.mjs"
   },
   "dependencies": {
     "@types/node": "^24.10.1",

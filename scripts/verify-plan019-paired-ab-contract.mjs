@@ -335,3 +335,275 @@ try {
 }
 
 console.log("Plan 019 paired A/B analysis contract verified.");
+
+const { existsSync, mkdirSync } = await import("node:fs");
+process.env.WARGUS_PAIRED_AB_CONTRACT_TEST = "1";
+const {
+  acquireDiagnosticLock,
+  assertCoordinatorIdentity,
+  assertManifestResponse,
+  assertRetainedStorage,
+  assertTrialPacketComplete,
+  canonicalIdentity,
+  createDiagnosticDirectory,
+  publishAtomicDiagnostic,
+  releaseDiagnosticLock,
+  validateArmWorktree,
+  validateCleanup,
+  validateQualification
+} = await import("./run-plan019-paired-ab-diagnostic.mjs");
+
+const identity = canonicalIdentity();
+assert.deepEqual(identity, {
+  baseCommit: "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b",
+  plan019Commit: "5935a17f456868051c2c16b2f0d8d2b4da56d115",
+  coordinatorHarnessCommit: "82571c31a942cc38857f612ec6736cca05a174ce",
+  profile: "army-100",
+  viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+  durationMs: 30000,
+  pairCount: 15
+});
+
+const coordinatorFixture = {
+  hostname: "halla",
+  cwd: "/home/halla/workspaces/t3/Wargus-TypeScript/.worktrees/plan-018",
+  status: "",
+  harnessAncestorPresent: true,
+  harnessMatchesPinnedCommit: true
+};
+assert.deepEqual(assertCoordinatorIdentity(coordinatorFixture), {
+  ...coordinatorFixture,
+  clean: true
+});
+assert.throws(
+  () => assertCoordinatorIdentity({ ...coordinatorFixture, status: "?? untracked" }),
+  /clean coordinator/i,
+  "A dirty coordinator must fail before capture allocation."
+);
+assert.throws(
+  () => assertCoordinatorIdentity({ ...coordinatorFixture, harnessMatchesPinnedCommit: false }),
+  /82571c31a942cc38857f612ec6736cca05a174ce/i,
+  "A modified pinned successor harness must fail attribution."
+);
+
+assert.deepEqual(
+  validateArmWorktree({
+    arm: "base",
+    expectedCommit: identity.baseCommit,
+    head: identity.baseCommit,
+    status: ""
+  }),
+  { arm: "base", commit: identity.baseCommit, clean: true }
+);
+assert.throws(
+  () => validateArmWorktree({
+    arm: "base",
+    expectedCommit: identity.baseCommit,
+    head: identity.plan019Commit,
+    status: ""
+  }),
+  /exact base commit/i,
+  "A wrong arm commit must fail attribution."
+);
+assert.throws(
+  () => validateArmWorktree({
+    arm: "plan019",
+    expectedCommit: identity.plan019Commit,
+    head: identity.plan019Commit,
+    status: " M src/main.ts"
+  }),
+  /clean plan019 worktree/i,
+  "A dirty disposable arm must fail attribution."
+);
+
+const validTrials = buildAlternatingPairs(15).flatMap(({ pair, order }) =>
+  order.map((arm, orderIndex) => ({
+    pair,
+    arm,
+    orderIndex,
+    stamp: `pair-${String(pair).padStart(2, "0")}-${arm}`,
+    valid: true,
+    replacement: 0
+  }))
+);
+assert.equal(assertTrialPacketComplete(validTrials).length, 30);
+assert.throws(
+  () => assertTrialPacketComplete(validTrials.slice(0, -1)),
+  /exactly 30 valid arms/i,
+  "A missing arm must prevent READY publication."
+);
+assert.throws(
+  () => assertTrialPacketComplete([...validTrials, { ...validTrials[0], stamp: "extra" }]),
+  /exactly 30 valid arms/i,
+  "An extra arm must prevent READY publication."
+);
+assert.throws(
+  () => assertTrialPacketComplete(validTrials.map((trial, index) =>
+    index === 1 ? { ...trial, stamp: validTrials[0].stamp } : trial
+  )),
+  /unique stamp/i,
+  "Reused arm stamps must fail closed."
+);
+assert.throws(
+  () => assertTrialPacketComplete(validTrials.map((trial, index) =>
+    index === 0 ? { ...trial, replacement: 2 } : trial
+  )),
+  /at most one replacement/i,
+  "A second replacement for one arm must fail closed."
+);
+
+const retainedWorkspace = mkdtempSync(path.join(tmpdir(), "wargus-plan019-paired-retained-"));
+try {
+  const retainedRoot = path.join(retainedWorkspace, ".artifacts");
+  mkdirSync(retainedRoot);
+  assert.deepEqual(assertRetainedStorage({
+    artifactWorkspace: retainedWorkspace,
+    artifactRoot: retainedRoot,
+    preservationOwner: "contract-test",
+    disposableWorktree: process.cwd(),
+    requireFreeBytes: 0,
+    verifyIgnored: false
+  }), {
+    artifactWorkspace: retainedWorkspace,
+    artifactRoot: retainedRoot,
+    preservationOwner: "contract-test"
+  });
+  assert.throws(
+    () => assertRetainedStorage({
+      artifactWorkspace: retainedWorkspace,
+      artifactRoot: path.join(retainedWorkspace, "absent"),
+      preservationOwner: "contract-test",
+      disposableWorktree: process.cwd(),
+      requireFreeBytes: 0,
+      verifyIgnored: false
+    }),
+    /retained artifact root/i,
+    "Absent retained storage must fail before a diagnostic directory is created."
+  );
+
+  const firstLock = acquireDiagnosticLock({ artifactRoot: retainedRoot, token: "first" });
+  try {
+    assert.throws(
+      () => acquireDiagnosticLock({ artifactRoot: retainedRoot, token: "second" }),
+      /another performance capture/i,
+      "Global lock contention must fail closed."
+    );
+  } finally {
+    releaseDiagnosticLock(firstLock);
+  }
+  assert.equal(existsSync(path.join(retainedRoot, "performance", ".wargus-capture.lock")), false);
+
+  const diagnosticStamp = "20260729T235959Z";
+  const diagnosticDirectory = createDiagnosticDirectory(retainedRoot, diagnosticStamp);
+  assert.equal(diagnosticDirectory, path.join(retainedRoot, "diagnostics", "plan019-paired-ab", diagnosticStamp));
+  assert.throws(
+    () => createDiagnosticDirectory(retainedRoot, diagnosticStamp),
+    /may not be reused/i,
+    "A reused diagnostic stamp must fail before publication."
+  );
+} finally {
+  rmSync(retainedWorkspace, { recursive: true, force: true });
+}
+
+assert.deepEqual(assertManifestResponse({ status: 200 }), { status: 200 });
+assert.throws(
+  () => assertManifestResponse({ status: 204 }),
+  /HTTP 200/i,
+  "A non-200 manifest route must invalidate an arm."
+);
+
+const qualification = {
+  webgl2: true,
+  renderer: "ANGLE (AMD, AMD Radeon RX 7900 XTX, Vulkan)",
+  vendor: "Google Inc. (AMD)",
+  focused: true,
+  visibility: "visible",
+  rafTimestamps: [100, 116.7, 133.4],
+  browserViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
+  pixiViewport: { width: 1280, height: 720, resolution: 1 },
+  profile: "army-100",
+  worldTick: 0,
+  fingerprintHash: "fingerprint-1"
+};
+assert.deepEqual(validateQualification(qualification, {
+  expectedRenderer: qualification.renderer,
+  expectedFingerprintHash: "fingerprint-1"
+}), qualification);
+assert.throws(
+  () => validateQualification({ ...qualification, renderer: "ANGLE (SwiftShader)" }, {
+    expectedRenderer: qualification.renderer,
+    expectedFingerprintHash: "fingerprint-1"
+  }),
+  /renderer/i,
+  "A software or changed renderer must fail qualification."
+);
+assert.throws(
+  () => validateQualification({ ...qualification, fingerprintHash: "fingerprint-2" }, {
+    expectedRenderer: qualification.renderer,
+    expectedFingerprintHash: "fingerprint-1"
+  }),
+  /fingerprint/i,
+  "Fingerprint drift must fail qualification."
+);
+
+assert.deepEqual(validateCleanup({ residualPids: [], openPorts: [] }), {
+  residualPids: [],
+  openPorts: []
+});
+assert.throws(
+  () => validateCleanup({ residualPids: [123], openPorts: [] }),
+  /cleanup incomplete/i,
+  "Residual owned PIDs must prevent publication."
+);
+assert.throws(
+  () => validateCleanup({ residualPids: [], openPorts: [55000] }),
+  /cleanup incomplete/i,
+  "Residual owned ports must prevent publication."
+);
+
+const publicationDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan019-paired-publish-"));
+try {
+  for (const name of ["environment.json", "pairs.json", "resources.json", "lifecycle.json"]) {
+    writeFileSync(path.join(publicationDirectory, name), "{}\n");
+  }
+  const summary = {
+    schemaVersion: 1,
+    ready: true,
+    captureComplete: true,
+    validTrialCount: 30,
+    classification: { realRegression: false },
+    pairs: Array.from({ length: 15 }, (_, index) => ({ pair: index + 1 })),
+    lifecycle: {
+      cleanupPass: true,
+      worktreesRemoved: true,
+      lockReleased: true,
+      finalizationPass: true
+    }
+  };
+  assert.throws(
+    () => publishAtomicDiagnostic(publicationDirectory, {
+      ...summary,
+      lifecycle: { ...summary.lifecycle, lockReleased: false }
+    }),
+    /released lock/i,
+    "Publication before global lock release must fail closed."
+  );
+  const failedPublication = publishAtomicDiagnostic(publicationDirectory, summary, {
+    beforeReadyRename: () => {
+      throw new Error("injected ready publication failure");
+    }
+  });
+  assert.equal(failedPublication.published, false);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(publicationDirectory, "paired-diagnostic-summary.json"), "utf8")).ready,
+    false,
+    "A partial publication must leave only a non-READY summary."
+  );
+  assert.equal(
+    existsSync(path.join(publicationDirectory, "sha256.json")),
+    true,
+    "A failed final rename may retain its projected manifest, but it must not make the diagnostic READY."
+  );
+} finally {
+  rmSync(publicationDirectory, { recursive: true, force: true });
+}
