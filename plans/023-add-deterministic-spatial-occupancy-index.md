@@ -8,10 +8,10 @@
 > [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) unchanged.
 > Preserve `world.units` as the authoritative ordered collection and preserve
 > every first-match, iteration, passability, placement, collision, and path
-> tie-breaking result. Stop on every STOP condition.
+> tie-breaking result. Handle every recovery condition autonomously: preserve evidence, diagnose, correct, and rerun.
 >
 > **Drift check:** Run every command and inventory in `Current state` first.
-> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
+> Record and reconcile any accepted-base, excerpt, ownership, or dependency drift before continuing.
 
 ## Status
 
@@ -33,7 +33,7 @@ a coordinator wave barrier only. Accepted Wave 2 integration at
 `6c5e0faa861e1ba7a931c913e561fb837c2afb01` contains all three accepted plans
 and the combined schema-v4 gate. This refresh pins that concrete runtime base
 and the live query/mutation seams below; later closeout commits are
-documentation-only. Any unexplained code drift from this SHA is a STOP.
+documentation-only. Any unexplained code drift from this SHA requires a coordinator refresh before implementation continues.
 
 ## Why this matters
 
@@ -277,7 +277,7 @@ Lifecycle ownership is exact:
 
 The fallback is correctness, not acceptance: every unexpected invalidation or
 fallback increments diagnostics, development parity must explain it, and an
-unowned production mutation is a STOP.
+unowned production mutation requires immediate inventory correction before indexed reads continue.
 
 Add resettable plan-local diagnostics with these exact namespaces:
 
@@ -325,7 +325,7 @@ Record query count, p50/p95/p99/mean/max/total, processed simulation steps,
 candidate visits, and zero index-maintenance cost for every assigned profile.
 Run refreshed drift checks and all pre-existing non-browser baseline commands.
 Record `scripts/verify-occupancy-index.mjs` as absent and not run; if it already
-exists without an accepted plan refresh, STOP.
+exists without an accepted plan refresh, reconcile its provenance and refresh the accepted plan before continuing.
 
 **Verify:** the all-Wave-2 barrier, technical dependencies, ancestry,
 inventories, checksums/fingerprints, timing baseline, host policy, upstream
@@ -384,7 +384,7 @@ and final results are unchanged for every accepted performance profile and smoke
 tiles clear, new tiles contain the unit in authoritative order, and no duplicate
 object membership exists. Each coordinator mutation invalidates once; the first later query after each
 synchronous mutation sequence rebuilds once, and parity passes. Any uncovered production
-or accepted-base global-world profile/fixture mutation is a STOP.
+or accepted-base global-world profile/fixture mutation requires immediate inventory correction before indexed reads continue.
 
 ### Step 3: Migrate occupancy read paths with exact semantic parity
 
@@ -499,9 +499,7 @@ p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
 plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
 evidence; work counts alone do not suffice.
 
-STOP performance acceptance on invalid-trial exhaustion, environment or
-fingerprint drift, a new budget-failure key, a frame p95 regression greater
-than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+When invalid-trial exhaustion, environment or fingerprint drift, a new budget-failure key, a frame p95 regression greater than 5%, missing targeted work-reduction proof, or incomplete durable evidence occurs, preserve the failed evidence, diagnose and correct the cause, then recapture until the acceptance contract passes.
 The existing functional, parity, save, visual, cadence, lifecycle, and
 plan-specific targeted-proof gates remain independent requirements. The plan
 may close when `incrementalReady` and those independent requirements pass.
@@ -553,7 +551,9 @@ on `/tmp` as durable evidence.
 - [ ] The branch contains only Plan 023-owned files; coordinator
   `main`/performance-schema/package/README integration is separate.
 
-## STOP conditions
+## Autonomous recovery conditions
+
+These conditions are failures to diagnose and correct, not instructions to pause the task, ask the user, or abandon the remaining roadmap. Preserve the failed evidence, keep the last green checkpoint, make the smallest safe correction in the owning plan or coordinator integration, and rerun the exact gate until it passes.
 
 - Any Wave 2 plan has not passed its exit gate and integrated, or Plans
   018/019/020 baselines, checksums, fingerprints, terrain parity, ID-index

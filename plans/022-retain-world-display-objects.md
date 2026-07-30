@@ -6,10 +6,10 @@
 > [the performance acceptance contract](PERFORMANCE-ACCEPTANCE.md) unchanged.
 > This plan owns renderer-only Pixi retention and cache lifecycle. Extend Plan
 > 018's existing tracked create/destroy counters; do not add a competing
-> display-object telemetry system. Stop on every STOP condition.
+> display-object telemetry system. Handle every recovery condition autonomously: preserve evidence, diagnose, correct, and rerun.
 >
 > **Drift check:** Run every command and inventory in `Current state` first.
-> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
+> Record and reconcile any accepted-base, excerpt, ownership, or dependency drift before continuing.
 
 ## Status
 
@@ -29,7 +29,7 @@ Accepted Wave 2 integration at
 `6c5e0faa861e1ba7a931c913e561fb837c2afb01` contains accepted Plans 018 and
 021 plus the combined schema-v4 gate. This refresh pins that concrete runtime
 base and the live preparation/tracker seams below; later closeout commits are
-documentation-only. Any unexplained code drift from this SHA is a STOP.
+documentation-only. Any unexplained code drift from this SHA requires a coordinator refresh before implementation continues.
 
 ## Why this matters
 
@@ -262,8 +262,7 @@ integrated, and durable assigned-row baselines, checksums, fingerprints,
 visual references, preparation results, and tracked display-object values
 resolve on Halla. Run the refreshed drift checks and all pre-existing
 non-browser baseline commands. Record `scripts/verify-world-render-cache.mjs`
-as absent and not run; if it already exists without an accepted plan refresh,
-STOP. Inventory every tracked constructor/destructor in the accepted renderer.
+as absent and not run; if it already exists without an accepted plan refresh, reconcile its provenance and refresh the accepted plan before continuing. Inventory every tracked constructor/destructor in the accepted renderer.
 
 The direct-lifecycle diff scan must return no matches; the wrapper-name
 inventory alone is not evidence that bypass calls are absent. Preserve both
@@ -376,7 +375,7 @@ hold; `incrementalReady` passes; evidence is durable and checksum-verified.
 - Exact Plan 021 IDs/order/strata/first-match preparation and view independence.
 - One-, 300-, and many-frame unchanged identity/zero-creation fixtures.
 - Unit signatures and every nested marker/bar/effect property.
-- Stable-key reuse, duplicate-key STOP, and key reuse only after world disposal.
+- Stable-key reuse, duplicate-key rejection, and key reuse only after world disposal.
 - Cull/hide/transport/death/removal/expiry distinctions for every kind.
 - Hard bounds, deterministic LRU eviction, full pool reset, overflow destroy.
 - Primary/split view closure, world replacement/restart/teardown disposal.
@@ -413,9 +412,7 @@ p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
 plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
 evidence; work counts alone do not suffice.
 
-STOP performance acceptance on invalid-trial exhaustion, environment or
-fingerprint drift, a new budget-failure key, a frame p95 regression greater
-than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+When invalid-trial exhaustion, environment or fingerprint drift, a new budget-failure key, a frame p95 regression greater than 5%, missing targeted work-reduction proof, or incomplete durable evidence occurs, preserve the failed evidence, diagnose and correct the cause, then recapture until the acceptance contract passes.
 The existing functional, parity, save, visual, cadence, lifecycle, and
 plan-specific targeted-proof gates remain independent requirements. The plan
 may close when `incrementalReady` and those independent requirements pass.
@@ -464,7 +461,9 @@ on `/tmp` as durable evidence.
 - [ ] The branch contains only Plan 022-owned files; coordinator
   `main`/performance-schema/package/README integration is separate.
 
-## STOP conditions
+## Autonomous recovery conditions
+
+These conditions are failures to diagnose and correct, not instructions to pause the task, ask the user, or abandon the remaining roadmap. Preserve the failed evidence, keep the last green checkpoint, make the smallest safe correction in the owning plan or coordinator integration, and rerun the exact gate until it passes.
 
 - Plans 018/021 are not accepted/integrated, or baselines, checksums,
   fingerprints, preparation, visual references, and counters cannot be verified.

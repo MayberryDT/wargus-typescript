@@ -7,20 +7,15 @@ recorded commits, evidence, revalidation dates, drift, successors, and waiver
 boundaries are authoritative in
 [the historical plan audit](HISTORICAL-PLAN-AUDIT.md).
 
-## Roadmap rewrite approval gate
+## Roadmap execution authorization
 
-The optimized roadmap closeout is documentation only. Its readiness verdict is
-`READY FOR USER REVIEW`, not authorization to start Wave 0. After the rewrite
-commit, STOP: do not execute Plan 026, Plan 027, any later roadmap plan, a
-browser/runtime capture, host or tooling mutation, preview, or deployment until
-the user explicitly approves this roadmap for execution.
-
-`TODO` and `BLOCKED` below describe truthful plan state; neither status
-grants execution authority. Once approval is recorded, Wave 0 remains the first
-allowed work and every detailed entry/STOP condition still applies. The prior
-user authorization for final production deployment remains in force only after
-Plans 018–027, X12, combined verification/review, and preview smoke are complete;
-it does not authorize Wave 0, an early preview, or an early deployment.
+The user has approved execution of the optimized roadmap and directed the
+executor to continue autonomously through every remaining plan. Verification
+failures are recovery work: preserve the evidence, diagnose the cause, make the
+smallest safe correction, and rerun the gate. They do not revoke execution
+authority or require another user confirmation. Safety controls, ownership
+boundaries, correctness requirements, and the final production-deployment
+sequence remain in force.
 
 ## Status vocabulary
 
@@ -29,8 +24,7 @@ it does not authorize Wave 0, an early preview, or an early deployment.
 - `IN PROGRESS`: eligible implementation or acceptance work is active.
 - `IN PROGRESS — RECOVERY AUTHORIZED`: the named recovery amendment reopens a
   previously blocked plan under its amended acceptance contract.
-- `BLOCKED`: work has started or landed, but an explicit STOP or exceptional
-  condition prevents its next required step.
+- `BLOCKED`: work cannot continue because it requires unavailable external input or authority; ordinary test, drift, capture, and implementation failures remain `IN PROGRESS` recovery work.
 - `DONE-VERIFIED`: implementation and required acceptance evidence passed.
 - `DONE-HISTORICAL`: implementation landed, but the plan predates current
   evidence conventions or has current successor drift.

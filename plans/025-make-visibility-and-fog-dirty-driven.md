@@ -8,10 +8,10 @@
 > Preserve published visibility/exploration grids, local fixed-tick visibility,
 > the existing AI exploration cadence, fog pixels, and view independence. All
 > contribution and fog caches are transient and not serialized. Add no save
-> fields. Stop on every STOP condition.
+> fields. Handle every recovery condition autonomously: preserve evidence, diagnose, correct, and rerun.
 >
 > **Drift check:** Run every command and inventory in `Current state` first.
-> STOP on an unexplained accepted-base, excerpt, ownership, or dependency drift.
+> Record and reconcile any accepted-base, excerpt, ownership, or dependency drift before continuing.
 
 ## Status
 
@@ -34,7 +34,7 @@ occupancy, renderer, retained-object, verifier, or performance seam changed,
 the coordinator must amend this plan with the new accepted concrete SHA,
 refreshed excerpts, source inventory, and cache/disposal handoffs before Plan
 025 begins. Never use a symbolic commit token. If the refresh is absent when a
-cited seam differs, STOP.
+cited seam differs, create the coordinator refresh before continuing.
 
 Plan 025 and Plan 024 may execute concurrently only while their implementation
 ownership remains disjoint. Plan 025 owns visibility/fog caches and adds no
@@ -149,7 +149,7 @@ integration; Plan 019 terrain opacity, Plan 022 per-view retained lifecycle,
 and Plan 023 authoritative unit order/mutation behavior remain intact; every
 visibility source/global rule and every fog owner/disposal seam is inventoried;
 and `saveGame.ts` has no Plan 025 field. If any seam differs without the
-required coordinator refresh, STOP.
+required coordinator refresh, create it before continuing.
 
 ## Commands you will need
 
@@ -333,7 +333,7 @@ dirty output are each bounded by `tileCount`. If the aggregate cap or a count
 overflows, publish the exact full-rebuild result for that tick, record
 `overflowFallbacks`, discard incremental records, and stay in reference mode
 until a later explicit rebuild fits. Any overflow in an assigned acceptance
-profile is a STOP, not an accepted fallback.
+profile is an acceptance failure requiring a bounded-memory correction, not an accepted fallback.
 
 Each sorted source record contributes at most once to each tile, so subtraction
 must decrement exactly one. Before every decrement, read the `Uint32` count and
@@ -348,7 +348,7 @@ publish that exact reference result, and increment `underflowRebuilds`.
 The first recovered underflow forces reference mode until the next explicit
 world/load rebuild. An immediate rebuild mismatch, or any second underflow in
 the same `WorldState` lifetime after a clean rebuild, increments
-`persistentCorruptions`, locks that world in reference mode, and is a STOP for
+`persistentCorruptions`, locks that world in reference mode, and is a correction requirement for
 Plan 025 acceptance. There is no saturating decrement, silent zero, wrapped
 `0xffffffff`, partial publication, or accepted repeated fallback.
 
@@ -509,7 +509,7 @@ source and assert no decrement/wrap or partial publication occurs, the exact
 reference grid and a clean contribution cache replace the transaction, and
 reference mode is selected. After an explicit clean rebuild, inject a second
 underflow and assert `persistentCorruptions`, permanent reference mode, and
-acceptance STOP. Compare exact grids/revisions after each operation.
+acceptance failure. Compare exact grids/revisions after each operation.
 
 Exercise revision `0xfffffffe` to `0xffffffff`, an unchanged tick retained at
 `0xffffffff`, and the next changed update's full reset to one with every tile
@@ -629,7 +629,7 @@ and evidence is durable and checksum-verified.
   count overflow, exact reference fallback, and zero accepted-profile overflow.
 - Zero-before-decrement detection, no Uint32 wrap/partial publish, exact
   full-rebuild replacement, first-recovery reference mode, and second-underflow
-  persistent-corruption STOP.
+  persistent-corruption rejection.
 - Local every-fixed-tick visibility/targeting and independent existing AI
   exploration cadence with due/not-due next-tick assertions.
 - Dirty final transitions, inclusive bounds, tile revisions, unchanged tick at
@@ -674,9 +674,7 @@ p95 regression greater than 5%. `targetedWorkReductionProofPass` requires this
 plan's named direct timing, maintenance/work-shift, and plan-local diagnostic
 evidence; work counts alone do not suffice.
 
-STOP performance acceptance on invalid-trial exhaustion, environment or
-fingerprint drift, a new budget-failure key, a frame p95 regression greater
-than 5%, missing targeted work-reduction proof, or incomplete durable evidence.
+When invalid-trial exhaustion, environment or fingerprint drift, a new budget-failure key, a frame p95 regression greater than 5%, missing targeted work-reduction proof, or incomplete durable evidence occurs, preserve the failed evidence, diagnose and correct the cause, then recapture until the acceptance contract passes.
 The existing functional, parity, save, visual, cadence, lifecycle, and
 plan-specific targeted-proof gates remain independent requirements. The plan
 may close when `incrementalReady` and those independent requirements pass.
@@ -738,7 +736,9 @@ on `/tmp` as durable evidence.
 - [ ] The branch contains only Plan 025-owned files; coordinator
   main/performance-schema/package/README integration is separate.
 
-## STOP conditions
+## Autonomous recovery conditions
+
+These conditions are failures to diagnose and correct, not instructions to pause the task, ask the user, or abandon the remaining roadmap. Preserve the failed evidence, keep the last green checkpoint, make the smallest safe correction in the owning plan or coordinator integration, and rerun the exact gate until it passes.
 
 - Either Wave 3 plan has not passed every exit gate and integrated, or any
   technical dependency, artifact, checksum, fingerprint, terrain/FOV/grid/

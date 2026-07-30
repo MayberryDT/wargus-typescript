@@ -20,7 +20,8 @@ All future implementation, build, test, verifier, game-runtime, and browser work
 - Resolve routine, safe, in-scope prerequisites autonomously when the required
   information or host-local access is already available.
 - Do not pause for confirmation on reversible actions already authorized by an
-  approved plan. Exhaust safe remedies before reporting a STOP condition.
+  approved plan. Preserve failure evidence, exhaust safe remedies, correct the
+  cause, and continue through the roadmap.
 - Use credentials only transiently for their intended host-local action. Never
   write credential values to Git, plans, evidence, logs, or generated artifacts.
 - Ask the user only when progress requires unavailable external input, a
@@ -54,7 +55,7 @@ Before implementing:
 - State assumptions explicitly when they affect the implementation.
 - If multiple interpretations exist, present them instead of silently choosing.
 - If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear and cannot be safely inferred from the repo or task context, stop, name what is confusing, and ask.
+- If something is unclear, investigate repository and durable project evidence first, make the safest reversible in-scope assumption when possible, and continue. Ask only when unavailable external input or new authority is genuinely required.
 
 ### Simplicity First
 
@@ -130,6 +131,6 @@ Choose the smallest relevant check for the change, then broaden when the touched
 
 - Read full plan files under `plans/` before editing.
 - Run each plan's drift checks first and compare live files against the plan's stated current state.
-- Honor STOP conditions exactly. Stop and report instead of improvising when one applies.
+- Treat plan failure conditions as autonomous recovery triggers: preserve evidence, diagnose the cause, make the smallest in-scope correction, and rerun the failed gate. Do not pause for user approval or abandon the roadmap because a gate fails. Keep safety controls, ownership boundaries, and correctness requirements intact.
 - Do not implement adjacent plans while executing a scoped plan.
 - Update `plans/README.md` status when the plan assigns that responsibility, unless a coordinator explicitly owns shared status rows.
