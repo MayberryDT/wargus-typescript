@@ -388,6 +388,33 @@ schema-version 4 successor loader.
 Capture Plan 019 rows 3/5/7, Plan 020 row 6, and Plan 021 rows 3/4/6. Require
 robust incremental acceptance and clean lifecycle for each.
 
+Use the reviewed coordinator `scripts/run-wave2-successor-capture.mjs`. It
+creates one disposable detached worktree at the frozen target, links the
+coordinator's ignored `node_modules`, runs the target asset and build gates,
+uses the current fixed-tick verifier and matrix harness by absolute path,
+records external coordinator provenance without process argv or secrets, and
+removes only its exact owned link and worktree in `finally`.
+
+| Plan | Frozen target | Canonical rows |
+|---|---|---|
+| 019 | `5935a17f456868051c2c16b2f0d8d2b4da56d115` | `3,5,7` |
+| 020 | `9bab6b0e3f7d260148cc1c0f5c1c231098046e19` | `6` |
+| 021 | `c4238c6ae0aaa093785b52f6f71e9569395bf08e` | `3,4,6` |
+
+After independent review of the coordinator, run exactly one command at a
+time in this order and stop on the first non-ready packet:
+
+```bash
+WARGUS_PERF_PLAN=019 WARGUS_PERF_ACCEPTANCE_MODE=incremental npm run capture:wave2-successor
+WARGUS_PERF_PLAN=020 WARGUS_PERF_ACCEPTANCE_MODE=incremental npm run capture:wave2-successor
+WARGUS_PERF_PLAN=021 WARGUS_PERF_ACCEPTANCE_MODE=incremental npm run capture:wave2-successor
+```
+
+Do not run these browser commands until this coordinator receives independent
+review. Each packet must load the exact accepted schema-version 4 Plan 018
+baseline, pass its target-bound work-reduction verifier, robust incremental
+acceptance, checksums, lock release, and exact owned-process/port cleanup.
+
 - [ ] **Step 6: Commit and independently review**
 
 Commit contract/harness changes separately from evidence/roadmap updates.

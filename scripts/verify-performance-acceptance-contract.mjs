@@ -65,6 +65,15 @@ assert.match(plan018Evidence, /zero replacements/i);
 assert.match(plan018Evidence, /absoluteBudgetsPass.*false/i);
 assert.match(plan018Evidence, /audit.*zero findings/is);
 assert.match(pairedRemediationPlan, /\[x\].*Step 4: Capture a fresh Plan 018 baseline/i);
+assert.match(pairedRemediationPlan, /run-wave2-successor-capture\.mjs/);
+for (const [planId, targetSha] of [
+  ["019", "5935a17f456868051c2c16b2f0d8d2b4da56d115"],
+  ["020", "9bab6b0e3f7d260148cc1c0f5c1c231098046e19"],
+  ["021", "c4238c6ae0aaa093785b52f6f71e9569395bf08e"]
+]) {
+  assert.match(pairedRemediationPlan, new RegExp(targetSha));
+  assert.match(pairedRemediationPlan, new RegExp(`WARGUS_PERF_PLAN=${planId} WARGUS_PERF_ACCEPTANCE_MODE=incremental npm run capture:wave2-successor`));
+}
 assert.match(roadmap, /20260730T075608266Z/);
 assert.doesNotMatch(wave2Recovery, /Every measured row still needs three independent valid trials/i);
 
