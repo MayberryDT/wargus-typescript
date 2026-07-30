@@ -1,5 +1,6 @@
 import { isUnitHiddenInConstruction, isUnitInsideResourceSource, type WorldState, type WorldUnit } from "./world";
 import { passabilityTerrainMaskForTile, terrainMaskHasFlag } from "./terrainMetadata";
+import { queryWorldOccupantsAtTile } from "./occupancyIndex";
 
 export type MovementKind = "land" | "naval" | "fly";
 type PassabilityBlockers = "all" | "path-planning" | "static" | "none";
@@ -124,7 +125,7 @@ export function isSourceHarvestableWoodTile(world: WorldState, tile: number): bo
 
 function blockerCrossingCost(world: WorldState, tileX: number, tileY: number, movement: MovementKind, movingUnitId: string | undefined, blockers: Exclude<PassabilityBlockers, "none">): number {
   let crossesMovingOccupant = false;
-  for (const unit of world.units) {
+  for (const unit of queryWorldOccupantsAtTile(world, tileX, tileY)) {
     if (
       !isRelevantSolidOccupant(unit, movingUnitId, movement)
       || !unitFootprintContainsTile(world, unit, tileX, tileY)

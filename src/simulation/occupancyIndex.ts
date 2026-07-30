@@ -214,10 +214,14 @@ export function transitionWorldOccupant(world: WorldState, unit: WorldUnit, prev
   counts.transitions += 1;
   const cache = caches.get(world);
   if (cache?.valid && cache.ranks.has(unit)) {
-    removeFromBuckets(cache, unit, previous.tileKeys);
     const next = snapshotWorldOccupant(world, unit);
     cache.snapshots.set(unit, next);
-    for (const key of next.tileKeys) insertByRank(cache, key, unit);
+    const membershipChanged = previous.tileKeys.length !== next.tileKeys.length
+      || previous.tileKeys.some((key, index) => key !== next.tileKeys[index]);
+    if (membershipChanged) {
+      removeFromBuckets(cache, unit, previous.tileKeys);
+      for (const key of next.tileKeys) insertByRank(cache, key, unit);
+    }
   }
   recordDuration("transition", startedAt, true);
 }
