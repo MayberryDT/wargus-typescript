@@ -10,7 +10,7 @@ import { preflightArtifactRoot } from "./lib/browser-execution-controller.mjs";
 const root = process.cwd();
 const fixedTickOffset = parseFixedTickOffset(process.env.WARGUS_PERF_FIXED_TICK_OFFSET ?? "600");
 const planId = process.env.WARGUS_PERF_PLAN?.trim();
-if (!/^\d{3}$/.test(planId ?? "")) throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID.");
+if (!/^\d{3}$/.test(planId ?? "") && planId !== "WAVE-2-INTEGRATION") throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID or WAVE-2-INTEGRATION.");
 const captureSha = process.env.WARGUS_CAPTURE_SHA?.trim();
 if (!captureSha) throw new Error("WARGUS_CAPTURE_SHA is required for fixed-tick proof attribution.");
 assertCleanCaptureAttribution(captureSha);

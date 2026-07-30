@@ -56,14 +56,15 @@ function canonicalRowsForPlan(planId) {
     "022": [3, 4, 6],
     "023": [3, 4, 5, 6, 7],
     "024": [4, 5, 6],
-    "025": [3, 4, 6]
+    "025": [3, 4, 6],
+    "WAVE-2-INTEGRATION": [1, 2, 3, 4, 5, 6, 7]
   }[planId];
   if (!rows) throw new Error("No canonical successor rows are registered for Plan " + planId + ".");
   return [...rows];
 }
 
 function captureConfiguration({ planId, baselineRequested, acceptanceMode, assignedRows }) {
-  if (!/^\d{3}$/.test(planId ?? "")) throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID.");
+  if (!/^\d{3}$/.test(planId ?? "") && planId !== "WAVE-2-INTEGRATION") throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID or WAVE-2-INTEGRATION.");
   if (baselineRequested) {
     if (planId !== "018") throw new Error("Baseline capture requires exact Plan 018.");
     if (acceptanceMode) throw new Error("Baseline capture acceptance mode must be omitted; do not set WARGUS_PERF_ACCEPTANCE_MODE.");
@@ -94,7 +95,8 @@ function targetedVerifierPaths(planId) {
     "022": ["scripts/verify-world-render-cache.mjs"],
     "023": ["scripts/verify-occupancy-index.mjs"],
     "024": ["scripts/verify-pathfinding-budget.mjs", "scripts/verify-x12-first-tick.mjs"],
-    "025": ["scripts/verify-visibility-fog-incremental.mjs"]
+    "025": ["scripts/verify-visibility-fog-incremental.mjs"],
+    "WAVE-2-INTEGRATION": ["scripts/verify-terrain-metadata-cache.mjs", "scripts/verify-unit-index.mjs", "scripts/verify-render-preparation.mjs"]
   }[planId];
   if (!verifiers) throw new Error("No targeted work-reduction verifier is registered for Plan " + planId + ".");
   return [...verifiers];

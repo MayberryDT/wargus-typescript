@@ -7,15 +7,17 @@ import { cleanupDisposableWorktree } from "./lib/disposable-worktree-cleanup.mjs
 const CAPTURES = Object.freeze({
   "019": Object.freeze({ targetSha: "5935a17f456868051c2c16b2f0d8d2b4da56d115", rows: "3,5,7" }),
   "020": Object.freeze({ targetSha: "9bab6b0e3f7d260148cc1c0f5c1c231098046e19", rows: "6" }),
-  "021": Object.freeze({ targetSha: "a97eae19fff6516eff7bb3b582d35923d9f67992", rows: "3,4,6" })
+  "021": Object.freeze({ targetSha: "a97eae19fff6516eff7bb3b582d35923d9f67992", rows: "3,4,6" }),
+  "WAVE-2-INTEGRATION": Object.freeze({ targetSha: null, rows: "1,2,3,4,5,6,7" })
 });
 
 function canonicalSuccessorIdentity(planId, acceptanceMode = process.env.WARGUS_PERF_ACCEPTANCE_MODE) {
   const capture = CAPTURES[planId];
-  if (!capture) throw new Error("WARGUS_PERF_PLAN must be exactly one of 019, 020, or 021.");
+  if (!capture) throw new Error("WARGUS_PERF_PLAN must be exactly one of 019, 020, 021, or WAVE-2-INTEGRATION.");
   if (acceptanceMode !== undefined && acceptanceMode.trim() !== "incremental") throw new Error("Wave 2 successor capture requires incremental acceptance mode.");
   if (process.env.WARGUS_BASELINE_CAPTURE === "1") throw new Error("Wave 2 successor capture cannot run in baseline mode.");
-  return { planId, ...capture, acceptanceMode: "incremental", trialCountPerRow: 7, schemaVersion: 4 };
+  const targetSha = capture.targetSha ?? command("git", ["rev-parse", "HEAD"], { cwd: process.cwd() });
+  return { planId, targetSha, rows: capture.rows, acceptanceMode: "incremental", trialCountPerRow: 7, schemaVersion: 4 };
 }
 
 function command(file, args, options = {}) {

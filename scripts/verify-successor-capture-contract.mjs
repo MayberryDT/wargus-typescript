@@ -36,6 +36,9 @@ assert.throws(() => helpers.captureConfiguration({ planId: "019", baselineReques
 assert.throws(() => helpers.captureConfiguration({ planId: "018", baselineRequested: true, acceptanceMode: "incremental", assignedRows: "1,2,3,4,5,6,7" }), /baseline.*acceptance mode/i);
 assert.throws(() => helpers.captureConfiguration({ planId: "018", baselineRequested: true, assignedRows: "1,2,3,4,5,6" }), /all seven canonical rows/i);
 assert.throws(() => helpers.captureConfiguration({ planId: "018", baselineRequested: false, acceptanceMode: "incremental", assignedRows: "1,2,3,4,5,6,7" }), /successor.*018/i);
+assert.equal(JSON.stringify(helpers.captureConfiguration({ planId: "WAVE-2-INTEGRATION", baselineRequested: false, acceptanceMode: "incremental", assignedRows: "1,2,3,4,5,6,7" })),
+  JSON.stringify({ baseline: false, planId: "WAVE-2-INTEGRATION", acceptanceMode: "incremental", rowIds: [1, 2, 3, 4, 5, 6, 7] }));
+
 
 const baselineReady = helpers.baselineReadiness({
   captureComplete: true, validityAndComparabilityPass: true, fixedTickPass: true,
@@ -101,6 +104,7 @@ assert.doesNotMatch(wave2CoordinatorSource, /const matrix = spawnSync\(process\.
 assert.doesNotMatch(baselineCoordinatorSource, /const matrix = spawnSync\(process\.execPath, \[matrixHarness\], \{[^;]+timeout:/s,
   "Baseline coordinator must not impose a parent-only timeout that bypasses matrix finally cleanup.");
 assert.equal(packageJson.scripts["capture:wave2-successor"], "node scripts/run-wave2-successor-capture.mjs");
+assert.equal(packageJson.scripts["capture:wave2-integration"], "node scripts/run-wave2-successor-capture.mjs");
 
 const successfulCleanupSequence = [];
 const successfulCleanup = cleanupDisposableWorktree({
@@ -362,7 +366,7 @@ async function exerciseRealPair({ pairIndex, pairOffsetMs, moveIssueOffsetMs, mo
 
 const expectedRows = {
   "019": [3, 5, 7], "020": [6], "021": [3, 4, 6], "022": [3, 4, 6],
-  "023": [3, 4, 5, 6, 7], "024": [4, 5, 6], "025": [3, 4, 6]
+  "023": [3, 4, 5, 6, 7], "024": [4, 5, 6], "025": [3, 4, 6], "WAVE-2-INTEGRATION": [1, 2, 3, 4, 5, 6, 7]
 };
 for (const [planId, rows] of Object.entries(expectedRows)) {
   assert.equal(JSON.stringify(helpers.canonicalRowsForPlan(planId)), JSON.stringify(rows), `Plan ${planId} must use its exact canonical rows.`);
@@ -374,6 +378,8 @@ assert.throws(() => helpers.parseAssignedRows("020", "6,7"), /exact canonical ro
 assert.equal(JSON.stringify(helpers.targetedVerifierPaths("019")), JSON.stringify(["scripts/verify-terrain-metadata-cache.mjs"]));
 assert.equal(JSON.stringify(helpers.targetedVerifierPaths("024")), JSON.stringify(["scripts/verify-pathfinding-budget.mjs", "scripts/verify-x12-first-tick.mjs"]), "Plan 024 must retain both new verifier results.");
 
+assert.equal(JSON.stringify(helpers.targetedVerifierPaths("WAVE-2-INTEGRATION")),
+  JSON.stringify(["scripts/verify-terrain-metadata-cache.mjs", "scripts/verify-unit-index.mjs", "scripts/verify-render-preparation.mjs"]));
 const pinnedBaseline = helpers.acceptedBaselineIdentity("/retained/.artifacts", {});
 assert.equal(pinnedBaseline.captureSha, "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b");
 assert.equal(pinnedBaseline.stamp, "20260730T075608266Z");
