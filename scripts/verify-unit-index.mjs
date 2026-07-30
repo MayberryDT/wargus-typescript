@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import ts from "typescript";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -14,6 +15,183 @@ function unit(id, label, hitPoints = 30) {
 
 function world(units, tick = 0) {
   return { units, tick };
+}
+
+function createWorldUnitIdWriteProgram(extraRootNames) {
+  const configPath = ts.findConfigFile(root, ts.sys.fileExists, "tsconfig.json");
+  assert.ok(configPath, "WorldUnit ID-write detection requires tsconfig.json.");
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  assert.equal(config.error, undefined, "WorldUnit ID-write detection must read tsconfig.json.");
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
+  assert.deepEqual(parsed.errors, [], "WorldUnit ID-write detection must parse tsconfig.json.");
+  return ts.createProgram({
+    rootNames: [...new Set([...parsed.fileNames, ...extraRootNames])],
+    options: { ...parsed.options, noEmit: true }
+  });
+}
+
+function findWorldUnitIdWrites(program, sourceFiles) {
+  const checker = program.getTypeChecker();
+  const worldSource = program.getSourceFile(resolve(root, "src/simulation/world.ts"));
+  assert.ok(worldSource, "WorldUnit ID-write detection requires src/simulation/world.ts.");
+  const declaration = worldSource.statements.find((statement) => (
+    ts.isInterfaceDeclaration(statement) && statement.name.text === "WorldUnit"
+  ));
+  assert.ok(declaration, "WorldUnit ID-write detection requires the WorldUnit interface.");
+  const worldUnitType = checker.getTypeAtLocation(declaration.name);
+  const writes = [];
+
+  const unwrap = (node) => {
+    let current = node;
+    while (
+      ts.isParenthesizedExpression(current)
+      || ts.isNonNullExpression(current)
+      || ts.isAsExpression(current)
+      || ts.isTypeAssertionExpression(current)
+      || ts.isSatisfiesExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  const typeContainsWorldUnit = (type, seen = new Set()) => {
+    if (!type || seen.has(type.id) || (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never))) {
+      return false;
+    }
+    seen.add(type.id);
+    if (type.isUnionOrIntersection()) {
+      return type.types.some((part) => typeContainsWorldUnit(part, seen));
+    }
+    if (checker.isTypeAssignableTo(type, worldUnitType)) {
+      return true;
+    }
+    const constraint = checker.getBaseConstraintOfType(type);
+    return Boolean(constraint && constraint !== type && typeContainsWorldUnit(constraint, seen));
+  };
+
+  const receiverIsWorldUnit = (expression) => typeContainsWorldUnit(checker.getTypeAtLocation(unwrap(expression)));
+
+  const expressionCouldBeId = (expression) => {
+    const candidate = unwrap(expression);
+    if (ts.isStringLiteralLike(candidate)) {
+      return candidate.text === "id";
+    }
+    if (ts.isNumericLiteral(candidate)) {
+      return false;
+    }
+    const couldContainId = (type) => {
+      if (type.isUnionOrIntersection()) {
+        return type.types.some(couldContainId);
+      }
+      if (type.isStringLiteral()) {
+        return type.value === "id";
+      }
+      return Boolean(type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter));
+    };
+    return couldContainId(checker.getTypeAtLocation(candidate));
+  };
+
+  const accessIsWorldUnitId = (node) => {
+    const target = unwrap(node);
+    if (ts.isPropertyAccessExpression(target)) {
+      return target.name.text === "id" && receiverIsWorldUnit(target.expression);
+    }
+    return ts.isElementAccessExpression(target)
+      && Boolean(target.argumentExpression)
+      && expressionCouldBeId(target.argumentExpression)
+      && receiverIsWorldUnit(target.expression);
+  };
+
+  const assignmentTargetContainsWorldUnitId = (node) => {
+    const target = unwrap(node);
+    if (accessIsWorldUnitId(target)) {
+      return true;
+    }
+    if (ts.isArrayLiteralExpression(target)) {
+      return target.elements.some((element) => !ts.isOmittedExpression(element) && assignmentTargetContainsWorldUnitId(element));
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      return target.properties.some((property) => {
+        if (ts.isPropertyAssignment(property)) {
+          return assignmentTargetContainsWorldUnitId(property.initializer);
+        }
+        if (ts.isSpreadAssignment(property)) {
+          return assignmentTargetContainsWorldUnitId(property.expression);
+        }
+        return false;
+      });
+    }
+    return false;
+  };
+
+  const callMatches = (node, namespace, method) => (
+    ts.isCallExpression(node)
+    && ts.isPropertyAccessExpression(node.expression)
+    && ts.isIdentifier(node.expression.expression)
+    && node.expression.expression.text === namespace
+    && node.expression.name.text === method
+  );
+
+  const propertyNameCouldBeId = (name) => {
+    if (!name) return true;
+    if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text === "id";
+    if (ts.isNumericLiteral(name)) return false;
+    return ts.isComputedPropertyName(name) && expressionCouldBeId(name.expression);
+  };
+
+  const descriptorMapCouldWriteId = (expression) => {
+    const descriptors = unwrap(expression);
+    if (!ts.isObjectLiteralExpression(descriptors)) {
+      return true;
+    }
+    return descriptors.properties.some((property) => (
+      ts.isSpreadAssignment(property) || propertyNameCouldBeId(property.name)
+    ));
+  };
+
+  const record = (node, kind) => {
+    const sourceFile = node.getSourceFile();
+    const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+    const lineText = sourceFile.text.split(/\r?\n/)[position.line] ?? "";
+    const marker = lineText.match(/\/\/ (detector(?:-negative)?): ([a-z-]+)/)?.[2] ?? null;
+    writes.push({ file: sourceFile.fileName, line: position.line + 1, column: position.character + 1, kind, marker });
+  };
+
+  const visit = (node) => {
+    if (ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind)
+      && assignmentTargetContainsWorldUnitId(node.left)) {
+      record(node, "assignment");
+    } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
+      && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+      && assignmentTargetContainsWorldUnitId(node.operand)) {
+      record(node, "update");
+    } else if (ts.isDeleteExpression(node) && assignmentTargetContainsWorldUnitId(node.expression)) {
+      record(node, "delete");
+    } else if ((ts.isForInStatement(node) || ts.isForOfStatement(node))
+      && !ts.isVariableDeclarationList(node.initializer)
+      && assignmentTargetContainsWorldUnitId(node.initializer)) {
+      record(node, ts.isForInStatement(node) ? "for-in" : "for-of");
+    } else if (callMatches(node, "Object", "assign") && node.arguments[0]
+      && receiverIsWorldUnit(node.arguments[0])) {
+      record(node, "Object.assign");
+    } else if (callMatches(node, "Reflect", "set") && node.arguments[0] && node.arguments[1]
+      && receiverIsWorldUnit(node.arguments[0]) && expressionCouldBeId(node.arguments[1])) {
+      record(node, "Reflect.set");
+    } else if (callMatches(node, "Object", "defineProperty") && node.arguments[0] && node.arguments[1]
+      && receiverIsWorldUnit(node.arguments[0]) && expressionCouldBeId(node.arguments[1])) {
+      record(node, "Object.defineProperty");
+    } else if (callMatches(node, "Object", "defineProperties") && node.arguments[0] && node.arguments[1]
+      && receiverIsWorldUnit(node.arguments[0]) && descriptorMapCouldWriteId(node.arguments[1])) {
+      record(node, "Object.defineProperties");
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  for (const sourceFile of sourceFiles) {
+    visit(sourceFile);
+  }
+  return writes;
 }
 
 try {
@@ -47,20 +225,92 @@ try {
     resetWorldUnitIndexDiagnostics
   } = selectors;
 
-  const productionSourceInventory = spawnSync("rg", [
-    "--pcre2",
-    "-n",
-    String.raw`\.id\s*(?:\+\+|--|(?<![=!<>])=(?!=))|\[['"]id['"]\]\s*(?:\+\+|--|(?<![=!<>])=(?!=))|Object\.assign\([^\n]*(?:unit|candidate|target)[^\n]*\bid\b|Reflect\.set\([^\n]*(?:unit|candidate|target)[^\n]*['"]id['"]`,
-    "src",
-    "--glob",
-    "*.ts"
-  ], { cwd: root, encoding: "utf8" });
-  assert.ok(
-    productionSourceInventory.status === 0 || productionSourceInventory.status === 1,
-    `Production unit-ID mutation inventory failed:\n${productionSourceInventory.stdout}${productionSourceInventory.stderr}`
-  );
-  assert.equal(productionSourceInventory.stdout, "",
-    "Production runtime must never assign or mutate an existing WorldUnit.id.");
+  const detectorPositiveFixture = join(output, "world-unit-id-positive.ts");
+  const detectorNegativeFixture = join(output, "world-unit-id-negative.ts");
+  const worldUnitModule = JSON.stringify(resolve(root, "src/simulation/world"));
+  writeFileSync(detectorPositiveFixture, `
+import type { WorldState, WorldUnit } from ${worldUnitModule};
+type UnitAlias = WorldUnit;
+type Other = { id: string; label: string };
+declare let direct: WorldUnit;
+declare let alias: UnitAlias;
+declare let worldState: WorldState;
+declare let mixed: WorldUnit | Other;
+declare let dynamicKey: keyof WorldUnit;
+declare let values: string[];
+declare function descriptors(): PropertyDescriptorMap;
+direct.id = "direct"; // detector: direct-dot
+direct["id"] += "-compound"; // detector: compound-bracket
+const holder = alias;
+holder.id = "alias"; // detector: alias-dot
+worldState.units[0]!.id = "inferred"; // detector: inferred-element
+mixed.id = "union"; // detector: union-dot
+direct.id++; // detector: postfix-update
+--direct["id"]; // detector: prefix-update
+delete direct.id; // detector: delete-dot
+[direct.id] = values; // detector: array-destructure
+({ value: direct.id } = { value: "destructured" }); // detector: object-destructure
+for (direct.id of values) {} // detector: for-of
+for (direct.id in { key: "value" }) {} // detector: for-in
+Object.assign(holder, { id: "assigned" }); // detector: object-assign
+Reflect.set(holder, "id", "reflected"); // detector: reflect-literal
+Reflect.set(holder, dynamicKey, "dynamic"); // detector: reflect-dynamic
+Object.defineProperty(holder, "id", { value: "defined" }); // detector: define-property
+Object.defineProperty(holder, dynamicKey, { value: "dynamic" }); // detector: define-property-dynamic
+Object.defineProperties(holder, { id: { value: "defined" } }); // detector: define-properties
+Object.defineProperties(holder, descriptors()); // detector: define-properties-dynamic
+holder[dynamicKey] = "dynamic"; // detector: direct-dynamic
+`, "utf8");
+  writeFileSync(detectorNegativeFixture, `
+type Unrelated = { id: string; value: number };
+declare let record: Unrelated;
+declare let unit: import(${worldUnitModule}).WorldUnit;
+record.id = "unrelated"; // detector-negative: unrelated-dot
+record["id"] += "-unrelated"; // detector-negative: unrelated-bracket
+delete record.id; // detector-negative: unrelated-delete
+Object.assign(record, { id: "unrelated" }); // detector-negative: unrelated-assign
+Reflect.set(record, "id", "unrelated"); // detector-negative: unrelated-reflect
+Object.defineProperty(record, "id", { value: "unrelated" }); // detector-negative: unrelated-define
+Object.defineProperties(record, { id: { value: "unrelated" } }); // detector-negative: unrelated-defines
+unit.hitPoints = 1; // detector-negative: other-dot
+unit["hitPoints"] = 2; // detector-negative: other-bracket
+Reflect.set(unit, "hitPoints", 3); // detector-negative: other-reflect
+Object.defineProperty(unit, "hitPoints", { value: 4 }); // detector-negative: other-define
+Object.defineProperties(unit, { hitPoints: { value: 5 } }); // detector-negative: other-defines
+const readOnly = unit.id; // detector-negative: read-dot
+const bracketReadOnly = unit["id"]; // detector-negative: read-bracket
+const constructed = { id: "new", value: 1 }; // detector-negative: construction
+void readOnly; void bracketReadOnly; void constructed;
+`, "utf8");
+
+  const detectorProgram = createWorldUnitIdWriteProgram([detectorPositiveFixture, detectorNegativeFixture]);
+  const detectorFixtureWrites = findWorldUnitIdWrites(detectorProgram, [
+    detectorProgram.getSourceFile(detectorPositiveFixture),
+    detectorProgram.getSourceFile(detectorNegativeFixture)
+  ].filter(Boolean));
+  const detectedNegativeMarkers = detectorFixtureWrites
+    .map((write) => write.marker).filter((marker) => marker?.startsWith("unrelated-") || marker?.startsWith("other-")
+      || marker?.startsWith("read-") || marker === "construction").sort();
+  assert.deepEqual(detectedNegativeMarkers, [],
+    "WorldUnit ID-write detection must not flag writes to unrelated ID-bearing types or read-only access.");
+  const detectedMarkers = detectorFixtureWrites.map((write) => write.marker).filter(Boolean).sort();
+  const expectedMarkers = [
+    "alias-dot", "array-destructure", "compound-bracket", "define-properties",
+    "define-properties-dynamic", "define-property", "define-property-dynamic", "delete-dot",
+    "direct-dot", "direct-dynamic", "for-in", "for-of", "inferred-element",
+    "object-assign", "object-destructure", "postfix-update", "prefix-update",
+    "reflect-dynamic", "reflect-literal", "union-dot"
+  ].sort();
+  assert.deepEqual(detectedMarkers, expectedMarkers,
+    "WorldUnit ID-write detection must cover typed aliases and every supported write form without unrelated-ID false positives.");
+
+  const productionRoot = `${resolve(root, "src")}/`;
+  const productionSourceFiles = detectorProgram.getSourceFiles().filter((sourceFile) => (
+    !sourceFile.isDeclarationFile && sourceFile.fileName.startsWith(productionRoot)
+  ));
+  const productionIdWrites = findWorldUnitIdWrites(detectorProgram, productionSourceFiles);
+  assert.deepEqual(productionIdWrites, [],
+    `Production runtime must never assign or mutate an existing WorldUnit.id:\n${JSON.stringify(productionIdWrites, null, 2)}`);
 
   resetWorldUnitIndexDiagnostics();
   const stableTickUnit = unit("stable-tick", "stable tick");
@@ -232,6 +482,7 @@ try {
       assignments: assignments.length,
       pushes: pushes.length,
       sameReferenceSameLength: undetectableMutations.length,
+      unitIdWrites: productionIdWrites.length,
       total: assignments.length + pushes.length
     }
   }));
