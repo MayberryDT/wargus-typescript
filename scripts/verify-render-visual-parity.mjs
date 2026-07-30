@@ -34,11 +34,20 @@ import {
 } from "./browser-smoke-harness.mjs";
 
 const BASE_COMMIT = "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b";
-const PLAN021_COMMIT = "84a12df804e655ae38a953c0f5fd6e0c88ea2d0d";
+const PLAN021_COMMIT = "c4238c6ae0aaa093785b52f6f71e9569395bf08e";
+const FIRST_GATE_COMMIT = "3375d734c055b46cf3aeb7d9dcf0c22c93005691";
+const SECOND_GATE_COMMIT = "f61b12c8517a7a518c4e8131dc020c7e810e58d0";
+const PRIOR_PROVENANCE_COMMIT = "d943d6afacb281b4c136bebd9a2aeb72b77fd19c";
+const FIRST_CORRECTION_COMMIT = "859d5de4441cba8b714d1022034887947150fdbe";
+const SECOND_CORRECTION_COMMIT = "532bcd0ce82a7dbb8e183e603f859f54717447d1";
+const THIRD_CORRECTION_COMMIT = "1be72d07678b8af8b9fe5fda7c3bde3065d274bf";
+const FOURTH_CORRECTION_COMMIT = "28de0d62a14a4d84faa07727a79d624244bcf61a";
 const CHROME_BIN = "/usr/bin/google-chrome";
 const PROFILE = "combat-100";
 const FIXED_TICK = 0;
 const VIEWPORT = { width: 1280, height: 720, deviceScaleFactor: 1 };
+const MIN_START_AVAILABLE_BYTES = 4 * 1024 ** 3;
+const MIN_START_DISK_FREE_BYTES = 20 * 1024 ** 3;
 const INTERRUPT_FIXTURE_FLAG = "--interruption-fixture";
 const INTERRUPT_TEST_FLAG = "--self-test-interruption";
 const ALLOWED_GATE_FILES = [
@@ -92,7 +101,7 @@ async function runVisualParity() {
     assert.equal(git(lifecycle.baseWorktree, ["rev-parse", "HEAD"]), BASE_COMMIT);
     assertClean(lifecycle.baseWorktree, "pre-Plan021 base worktree");
 
-    const resourceBefore = collectHostMetrics(afterWorktree);
+    const resourceBefore = preflight.startResources;
     const base = await capture("base", lifecycle.baseWorktree, 56_200);
     const after = await capture("after", afterWorktree, 56_400);
     const resourceAfter = collectHostMetrics(afterWorktree);
@@ -458,7 +467,21 @@ function validateExecutionContext() {
   const afterWorktree = lifecycle.afterWorktree;
   const afterHead = git(afterWorktree, ["rev-parse", "HEAD"]);
   const afterParent = git(afterWorktree, ["rev-parse", "HEAD^"]);
-  assert.equal(afterParent, PLAN021_COMMIT, "Visual parity must run from the reviewed Plan 021 commit plus one coordinator-only gate commit.");
+  const afterGrandparent = git(afterWorktree, ["rev-parse", "HEAD^^"]);
+  const afterGreatGrandparent = git(afterWorktree, ["rev-parse", "HEAD^^^"]);
+  const afterFourthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^"]);
+  const afterFifthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^"]);
+  const afterSixthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^^"]);
+  const afterSeventhParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^^^"]);
+  const afterEighthParent = git(afterWorktree, ["rev-parse", "HEAD^^^^^^^^"]);
+  assert.equal(afterParent, FOURTH_CORRECTION_COMMIT, "Visual parity full-signature correction must directly follow the exact-signature correction.");
+  assert.equal(afterGrandparent, THIRD_CORRECTION_COMMIT, "Visual parity correction ancestry must retain the prepared draw-call correction.");
+  assert.equal(afterGreatGrandparent, SECOND_CORRECTION_COMMIT, "Visual parity correction ancestry must retain the declaration-binding correction.");
+  assert.equal(afterFourthParent, FIRST_CORRECTION_COMMIT, "Visual parity correction ancestry must retain the reviewed first correction commit.");
+  assert.equal(afterFifthParent, PRIOR_PROVENANCE_COMMIT, "Visual parity correction ancestry must retain the reviewed provenance commit.");
+  assert.equal(afterSixthParent, SECOND_GATE_COMMIT, "Visual parity correction ancestry must retain the reviewed second coordinator gate commit.");
+  assert.equal(afterSeventhParent, FIRST_GATE_COMMIT, "Visual parity correction ancestry must retain the reviewed first coordinator gate commit.");
+  assert.equal(afterEighthParent, PLAN021_COMMIT, "Visual parity must run from the reviewed Plan 021 commit plus exactly eight coordinator-only gate commits.");
   assert.deepEqual(git(afterWorktree, ["diff", "--name-only", `${PLAN021_COMMIT}..${afterHead}`]).split("\n").filter(Boolean).sort(), ALLOWED_GATE_FILES, "The staging commit must contain only the coordinator Task 4 gate files.");
   assertClean(afterWorktree, "Plan 021 gate staging worktree");
   assert.equal(process.getuid?.(), 1000, "Visual parity must run as the Halla project user.");
@@ -470,12 +493,24 @@ function validateExecutionContext() {
 }
 
 function capturePreflight(repositoryRoot, afterWorktree) {
-  return preflightArtifactRoot({
-    artifactWorkspace: process.env.WARGUS_ARTIFACT_WORKSPACE ?? `${repositoryRoot}-retained-artifacts`,
-    artifactRoot: process.env.WARGUS_ARTIFACT_ROOT ?? path.join(`${repositoryRoot}-retained-artifacts`, ".artifacts"),
-    disposableWorktree: afterWorktree,
-    preservationOwner: "wave2-recovery-task4"
-  });
+  const startResources = collectHostMetrics(afterWorktree);
+  assertStartResources(startResources);
+  return {
+    ...preflightArtifactRoot({
+      artifactWorkspace: process.env.WARGUS_ARTIFACT_WORKSPACE ?? `${repositoryRoot}-retained-artifacts`,
+      artifactRoot: process.env.WARGUS_ARTIFACT_ROOT ?? path.join(`${repositoryRoot}-retained-artifacts`, ".artifacts"),
+      disposableWorktree: afterWorktree,
+      preservationOwner: "wave2-recovery-task4"
+    }),
+    startResources
+  };
+}
+
+function assertStartResources(resources) {
+  assert.ok(resources.memory.availableBytes >= MIN_START_AVAILABLE_BYTES,
+    `Visual parity requires at least 4 GiB MemAvailable; found ${resources.memory.availableBytes} bytes.`);
+  assert.ok(resources.diskFreeBytes >= MIN_START_DISK_FREE_BYTES,
+    `Visual parity requires at least 20 GiB workspace disk free; found ${resources.diskFreeBytes} bytes.`);
 }
 
 function acquireCaptureLock(preflight, afterHead) {
@@ -508,13 +543,15 @@ function releaseCaptureLock(lock) {
 function installSignalHandlers() {
   for (const [signal, exitCode] of [["SIGINT", 130], ["SIGTERM", 143]]) {
     const handler = () => {
-      void cleanupLifecycle(`signal-${signal}`).then(
-        () => process.exit(exitCode),
-        (error) => {
-          console.error(`Visual parity ${signal} cleanup failed:`, error);
-          process.exit(1);
+      void cleanupLifecycle(`signal-${signal}`).then((cleanup) => {
+        if (cleanup.errors.length > 0) {
+          throw new AggregateError(cleanup.errors, `Visual parity ${signal} cleanup failed.`);
         }
-      );
+        process.exit(exitCode);
+      }).catch((error) => {
+        console.error(`Visual parity ${signal} cleanup failed:`, error);
+        process.exit(1);
+      });
     };
     lifecycle.signalHandlers.set(signal, handler);
     process.once(signal, handler);
@@ -523,9 +560,40 @@ function installSignalHandlers() {
 
 async function cleanupController(controller) {
   if (!lifecycle.controllerCleanup.has(controller)) {
-    lifecycle.controllerCleanup.set(controller, controller.cleanup().finally(() => lifecycle.controllers.delete(controller)));
+    const attempt = controller.cleanup().then(
+      (record) => {
+        lifecycle.controllers.delete(controller);
+        lifecycle.controllerCleanup.delete(controller);
+        return record;
+      },
+      (error) => {
+        lifecycle.controllerCleanup.delete(controller);
+        throw error;
+      }
+    );
+    lifecycle.controllerCleanup.set(controller, attempt);
   }
   return await lifecycle.controllerCleanup.get(controller);
+}
+
+function cleanupProfiles(profilePaths, removeProfile = (profilePath) => rmSync(profilePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 })) {
+  const errors = [];
+  for (const profilePath of [...profilePaths]) {
+    try {
+      removeProfile(profilePath);
+      profilePaths.delete(profilePath);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  return errors;
+}
+
+function removeLifecycleProfile(profilePath) {
+  if (process.env.WARGUS_VISUAL_INTERRUPT_FORCE_PROFILE_REMOVE_FAILURE === "1" && process.argv.includes(INTERRUPT_FIXTURE_FLAG)) {
+    throw new Error(`Injected profile removal failure for ${profilePath}`);
+  }
+  rmSync(profilePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
 async function cleanupLifecycle(reason) {
@@ -538,10 +606,7 @@ async function cleanupLifecycle(reason) {
     for (const controller of [...lifecycle.controllers]) {
       try { controllerRecords.push(await cleanupController(controller)); } catch (error) { errors.push(error); }
     }
-    for (const profilePath of lifecycle.profiles) {
-      try { rmSync(profilePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }); } catch (error) { errors.push(error); }
-    }
-    lifecycle.profiles.clear();
+    errors.push(...cleanupProfiles(lifecycle.profiles, removeLifecycleProfile));
     if (lifecycle.baseCreated && lifecycle.baseWorktree) {
       try {
         execFileSync("git", ["-C", lifecycle.afterWorktree, "worktree", "remove", "--force", lifecycle.baseWorktree], { stdio: "ignore" });
@@ -564,10 +629,21 @@ async function cleanupLifecycle(reason) {
     if (lifecycle.interruptionStatusPath) writeFileSync(lifecycle.interruptionStatusPath, `${JSON.stringify({ phase: "cleaned", pid: process.pid, ...record }, null, 2)}\n`, "utf8");
     return { ...record, errors };
   })();
-  return await lifecycle.cleanupPromise;
+  const result = await lifecycle.cleanupPromise;
+  if (result.errors.length > 0) lifecycle.cleanupPromise = null;
+  return result;
 }
 
 async function runInterruptionSelfTest() {
+  const retainedProfiles = new Set(["removed-profile", "failed-profile"]);
+  const injectedProfileErrors = cleanupProfiles(retainedProfiles, (profilePath) => {
+    if (profilePath === "failed-profile") throw new Error("injected profile removal failure");
+  });
+  assert.equal(injectedProfileErrors.length, 1);
+  assert.deepEqual([...retainedProfiles], ["failed-profile"], "Failed profile cleanup paths must remain tracked.");
+  assert.doesNotThrow(() => assertStartResources({ memory: { availableBytes: MIN_START_AVAILABLE_BYTES }, diskFreeBytes: MIN_START_DISK_FREE_BYTES }));
+  assert.throws(() => assertStartResources({ memory: { availableBytes: MIN_START_AVAILABLE_BYTES - 1 }, diskFreeBytes: MIN_START_DISK_FREE_BYTES }), /4 GiB/);
+  assert.throws(() => assertStartResources({ memory: { availableBytes: MIN_START_AVAILABLE_BYTES }, diskFreeBytes: MIN_START_DISK_FREE_BYTES - 1 }), /20 GiB/);
   validateExecutionContext();
   const testDirectory = mkdtempSync(path.join(tmpdir(), "wargus-plan021-interruption-test-"));
   const statusPath = path.join(testDirectory, "status.json");
@@ -603,10 +679,92 @@ async function runInterruptionSelfTest() {
     assert.deepEqual(cleaned.controllerRecords[0].openPorts, []);
     assert.ok(cleaned.controllerRecords[0].terminationOrder.includes(ready.ownedPid));
     console.log(`Visual parity SIGTERM cleanup self-test passed (fixture PID ${child.pid}, owned PID ${ready.ownedPid}, ports ${ready.serverPort}/${ready.debugPort}, exact-owned cleanup, worktree/profile/lock removed).`);
+    await runInterruptionFailureSelfTests();
   } finally {
     if (isPidAlive(child.pid)) child.kill("SIGTERM");
     rmSync(testDirectory, { recursive: true, force: true });
   }
+}
+
+async function runInterruptionFailureSelfTests() {
+  await runProfileCleanupFailureSelfTest();
+  await runSetupFailureSelfTest();
+  console.log("Visual parity failure-path self-tests passed (cleanup failure exits 1 with retained ownership; setup failure cleans exact resources)." );
+}
+
+async function runProfileCleanupFailureSelfTest() {
+  const directory = mkdtempSync(path.join(tmpdir(), "wargus-plan021-cleanup-failure-test-"));
+  const statusPath = path.join(directory, "status.json");
+  const child = spawn(process.execPath, [new URL(import.meta.url).pathname, INTERRUPT_FIXTURE_FLAG], {
+    cwd: process.cwd(),
+    env: { ...process.env, WARGUS_VISUAL_INTERRUPT_STATUS_PATH: statusPath, WARGUS_VISUAL_INTERRUPT_FORCE_PROFILE_REMOVE_FAILURE: "1" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  let ready = null;
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    ready = await waitForStatus(statusPath, "ready", 30_000);
+    assert.equal(child.kill("SIGTERM"), true);
+    const [exitCode, exitSignal] = await once(child, "exit");
+    assert.equal(exitCode, 1, `Cleanup-failure fixture must fail closed: code=${exitCode} signal=${exitSignal} stderr=${stderr}`);
+    assert.equal(exitSignal, null);
+    const cleaned = await waitForStatus(statusPath, "cleaned", 5_000);
+    assert.equal(cleaned.reason, "signal-SIGTERM");
+    assert.equal(cleaned.errors.length, 1);
+    assert.match(cleaned.errors[0].message, /Injected profile removal failure/);
+    assert.equal(cleaned.profilesRemoved, false);
+    assert.equal(existsSync(ready.profilePath), true, "Failed profile path must remain present for truthful ownership reporting.");
+    await assertFixtureNonProfileResourcesClean(ready, cleaned);
+  } finally {
+    if (isPidAlive(child.pid)) child.kill("SIGTERM");
+    if (ready?.profilePath) rmSync(ready.profilePath, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+async function runSetupFailureSelfTest() {
+  const directory = mkdtempSync(path.join(tmpdir(), "wargus-plan021-setup-failure-test-"));
+  const statusPath = path.join(directory, "status.json");
+  const child = spawn(process.execPath, [new URL(import.meta.url).pathname, INTERRUPT_FIXTURE_FLAG], {
+    cwd: process.cwd(),
+    env: { ...process.env, WARGUS_VISUAL_INTERRUPT_STATUS_PATH: statusPath, WARGUS_VISUAL_INTERRUPT_FORCE_SETUP_FAILURE: "1" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  let ready = null;
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    ready = await waitForStatus(statusPath, "ready", 30_000);
+    const [exitCode, exitSignal] = await once(child, "exit");
+    assert.equal(exitCode, 1, `Setup-failure fixture must report failure: code=${exitCode} signal=${exitSignal} stderr=${stderr}`);
+    assert.equal(exitSignal, null);
+    assert.match(stderr, /Injected interruption fixture setup failure/);
+    const cleaned = await waitForStatus(statusPath, "cleaned", 5_000);
+    assert.equal(cleaned.reason, "fixture-setup-failure");
+    assert.equal(cleaned.errors.length, 0, `Setup-failure cleanup errors: ${JSON.stringify(cleaned.errors)}`);
+    assert.equal(cleaned.profilesRemoved, true);
+    assert.equal(existsSync(ready.profilePath), false);
+    await assertFixtureNonProfileResourcesClean(ready, cleaned);
+  } finally {
+    if (isPidAlive(child.pid)) child.kill("SIGTERM");
+    if (ready?.profilePath) rmSync(ready.profilePath, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+async function assertFixtureNonProfileResourcesClean(ready, cleaned) {
+  assert.equal(cleaned.baseWorktreeRemoved, true);
+  assert.equal(cleaned.lockRemoved, true);
+  assert.ok(cleaned.lockReleasedAt);
+  assert.equal(existsSync(ready.baseWorktree), false);
+  assert.equal(existsSync(ready.lockPath), false);
+  assert.equal(isPidAlive(ready.ownedPid), false);
+  assert.equal(await isPortOpen(ready.serverPort), false);
+  assert.equal(await isPortOpen(ready.debugPort), false);
+  assert.equal(cleaned.controllerRecords.length, 1);
+  assert.deepEqual(cleaned.controllerRecords[0].residualPids, []);
+  assert.deepEqual(cleaned.controllerRecords[0].openPorts, []);
 }
 
 async function waitForStatus(statusPath, phase, timeoutMs) {
@@ -638,32 +796,48 @@ async function runInterruptionFixture() {
   assert.ok(lifecycle.interruptionStatusPath, "WARGUS_VISUAL_INTERRUPT_STATUS_PATH is required for the interruption fixture.");
   lifecycle.baseWorktree = path.join(context.repositoryRoot, ".worktrees", `task4-visual-interruption-${process.pid}`);
   assert.ok(!existsSync(lifecycle.baseWorktree), `Interruption fixture worktree already exists: ${lifecycle.baseWorktree}`);
-  const preflight = capturePreflight(context.repositoryRoot, context.afterWorktree);
-  installSignalHandlers();
-  lifecycle.lock = acquireCaptureLock(preflight, context.afterHead);
-  process.once("exit", () => releaseCaptureLock(lifecycle.lock));
-  execFileSync("git", ["-C", context.afterWorktree, "worktree", "add", "--detach", lifecycle.baseWorktree, BASE_COMMIT], { stdio: "ignore" });
-  lifecycle.baseCreated = true;
-  const controller = new BrowserExecutionController({ name: "plan021-visual-interruption", portCandidates: Array.from({ length: 100 }, (_, index) => 56_800 + index) });
-  lifecycle.controllers.add(controller);
-  const { serverPort, debugPort } = await controller.allocatePorts();
-  await controller.releasePort(serverPort);
-  const fixtureServer = controller.spawnOwned(process.execPath, ["-e", `require("http").createServer((_, response) => response.end("fixture")).listen(${serverPort}, "127.0.0.1")`], { stdio: "ignore" });
-  await controller.waitForHttp(`http://127.0.0.1:${serverPort}/`);
-  const profilePath = mkdtempSync(path.join(tmpdir(), "wargus-plan021-interruption-profile-"));
-  lifecycle.profiles.add(profilePath);
-  writeFileSync(lifecycle.interruptionStatusPath, `${JSON.stringify({
-    phase: "ready",
-    pid: process.pid,
-    ownedPid: fixtureServer.pid,
-    serverPort,
-    debugPort,
-    baseWorktree: lifecycle.baseWorktree,
-    profilePath,
-    lockPath: lifecycle.lock.path,
-    lockRecord: JSON.parse(readFileSync(lifecycle.lock.path, "utf8"))
-  }, null, 2)}\n`, "utf8");
-  await new Promise(() => {});
+  let failure = null;
+  try {
+    const preflight = capturePreflight(context.repositoryRoot, context.afterWorktree);
+    installSignalHandlers();
+    lifecycle.lock = acquireCaptureLock(preflight, context.afterHead);
+    process.once("exit", () => releaseCaptureLock(lifecycle.lock));
+    execFileSync("git", ["-C", context.afterWorktree, "worktree", "add", "--detach", lifecycle.baseWorktree, BASE_COMMIT], { stdio: "ignore" });
+    lifecycle.baseCreated = true;
+    const controller = new BrowserExecutionController({ name: "plan021-visual-interruption", portCandidates: Array.from({ length: 100 }, (_, index) => 56_800 + index) });
+    lifecycle.controllers.add(controller);
+    const { serverPort, debugPort } = await controller.allocatePorts();
+    await controller.releasePort(serverPort);
+    const fixtureServer = controller.spawnOwned(process.execPath, ["-e", `require("http").createServer((_, response) => response.end("fixture")).listen(${serverPort}, "127.0.0.1")`], { stdio: "ignore" });
+    await controller.waitForHttp(`http://127.0.0.1:${serverPort}/`);
+    const profilePath = mkdtempSync(path.join(tmpdir(), "wargus-plan021-interruption-profile-"));
+    lifecycle.profiles.add(profilePath);
+    writeFileSync(lifecycle.interruptionStatusPath, `${JSON.stringify({
+      phase: "ready",
+      pid: process.pid,
+      ownedPid: fixtureServer.pid,
+      serverPort,
+      debugPort,
+      baseWorktree: lifecycle.baseWorktree,
+      profilePath,
+      lockPath: lifecycle.lock.path,
+      lockRecord: JSON.parse(readFileSync(lifecycle.lock.path, "utf8"))
+    }, null, 2)}\n`, "utf8");
+    if (process.env.WARGUS_VISUAL_INTERRUPT_FORCE_SETUP_FAILURE === "1") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      throw new Error("Injected interruption fixture setup failure.");
+    }
+    await new Promise(() => {});
+  } catch (error) {
+    failure = error;
+  } finally {
+    const cleanup = await cleanupLifecycle(failure ? "fixture-setup-failure" : "fixture-finally");
+    if (cleanup.errors.length > 0) {
+      const cleanupError = new AggregateError(cleanup.errors, "Interruption fixture cleanup failed.");
+      failure = failure ? new AggregateError([failure, cleanupError], "Interruption fixture setup and cleanup both failed.") : cleanupError;
+    }
+  }
+  if (failure) throw failure;
 }
 
 function writeCapture(directory, label, capture) {
