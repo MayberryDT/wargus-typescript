@@ -53,19 +53,28 @@ export function classifyPairedDiagnostic({ baseTrials, plan019Trials } = {}) {
   validatePairedTrials("baseTrials", baseTrials);
   validatePairedTrials("plan019Trials", plan019Trials);
 
-  const pairedDeltas = baseTrials.map((baseTrial, index) => {
+  const pairedObservations = baseTrials.map((baseTrial, index) => {
     const plan019Trial = plan019Trials[index];
     if (baseTrial.pair !== plan019Trial.pair) {
       throw new Error(`Pair mismatch at index ${index}: base ${baseTrial.pair}, Plan 019 ${plan019Trial.pair}.`);
     }
-    return relativeDeltaPercent(
-      baseTrial.statistics.frame.p95Ms,
-      plan019Trial.statistics.frame.p95Ms
-    );
+    const baseFrameP95Ms = baseTrial.statistics.frame.p95Ms;
+    const plan019FrameP95Ms = plan019Trial.statistics.frame.p95Ms;
+    return {
+      pair: baseTrial.pair,
+      baseFrameP95Ms,
+      plan019FrameP95Ms,
+      deltaPercent: relativeDeltaPercent(baseFrameP95Ms, plan019FrameP95Ms)
+    };
   });
 
-  const medianPairedFrameP95RegressionPercent = median(pairedDeltas);
-  const regressedPairCount = pairedDeltas.filter(exceedsRegressionThreshold).length;
+  const medianPairedObservation = [...pairedObservations]
+    .sort((left, right) => left.deltaPercent - right.deltaPercent || left.pair - right.pair)
+    .at(Math.floor(pairedObservations.length / 2));
+  const medianPairedFrameP95RegressionPercent = medianPairedObservation.deltaPercent;
+  const regressedPairCount = pairedObservations.filter((observation) =>
+    exceedsRegressionThreshold(observation.baseFrameP95Ms, observation.plan019FrameP95Ms)
+  ).length;
   const pooledBaseFrameP95Ms = pooledP95(baseTrials);
   const pooledPlan019FrameP95Ms = pooledP95(plan019Trials);
   const pooledFrameP95RegressionPercent = relativeDeltaPercent(
@@ -74,11 +83,14 @@ export function classifyPairedDiagnostic({ baseTrials, plan019Trials } = {}) {
   );
   const conditions = {
     medianOverFivePercent:
-      exceedsRegressionThreshold(medianPairedFrameP95RegressionPercent),
+      exceedsRegressionThreshold(
+        medianPairedObservation.baseFrameP95Ms,
+        medianPairedObservation.plan019FrameP95Ms
+      ),
     atLeastElevenPairsOverFivePercent:
       regressedPairCount >= REQUIRED_REGRESSED_PAIR_COUNT,
     pooledOverFivePercent:
-      exceedsRegressionThreshold(pooledFrameP95RegressionPercent)
+      exceedsRegressionThreshold(pooledBaseFrameP95Ms, pooledPlan019FrameP95Ms)
   };
 
   return {
@@ -168,17 +180,13 @@ function validateTrial(trial, label) {
   }
 }
 
-function exceedsRegressionThreshold(value) {
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), REGRESSION_THRESHOLD_PERCENT) * 8;
-  return value - REGRESSION_THRESHOLD_PERCENT > tolerance;
-}
-
-function median(values) {
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
+function exceedsRegressionThreshold(base, after) {
+  const scaledAfter = after * 100;
+  const scaledThreshold = base * (100 + REGRESSION_THRESHOLD_PERCENT);
+  const tolerance = Number.EPSILON
+    * Math.max(1, Math.abs(scaledAfter), Math.abs(scaledThreshold))
+    * 8;
+  return scaledAfter - scaledThreshold > tolerance;
 }
 
 function nearestRank(values, percentile) {

@@ -160,6 +160,71 @@ assert.deepEqual(decimalExactFivePercent.conditions, {
 }, "Mathematical +5% with a non-binary decimal base must pass every strict threshold.");
 assert.equal(decimalExactFivePercent.realRegression, false);
 
+const scaleAwareBaseTrials = baseTrials.map((trial) => ({
+  ...trial,
+  statistics: { frame: { p95Ms: 64.1 } },
+  stopped: { frameSamples: [64.1, 64.1, 64.1, 64.1] }
+}));
+const scaleAwareExactFivePercent = classifyPairedDiagnostic({
+  baseTrials: scaleAwareBaseTrials,
+  plan019Trials: scaleAwareBaseTrials.map((trial) => ({
+    ...trial,
+    statistics: { frame: { p95Ms: 67.305 } },
+    stopped: { frameSamples: [67.305, 67.305, 67.305, 67.305] }
+  }))
+});
+assert.deepEqual(scaleAwareExactFivePercent.conditions, {
+  medianOverFivePercent: false,
+  atLeastElevenPairsOverFivePercent: false,
+  pooledOverFivePercent: false
+}, "Scale-sensitive mathematical +5% must pass every strict threshold.");
+assert.equal(scaleAwareExactFivePercent.realRegression, false);
+
+const scaleAwareJustOverFivePercent = classifyPairedDiagnostic({
+  baseTrials: scaleAwareBaseTrials,
+  plan019Trials: scaleAwareBaseTrials.map((trial) => ({
+    ...trial,
+    statistics: { frame: { p95Ms: 67.3051 } },
+    stopped: { frameSamples: [67.3051, 67.3051, 67.3051, 67.3051] }
+  }))
+});
+assert.deepEqual(scaleAwareJustOverFivePercent.conditions, {
+  medianOverFivePercent: true,
+  atLeastElevenPairsOverFivePercent: true,
+  pooledOverFivePercent: true
+}, "A genuine regression above the scale-aware ULP tolerance must fail every strict threshold.");
+assert.equal(scaleAwareJustOverFivePercent.realRegression, true);
+
+for (let baseTenths = 1; baseTenths <= 10_000; baseTenths += 1) {
+  const baseValue = baseTenths / 10;
+  const exactFivePercentValue = baseTenths * 105 / 1_000;
+  const sweepBaseTrials = baseTrials.map((trial) => ({
+    ...trial,
+    statistics: { frame: { p95Ms: baseValue } },
+    stopped: { frameSamples: [baseValue, baseValue, baseValue, baseValue] }
+  }));
+  const sweepResult = classifyPairedDiagnostic({
+    baseTrials: sweepBaseTrials,
+    plan019Trials: sweepBaseTrials.map((trial) => ({
+      ...trial,
+      statistics: { frame: { p95Ms: exactFivePercentValue } },
+      stopped: {
+        frameSamples: [
+          exactFivePercentValue,
+          exactFivePercentValue,
+          exactFivePercentValue,
+          exactFivePercentValue
+        ]
+      }
+    }))
+  });
+  assert.equal(
+    Object.values(sweepResult.conditions).some(Boolean),
+    false,
+    `Exact +5% decimal sweep case ${baseValue} -> ${exactFivePercentValue} must pass.`
+  );
+}
+
 const invalidInputs = [
   {
     label: "missing pair",
