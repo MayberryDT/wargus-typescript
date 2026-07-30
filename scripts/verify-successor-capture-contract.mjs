@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,8 @@ import vm from "node:vm";
 import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/checksummed-summary-publisher.mjs";
 
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
+const fixedTickSource = readFileSync("scripts/verify-successor-fixed-tick.mjs", "utf8");
+const baselineCoordinatorSource = readFileSync("scripts/run-plan018-seven-trial-baseline.mjs", "utf8");
 assert.match(source, /schemaVersion: 4/, "Seven-trial robust summaries must use schema version 4.");
 assert.doesNotMatch(source, /afterWorstFrameP95Ms|baselineWorstFrameP95Ms|worstFrameP95Ms/,
   "Schema-v4 summaries and baseline loading must not retain worst-trial frame-p95 fields.");
@@ -19,8 +22,42 @@ const helpers = loadHelpers(source, [
   "commandPairReady", "withTimeout", "awaitCommandPair", "realPair", "commandOutcomeRecord",
   "commandTrialDiagnostics", "canonicalRowsForPlan", "parseAssignedRows",
   "targetedVerifierPaths", "acceptedBaselineIdentity", "validateCaptureAttribution",
-  "robustFrameP95Acceptance", "successorAcceptance", "errorRecord"
+  "captureConfiguration", "baselineReadiness", "robustFrameP95Acceptance", "successorAcceptance", "errorRecord"
 ]);
+
+assert.equal(JSON.stringify(helpers.captureConfiguration({
+  planId: "018", baselineRequested: true, acceptanceMode: undefined, assignedRows: "1,2,3,4,5,6,7"
+})), JSON.stringify({ baseline: true, planId: "018", acceptanceMode: null, rowIds: [1, 2, 3, 4, 5, 6, 7] }));
+assert.throws(() => helpers.captureConfiguration({ planId: "019", baselineRequested: true, assignedRows: "1,2,3,4,5,6,7" }), /baseline.*018/i);
+assert.throws(() => helpers.captureConfiguration({ planId: "018", baselineRequested: true, acceptanceMode: "incremental", assignedRows: "1,2,3,4,5,6,7" }), /baseline.*acceptance mode/i);
+assert.throws(() => helpers.captureConfiguration({ planId: "018", baselineRequested: true, assignedRows: "1,2,3,4,5,6" }), /all seven canonical rows/i);
+assert.throws(() => helpers.captureConfiguration({ planId: "018", baselineRequested: false, acceptanceMode: "incremental", assignedRows: "1,2,3,4,5,6,7" }), /successor.*018/i);
+
+const baselineReady = helpers.baselineReadiness({
+  captureComplete: true, validityAndComparabilityPass: true, fixedTickPass: true,
+  cleanupPass: true, lockReleasePass: true, finalizationPass: true
+});
+assert.equal(baselineReady.ready, true);
+assert.equal(baselineReady.absoluteBudgetsPass, null, "Baseline readiness must not pretend absolute budgets passed.");
+for (const failedGate of ["captureComplete", "validityAndComparabilityPass", "fixedTickPass", "cleanupPass", "lockReleasePass", "finalizationPass"]) {
+  const input = {
+    captureComplete: true, validityAndComparabilityPass: true, fixedTickPass: true,
+    cleanupPass: true, lockReleasePass: true, finalizationPass: true,
+    [failedGate]: false
+  };
+  assert.equal(helpers.baselineReadiness(input).ready, false, `Baseline readiness must fail when ${failedGate} fails.`);
+}
+
+assert.match(fixedTickSource, /WARGUS_FIXED_VERIFIER_PATH/,
+  "Fixed-tick proof must support an explicitly replayable absolute verifier path.");
+assert.match(baselineCoordinatorSource, /5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/);
+assert.match(baselineCoordinatorSource, /WARGUS_BASELINE_CAPTURE/);
+assert.match(baselineCoordinatorSource, /run-successor-performance-matrix\.mjs/);
+assert.match(baselineCoordinatorSource, /verify-successor-fixed-tick\.mjs/);
+const baselineGuard = spawnSync(process.execPath, ["scripts/run-plan018-seven-trial-baseline.mjs"], {
+  cwd: process.cwd(), encoding: "utf8", env: { ...process.env, WARGUS_BASELINE_COORDINATOR_GUARD_CHECK: "1" }
+});
+assert.equal(baselineGuard.status, 0, `Baseline coordinator guard failed:\n${baselineGuard.stdout}${baselineGuard.stderr}`);
 
 assert.equal(helpers.commandPairReady({
   inputToCommandDelta: 2,

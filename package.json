@@ -35,6 +35,7 @@
     "verify:successor-fixed-tick": "node scripts/verify-successor-fixed-tick.mjs",
     "verify:render-visual-parity": "node scripts/verify-render-visual-parity.mjs",
     "capture:successor-performance-matrix": "node scripts/run-successor-performance-matrix.mjs",
+    "capture:plan018-seven-trial-baseline": "node scripts/run-plan018-seven-trial-baseline.mjs",
     "verify:fixed-demo-unit-portrait": "node scripts/verify-fixed-demo-unit-portrait-panel.mjs",
     "verify:browser-command-card-session": "node scripts/verify-browser-command-card-session.mjs",
     "verify:browser-construction-lifecycle": "WARGUS_CONSTRUCTION_LIFECYCLE_ONLY=1 node scripts/verify-browser-command-card-session.mjs",

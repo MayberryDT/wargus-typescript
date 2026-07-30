@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { preflightArtifactRoot } from "./lib/browser-execution-controller.mjs";
@@ -14,7 +15,8 @@ const captureSha = process.env.WARGUS_CAPTURE_SHA?.trim();
 if (!captureSha) throw new Error("WARGUS_CAPTURE_SHA is required for fixed-tick proof attribution.");
 assertCleanCaptureAttribution(captureSha);
 let output = null;
-const command = [`WARGUS_PERF_PLAN=${planId}`, `WARGUS_CAPTURE_SHA=${captureSha}`, `WARGUS_PERF_FIXED_TICK_OFFSET=${fixedTickOffset}`, "node", "scripts/verify-successor-fixed-tick.mjs"];
+const verifierInvocationPath = fixedVerifierInvocationPath(process.env.WARGUS_FIXED_VERIFIER_PATH);
+const command = [`WARGUS_PERF_PLAN=${planId}`, `WARGUS_CAPTURE_SHA=${captureSha}`, `WARGUS_PERF_FIXED_TICK_OFFSET=${fixedTickOffset}`, "node", verifierInvocationPath];
 const comparedFields = [
   "canonicalStateHash",
   "entity/effect counts and IDs",
@@ -321,6 +323,15 @@ function assertCleanCaptureAttribution(expectedCaptureSha) {
 function parseFixedTickOffset(value) {
   if (!/^\d+$/.test(value) || Number(value) < 1) throw new Error(`WARGUS_PERF_FIXED_TICK_OFFSET must be a positive integer; got ${value}.`);
   return Number(value);
+}
+
+function fixedVerifierInvocationPath(configuredPath) {
+  if (!configuredPath) return "scripts/verify-successor-fixed-tick.mjs";
+  if (!isAbsolute(configuredPath)) throw new Error("WARGUS_FIXED_VERIFIER_PATH must be absolute when provided.");
+  const actual = resolve(fileURLToPath(import.meta.url));
+  const requested = resolve(configuredPath);
+  if (requested !== actual) throw new Error("WARGUS_FIXED_VERIFIER_PATH must name the executing reviewed verifier.");
+  return requested;
 }
 
 function writeArtifactIfRequested(result) {

@@ -9,22 +9,28 @@ import {
 import { publishChecksummedSummary } from "./lib/checksummed-summary-publisher.mjs";
 
 // Successor runner derived from the audited Plan 018 protocol; raw packets preserve this exact source.
-const PLAN_ID = process.env.WARGUS_PERF_PLAN?.trim();
-if (!/^\d{3}$/.test(PLAN_ID ?? "")) throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID.");
-const ACCEPTANCE_MODE = process.env.WARGUS_PERF_ACCEPTANCE_MODE?.trim();
-if (!new Set(["incremental", "absolute-release"]).has(ACCEPTANCE_MODE)) throw new Error("WARGUS_PERF_ACCEPTANCE_MODE must be incremental or absolute-release.");
+const CAPTURE_CONFIGURATION = captureConfiguration({
+  planId: process.env.WARGUS_PERF_PLAN?.trim(),
+  baselineRequested: process.env.WARGUS_BASELINE_CAPTURE === "1",
+  acceptanceMode: process.env.WARGUS_PERF_ACCEPTANCE_MODE?.trim(),
+  assignedRows: process.env.WARGUS_MATRIX_ROWS
+});
+const PLAN_ID = CAPTURE_CONFIGURATION.planId;
+const BASELINE_CAPTURE = CAPTURE_CONFIGURATION.baseline;
+const ACCEPTANCE_MODE = CAPTURE_CONFIGURATION.acceptanceMode;
 const ALL_ROWS = [
   ["idle-25", 1280, 720], ["idle-25", 1280, 720], ["army-100", 1280, 720],
   ["army-200", 1280, 720], ["command-18", 1280, 720], ["combat-100", 1280, 720],
   ["command-18", 1024, 768]
 ].map(([profile, width, height], index) => ({ row: index + 1, profile, viewport: { width, height } }));
-const ROW_IDS = parseAssignedRows(PLAN_ID, process.env.WARGUS_MATRIX_ROWS);
+const ROW_IDS = CAPTURE_CONFIGURATION.rowIds;
 const ROWS = ROW_IDS.map((row) => ALL_ROWS[row - 1]);
 const OFFSETS_MS = [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500];
 const COMMAND_OFFSET_TOLERANCE_MS = 250;
 const ATTACK_COMMAND_OFFSET_MS = 250;
 const COMMAND_PAIR_DEADLINE_MS = 1000;
 const TRIALS_PER_ROW = 7;
+const BASELINE_TARGET_SHA = "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b";
 const SUMMARY_PUBLISHER_SOURCE = new URL("./lib/checksummed-summary-publisher.mjs", import.meta.url);
 const FIXED_TICK_OFFSET = 600;
 const FIXED_PROOF_PROFILE_IDS = ["idle-25", "army-100", "army-200", "command-18", "combat-100"];
@@ -56,6 +62,21 @@ function canonicalRowsForPlan(planId) {
   return [...rows];
 }
 
+function captureConfiguration({ planId, baselineRequested, acceptanceMode, assignedRows }) {
+  if (!/^\d{3}$/.test(planId ?? "")) throw new Error("WARGUS_PERF_PLAN must be a three-digit plan ID.");
+  if (baselineRequested) {
+    if (planId !== "018") throw new Error("Baseline capture requires exact Plan 018.");
+    if (acceptanceMode) throw new Error("Baseline capture acceptance mode must be omitted; do not set WARGUS_PERF_ACCEPTANCE_MODE.");
+    const expected = [1, 2, 3, 4, 5, 6, 7];
+    const requested = (assignedRows ?? expected.join(",")).split(",").map(Number);
+    if (requested.length !== expected.length || requested.some((row, index) => row !== expected[index])) throw new Error("Baseline capture requires all seven canonical rows in order: 1,2,3,4,5,6,7.");
+    return { baseline: true, planId, acceptanceMode: null, rowIds: expected };
+  }
+  if (planId === "018") throw new Error("Successor capture cannot use Plan 018; set WARGUS_BASELINE_CAPTURE=1.");
+  if (!new Set(["incremental", "absolute-release"]).has(acceptanceMode)) throw new Error("WARGUS_PERF_ACCEPTANCE_MODE must be incremental or absolute-release.");
+  return { baseline: false, planId, acceptanceMode, rowIds: parseAssignedRows(planId, assignedRows) };
+}
+
 function parseAssignedRows(planId, raw) {
   const expected = canonicalRowsForPlan(planId);
   const requested = (raw ?? expected.join(",")).split(",").map((value) => Number(value));
@@ -85,7 +106,7 @@ async function main(mode) {
   const releaseOnExit = () => releaseCaptureLock(captureLock);
   process.once("exit", releaseOnExit);
   const monitor = new HostMonitor(process.cwd());
-  const controller = new BrowserExecutionController({ name: "plan-" + PLAN_ID + "-headless-matrix" });
+  const controller = new BrowserExecutionController({ name: (BASELINE_CAPTURE ? "baseline-" : "plan-") + PLAN_ID + "-headless-matrix" });
   const state = { mode, validTrials: [], invalidTrials: [], locks: new Map(), cleanup: null, cleanupError: null, lockReleaseError: null, pageCloseErrors: [], finalizationErrors: [], matrixSummary: null, lockReleasedAt: null };
   let allocation = null;
   let browserServer = null;
@@ -94,7 +115,7 @@ async function main(mode) {
   let mainError = null;
   try {
     monitor.record("pre"); monitor.assertStart();
-    if (mode === "full") {
+    if (mode === "full" && !BASELINE_CAPTURE) {
       assertCleanCaptureAttribution(run.captureSha);
       run.targetedWorkReductionProof = runTargetedWorkReductionProof(run.directory, run.captureSha);
     }
@@ -171,7 +192,7 @@ async function main(mode) {
   if (state.lockReleaseError) terminalErrors.push(new Error("Capture lock release failed: " + state.lockReleaseError.message));
   if (state.pageCloseErrors.length > 0) terminalErrors.push(new Error("Page cleanup failed: " + state.pageCloseErrors.map((error) => error.scope + ": " + error.message).join("; ")));
   if (state.finalizationErrors.length > 0) terminalErrors.push(new Error("Capture finalization failed: " + state.finalizationErrors.map((error) => error.step + ": " + error.message).join("; ")));
-  if (mode === "full" && state.matrixSummary?.acceptance?.accepted !== true) terminalErrors.push(new Error(`Successor performance matrix completed but selected ${ACCEPTANCE_MODE} acceptance verdict is NOT READY.`));
+  if (mode === "full" && (BASELINE_CAPTURE ? state.matrixSummary?.ready !== true : state.matrixSummary?.acceptance?.accepted !== true)) terminalErrors.push(new Error(BASELINE_CAPTURE ? "Plan 018 baseline matrix completed but integrity verdict is NOT READY." : `Successor performance matrix completed but selected ${ACCEPTANCE_MODE} acceptance verdict is NOT READY.`));
   if (terminalErrors.length === 1) throw terminalErrors[0];
   if (terminalErrors.length > 1) throw new AggregateError(terminalErrors, "Successor capture failed with primary and finalization errors.");
 }
@@ -179,6 +200,7 @@ async function main(mode) {
 function createRunDirectory() {
   const captureSha = process.env.WARGUS_CAPTURE_SHA?.trim();
   if (!captureSha) throw new Error("WARGUS_CAPTURE_SHA is required.");
+  if (BASELINE_CAPTURE && captureSha !== BASELINE_TARGET_SHA) throw new Error("Plan 018 baseline capture must use exact target " + BASELINE_TARGET_SHA + ".");
   assertCleanCaptureAttribution(captureSha);
   const preflight = preflightArtifactRoot({ disposableWorktree: process.cwd(), preservationOwner: process.env.WARGUS_ARTIFACT_PRESERVATION_OWNER });
   const configured = process.env.WARGUS_PERF_ARTIFACT_DIR;
@@ -187,13 +209,14 @@ function createRunDirectory() {
   if (configured && path.resolve(configured) !== expected) throw new Error(`WARGUS_PERF_ARTIFACT_DIR must be ${expected}.`);
   const created = createArtifactDirectory({ preflight, plan: PLAN_ID, commit: captureSha, stamp });
   const existing = readdirSync(created.directory);
-  if (existing.some((name) => name !== "fixed-tick-proof.json")) throw new Error("Successor artifact stamp must be fresh except for fixed-tick-proof.json; found " + existing.join(", "));
+  const allowedExisting = new Set(["fixed-tick-proof.json", ...(BASELINE_CAPTURE ? ["baseline-coordinator-preflight.json", "baseline-build.json"] : [])]);
+  if (existing.some((name) => !allowedExisting.has(name)) || !existing.includes("fixed-tick-proof.json")) throw new Error("Performance artifact stamp has missing or unexpected pre-capture files: " + existing.join(", "));
   copyFileSync(new URL(import.meta.url), path.join(created.directory, "capture-harness.mjs"));
   copyFileSync(SUMMARY_PUBLISHER_SOURCE, path.join(created.directory, "checksummed-summary-publisher.mjs"));
   const fixedProof = JSON.parse(readFileSync(path.join(created.directory, "fixed-tick-proof.json"), "utf8"));
   const sourceHash = applyPerformanceProfileSourceHash();
   validateFixedProof(fixedProof, captureSha, sourceHash);
-  const baseline = loadAcceptedBaseline(preflight);
+  const baseline = BASELINE_CAPTURE ? null : loadAcceptedBaseline(preflight);
   return { ...created, preflight, captureSha, stamp, baseline, targetedWorkReductionProof: null, fixedProof: { file: "fixed-tick-proof.json", sha256: sha(readFileSync(path.join(created.directory, "fixed-tick-proof.json"))), commit: fixedProof.commit, applyPerformanceProfileSourceHash: sourceHash, value: fixedProof } };
 }
 
@@ -226,7 +249,9 @@ function runTargetedWorkReductionProof(directory, captureSha) {
   return { file: "targeted-work-reduction-proof.json", sha256: sha(readFileSync(path.join(directory, "targeted-work-reduction-proof.json"))), value: proof };
 }
 function validateFixedProof(fixedProof, captureSha, sourceHash) {
-  const expectedCommand = `WARGUS_PERF_PLAN=${PLAN_ID} WARGUS_CAPTURE_SHA=${captureSha} WARGUS_PERF_FIXED_TICK_OFFSET=${FIXED_TICK_OFFSET} node scripts/verify-successor-fixed-tick.mjs`;
+  const verifierPath = process.env.WARGUS_FIXED_VERIFIER_PATH?.trim() || "scripts/verify-successor-fixed-tick.mjs";
+  if (BASELINE_CAPTURE && !path.isAbsolute(verifierPath)) throw new Error("Baseline fixed-tick proof requires an absolute WARGUS_FIXED_VERIFIER_PATH.");
+  const expectedCommand = `WARGUS_PERF_PLAN=${PLAN_ID} WARGUS_CAPTURE_SHA=${captureSha} WARGUS_PERF_FIXED_TICK_OFFSET=${FIXED_TICK_OFFSET} node ${verifierPath}`;
   if (fixedProof.commit !== captureSha) throw new Error("fixed-tick-proof.json capture SHA does not match WARGUS_CAPTURE_SHA.");
   if (fixedProof.equalityVerdict !== "pass") throw new Error("fixed-tick-proof.json equality verdict must be pass.");
   if (fixedProof.fixedTickOffset !== FIXED_TICK_OFFSET) throw new Error("fixed-tick-proof.json must use the accepted 600-tick offset.");
@@ -245,14 +270,34 @@ function environmentRecord(run, executable, allocation, monitor, captureLock) {
   if (command("hostname", []) !== "halla") throw new Error("Plan " + PLAN_ID + " matrix must run on halla.");
   if (!process.cwd().startsWith("/home/halla/workspaces/")) throw new Error("Plan " + PLAN_ID + " requires an isolated Halla worktree.");
   const gpu = hostGpu();
+  const provenance = reviewedHarnessProvenance();
   return {
     captureSha: run.captureSha, buildMode: "preview", allocation,
     browser: { executable, version: command(executable, ["--version"]) }, gpu,
-    controllerCommit: command("git", ["log", "-1", "--format=%H", "--", "scripts/lib/browser-execution-controller.mjs"]),
+    controllerCommit: provenance.controllerCommit,
+    harnessProvenance: provenance,
     artifacts: { logicalPath: run.logicalPath, directory: run.directory, workspace: run.preflight.artifactWorkspace, root: run.preflight.artifactRoot, owner: run.preflight.preservationOwner },
-    acceptedBaseline: run.baseline, captureLock: { path: captureLock.path, acquiredAt: captureLock.acquiredAt },
-    harnessChecksum: sha(readFileSync(new URL(import.meta.url))), summaryPublisherChecksum: sha(readFileSync(SUMMARY_PUBLISHER_SOURCE)), fixedProof: run.fixedProof, targetedWorkReductionProof: run.targetedWorkReductionProof, hostAtStart: monitor.snapshot()
+    ...(BASELINE_CAPTURE ? { baselineCapture: true } : { acceptedBaseline: run.baseline }), captureLock: { path: captureLock.path, acquiredAt: captureLock.acquiredAt },
+    harnessChecksum: sha(readFileSync(new URL(import.meta.url))), summaryPublisherChecksum: sha(readFileSync(SUMMARY_PUBLISHER_SOURCE)), fixedProof: run.fixedProof, ...(BASELINE_CAPTURE ? {} : { targetedWorkReductionProof: run.targetedWorkReductionProof }), hostAtStart: monitor.snapshot()
   };
+}
+
+function reviewedHarnessProvenance() {
+  if (!BASELINE_CAPTURE) return {
+    coordinatorRoot: process.cwd(),
+    coordinatorCommit: command("git", ["rev-parse", "HEAD"]),
+    controllerCommit: command("git", ["log", "-1", "--format=%H", "--", "scripts/lib/browser-execution-controller.mjs"])
+  };
+  const coordinatorRoot = process.env.WARGUS_COORDINATOR_ROOT?.trim();
+  const coordinatorCommit = process.env.WARGUS_COORDINATOR_COMMIT?.trim();
+  if (!coordinatorRoot || !path.isAbsolute(coordinatorRoot) || !coordinatorCommit) throw new Error("Baseline capture requires absolute WARGUS_COORDINATOR_ROOT and WARGUS_COORDINATOR_COMMIT.");
+  const expectedHarness = realpathSync(path.join(coordinatorRoot, "scripts/run-successor-performance-matrix.mjs"));
+  if (expectedHarness !== realpathSync(new URL(import.meta.url))) throw new Error("Baseline capture is not executing the reviewed coordinator harness.");
+  const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: coordinatorRoot, encoding: "utf8", timeout: 5000 }).trim();
+  const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: coordinatorRoot, encoding: "utf8", timeout: 5000 }).trim();
+  if (head !== coordinatorCommit || status !== "") throw new Error("Baseline coordinator provenance requires the exact clean reviewed commit.");
+  const controllerCommit = execFileSync("git", ["log", "-1", "--format=%H", "--", "scripts/lib/browser-execution-controller.mjs"], { cwd: coordinatorRoot, encoding: "utf8", timeout: 5000 }).trim();
+  return { coordinatorRoot, coordinatorCommit, controllerCommit };
 }
 
 function acceptedBaselineIdentity(artifactRoot, environment = process.env) {
@@ -707,6 +752,7 @@ function successorAcceptance({ mode, baselineFailureKeys, afterFailureKeys, prer
   return { mode, noNewBudgetFailuresPass: noNewPass, medianTrialFrameP95RegressionPass: medianPass, pooledFrameP95RegressionPass: pooledPass, frameP95RegressionPass: regressionPass, absoluteBudgetsPass: absolutePass, incrementalAccepted, absoluteReleaseAccepted, accepted: mode === "incremental" ? incrementalAccepted : absoluteReleaseAccepted };
 }
 function matrixSummary(state, run, monitor, environment) {
+  if (BASELINE_CAPTURE) return baselineMatrixSummary(state, run, monitor, environment);
   const rows = ROWS.map((row) => {
     const trials = state.validTrials.filter((trial) => trial.row.row === row.row);
     const invalid = state.invalidTrials.filter((trial) => trial.row.row === row.row);
@@ -754,6 +800,70 @@ function matrixSummary(state, run, monitor, environment) {
     cleanup: state.cleanup, cleanupError: state.cleanupError, lockReleaseError: state.lockReleaseError,
     pageCloseErrors: state.pageCloseErrors, finalizationErrors: state.finalizationErrors
   };
+}
+
+function baselineReadiness({ captureComplete, validityAndComparabilityPass, fixedTickPass, cleanupPass, lockReleasePass, finalizationPass, absoluteBudgetsPass = null }) {
+  const ready = captureComplete === true && validityAndComparabilityPass === true && fixedTickPass === true && cleanupPass === true && lockReleasePass === true && finalizationPass === true;
+  return { mode: "baseline", captureComplete, validityAndComparabilityPass, fixedTickPass, cleanupPass, lockReleasePass, finalizationPass, absoluteBudgetsPass, ready };
+}
+
+function baselineMatrixSummary(state, run, monitor, environment) {
+  const rows = ROWS.map((row) => {
+    const trials = state.validTrials.filter((trial) => trial.row.row === row.row);
+    const invalid = state.invalidTrials.filter((trial) => trial.row.row === row.row);
+    const qualified = trials.length === TRIALS_PER_ROW && trials.every((trial) => trial.disposition.qualified);
+    const frameTrials = trials.map((trial) => ({ frameP95Ms: trial.statistics.frame.p95Ms, frameSamples: trial.stopped.frameSamples }));
+    const robustFrameP95 = qualified ? robustFrameP95Acceptance({ baselineTrials: frameTrials, afterTrials: frameTrials }) : null;
+    const failureKeys = [...new Set(trials.flatMap((trial) => Object.entries(trial.disposition.budgetFailures).filter(([, failed]) => failed).map(([key]) => key)))];
+    const budgetFailureUnion = Object.fromEntries([...new Set(trials.flatMap((trial) => Object.keys(trial.disposition.budgetFailures)))].map((key) => [key, failureKeys.includes(key)]));
+    return {
+      row,
+      trials: trials.map((trial) => ({ file: trial.file, slot: trial.slot, replacement: trial.replacement, disposition: trial.disposition })),
+      invalid,
+      statistics: {
+        medianTrialFrameP95Ms: robustFrameP95?.baselineMedianTrialFrameP95Ms ?? null,
+        pooledFrameP95Ms: robustFrameP95?.pooledBaselineFrameP95Ms ?? null
+      },
+      absoluteBudgetFailureKeys: failureKeys,
+      worstTrialDispositionUnion: { validSlots: trials.length, qualified, dataUnqualification: trials.flatMap((trial) => trial.disposition.dataUnqualification), budgetFailures: budgetFailureUnion, invalidAttempts: invalid.length }
+    };
+  });
+  const qualifiedTrialCount = state.validTrials.filter((trial) => trial.disposition.qualified).length;
+  const captureComplete = qualifiedTrialCount === ROWS.length * TRIALS_PER_ROW;
+  const cleanupPass = !state.cleanupError && Array.isArray(state.cleanup?.residualPids) && state.cleanup.residualPids.length === 0 && Array.isArray(state.cleanup?.openPorts) && state.cleanup.openPorts.length === 0;
+  const lockReleasePass = !state.lockReleaseError && typeof state.lockReleasedAt === "string";
+  const finalizationPass = state.finalizationErrors.length === 0 && state.pageCloseErrors.length === 0;
+  const comparability = baselineComparability(state, environment);
+  const fixedTickPass = run.fixedProof?.value?.equalityVerdict === "pass";
+  const absoluteBudgetsPass = rows.every((row) => row.absoluteBudgetFailureKeys.length === 0);
+  const acceptance = baselineReadiness({ captureComplete, validityAndComparabilityPass: comparability.pass, fixedTickPass, cleanupPass, lockReleasePass, finalizationPass, absoluteBudgetsPass });
+  return {
+    schemaVersion: 4, mode: "baseline", captureComplete, ready: acceptance.ready, qualifiedTrialCount, invalidTrialCount: state.invalidTrials.length, budgets: BUDGETS,
+    acceptance, lifecycle: { cleanupPass, lockReleasePass, finalizationPass, environmentAndFingerprintPass: comparability.pass, fixedTickPass }, comparability,
+    run: { captureSha: run.captureSha, logicalPath: run.logicalPath, directory: run.directory, stamp: run.stamp },
+    environment, profileLocks: Object.fromEntries(state.locks), rows, resources: monitor.snapshot(),
+    cleanup: state.cleanup, cleanupError: state.cleanupError, lockReleaseError: state.lockReleaseError,
+    pageCloseErrors: state.pageCloseErrors, finalizationErrors: state.finalizationErrors
+  };
+}
+
+function baselineComparability(state, environment) {
+  const qualifications = state.validTrials.map((trial) => trial.qualification);
+  const commonRenderer = qualifications.length > 0 && qualifications.every((qualification) => stableJson({ renderer: qualification.renderer, vendor: qualification.vendor, executable: qualification.executable, version: qualification.version, gpu: qualification.gpu }) === stableJson({ renderer: qualifications[0].renderer, vendor: qualifications[0].vendor, executable: qualifications[0].executable, version: qualifications[0].version, gpu: qualifications[0].gpu }));
+  const checks = {
+    baselineMode: BASELINE_CAPTURE && environment?.baselineCapture === true && environment?.acceptedBaseline === undefined && environment?.targetedWorkReductionProof === undefined,
+    harnessProvenance: environment?.harnessProvenance?.coordinatorCommit === process.env.WARGUS_COORDINATOR_COMMIT && environment?.controllerCommit === environment?.harnessProvenance?.controllerCommit,
+    commonRenderer,
+    rows: ROWS.every((row) => {
+      const trials = state.validTrials.filter((trial) => trial.row.row === row.row);
+      return trials.length === TRIALS_PER_ROW && trials.every((trial) => trial.disposition.qualified && trial.row.profile === row.profile && stableJson(trial.row.viewport) === stableJson(row.viewport) && trial.qualification.browserViewport.width === row.viewport.width && trial.qualification.browserViewport.height === row.viewport.height);
+    }),
+    profileLocks: state.validTrials.every((trial) => {
+      const lock = state.locks.get(trial.row.profile);
+      return lock?.definitionHash === trial.profileDefinition.hash && lock?.fingerprintHash === trial.initialFingerprint.hash;
+    })
+  };
+  return { pass: Object.values(checks).every(Boolean), checks };
 }
 
 function successorComparability(state, run, environment) {
@@ -814,11 +924,13 @@ function verifyChecksums(directory) {
 }
 
 if (process.env.WARGUS_MATRIX_GUARD_CHECK === "1") {
-  if (process.env.WARGUS_CAPTURE_SHA?.trim()) assertCleanCaptureAttribution(process.env.WARGUS_CAPTURE_SHA.trim());
+  if (BASELINE_CAPTURE && process.env.WARGUS_CAPTURE_SHA?.trim() !== BASELINE_TARGET_SHA) throw new Error("Baseline guard requires exact WARGUS_CAPTURE_SHA " + BASELINE_TARGET_SHA + ".");
+  if (!BASELINE_CAPTURE && process.env.WARGUS_CAPTURE_SHA?.trim()) assertCleanCaptureAttribution(process.env.WARGUS_CAPTURE_SHA.trim());
   if (full && preflightOnly) throw new Error("Set only one Plan " + PLAN_ID + " matrix mode.");
-  console.log("Plan " + PLAN_ID + " matrix guard check passed.");
+  console.log((BASELINE_CAPTURE ? "Baseline Plan " : "Plan ") + PLAN_ID + " matrix guard check passed.");
 } else if (full || preflightOnly) {
   if (full && preflightOnly) throw new Error("Set exactly one of WARGUS_RUN_FULL_MATRIX=1 or WARGUS_MATRIX_PREFLIGHT_ONLY=1.");
+  if (BASELINE_CAPTURE && !full) throw new Error("Baseline capture supports full matrix mode only.");
   await main(full ? "full" : "preflight");
 } else {
   throw new Error("Refusing browser work: set WARGUS_MATRIX_PREFLIGHT_ONLY=1 or WARGUS_RUN_FULL_MATRIX=1.");
