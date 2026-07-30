@@ -18,8 +18,10 @@ const SOURCE_AI_RESOURCE_SEARCH_RANGE_TILES = 15;
 const compareSourceIds = new Intl.Collator().compare;
 
 function appendWorldUnits(world: WorldState, ...units: WorldUnit[]): void {
-  world.units.push(...units);
-  for (const unit of units) registerWorldOccupant(world, unit);
+  for (const unit of units) {
+    world.units.push(unit);
+    registerWorldOccupant(world, unit);
+  }
 }
 
 function replaceWorldUnits(world: WorldState, units: WorldUnit[]): void {

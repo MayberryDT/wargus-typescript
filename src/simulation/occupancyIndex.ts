@@ -11,19 +11,29 @@ type OccupancyCache = {
   snapshots: Map<WorldUnit, WorldOccupantSnapshot>;
 };
 type DurationKey = "query" | "register" | "unregister" | "transition" | "invalidation" | "rebuild";
+type DurationSamples = { values: number[]; next: number };
 
 const caches = new WeakMap<WorldState, OccupancyCache>();
-const durationSamples: Record<DurationKey, number[]> = { query: [], register: [], unregister: [], transition: [], invalidation: [], rebuild: [] };
+const makeDurationSamples = (): DurationSamples => ({ values: [], next: 0 });
+const durationSamples: Record<DurationKey, DurationSamples> = {
+  query: makeDurationSamples(), register: makeDurationSamples(), unregister: makeDurationSamples(),
+  transition: makeDurationSamples(), invalidation: makeDurationSamples(), rebuild: makeDurationSamples()
+};
 const counts = {
   queries: 0, candidatesVisited: 0, registers: 0, unregisters: 0, transitions: 0,
   invalidations: 0, rebuilds: 0, maintenanceTotalMs: 0, fullScanFallbacks: 0, parityFailures: 0
 };
+let parityMode: "off" | "sampled" | "full" = "off";
 const now = (): number => globalThis.performance?.now() ?? 0;
 
 function recordDuration(key: DurationKey, startedAt: number, maintenance: boolean): void {
   const elapsed = Math.max(0, now() - startedAt);
-  if (durationSamples[key].length === 2048) durationSamples[key].shift();
-  durationSamples[key].push(elapsed);
+  const samples = durationSamples[key];
+  if (samples.values.length < 2048) samples.values.push(elapsed);
+  else {
+    samples.values[samples.next] = elapsed;
+    samples.next = (samples.next + 1) % samples.values.length;
+  }
   if (maintenance) counts.maintenanceTotalMs += elapsed;
 }
 
@@ -42,24 +52,31 @@ export function resetWorldOccupancyDiagnostics(): void {
     queries: 0, candidatesVisited: 0, registers: 0, unregisters: 0, transitions: 0,
     invalidations: 0, rebuilds: 0, maintenanceTotalMs: 0, fullScanFallbacks: 0, parityFailures: 0
   });
-  for (const samples of Object.values(durationSamples)) samples.length = 0;
+  for (const samples of Object.values(durationSamples)) {
+    samples.values.length = 0;
+    samples.next = 0;
+  }
+}
+
+export function setWorldOccupancyParityMode(mode: "off" | "sampled" | "full"): void {
+  parityMode = mode;
 }
 
 export function snapshotWorldOccupancyDiagnostics() {
   return {
     "plan023.occupancy.queries": counts.queries,
     "plan023.occupancy.candidatesVisited": counts.candidatesVisited,
-    "plan023.occupancy.queryDurationMs": summarize(durationSamples.query),
+    "plan023.occupancy.queryDurationMs": summarize(durationSamples.query.values),
     "plan023.occupancy.registers": counts.registers,
-    "plan023.occupancy.registerDurationMs": summarize(durationSamples.register),
+    "plan023.occupancy.registerDurationMs": summarize(durationSamples.register.values),
     "plan023.occupancy.unregisters": counts.unregisters,
-    "plan023.occupancy.unregisterDurationMs": summarize(durationSamples.unregister),
+    "plan023.occupancy.unregisterDurationMs": summarize(durationSamples.unregister.values),
     "plan023.occupancy.transitions": counts.transitions,
-    "plan023.occupancy.transitionDurationMs": summarize(durationSamples.transition),
+    "plan023.occupancy.transitionDurationMs": summarize(durationSamples.transition.values),
     "plan023.occupancy.invalidations": counts.invalidations,
-    "plan023.occupancy.invalidationDurationMs": summarize(durationSamples.invalidation),
+    "plan023.occupancy.invalidationDurationMs": summarize(durationSamples.invalidation.values),
     "plan023.occupancy.rebuilds": counts.rebuilds,
-    "plan023.occupancy.rebuildDurationMs": summarize(durationSamples.rebuild),
+    "plan023.occupancy.rebuildDurationMs": summarize(durationSamples.rebuild.values),
     "plan023.occupancy.maintenanceTotalMs": counts.maintenanceTotalMs,
     "plan023.occupancy.fullScanFallbacks": counts.fullScanFallbacks,
     "plan023.occupancy.parityFailures": counts.parityFailures
@@ -133,11 +150,25 @@ export function queryWorldOccupantsAtTileFullScan(world: WorldState, tileX: numb
   return world.units.filter((unit) => coveredTileKeys(world, unit).includes(key));
 }
 
+function cacheMatchesAuthoritativeWorld(cache: OccupancyCache, world: WorldState): boolean {
+  if (cache.unitsReference !== world.units || cache.expectedLength !== world.units.length) return false;
+  for (let rank = 0; rank < world.units.length; rank += 1) {
+    const unit = world.units[rank];
+    const snapshot = cache.snapshots.get(unit);
+    if (cache.ranks.get(unit) !== rank || !snapshot
+      || snapshot.x !== unit.x || snapshot.y !== unit.y
+      || snapshot.tileWidth !== unit.tileWidth || snapshot.tileHeight !== unit.tileHeight) return false;
+  }
+  return true;
+}
+
 function queryCache(world: WorldState): OccupancyCache | null {
   const existing = caches.get(world);
-  if (existing?.fallbackOnce) {
-    existing.fallbackOnce = false;
-    existing.valid = false;
+  if (existing?.fallbackOnce || (existing?.valid && !cacheMatchesAuthoritativeWorld(existing, world))) {
+    if (existing) {
+      existing.fallbackOnce = false;
+      existing.valid = false;
+    }
     counts.fullScanFallbacks += 1;
     return null;
   }
@@ -146,35 +177,59 @@ function queryCache(world: WorldState): OccupancyCache | null {
 }
 
 export function queryWorldOccupantsAtTile(world: WorldState, tileX: number, tileY: number): WorldUnit[] {
-  const startedAt = now();
   counts.queries += 1;
   const cache = queryCache(world);
+  const startedAt = now();
   const result = cache ? [...(cache.buckets.get(tileY * world.map.width + tileX) ?? [])] : queryWorldOccupantsAtTileFullScan(world, tileX, tileY);
   counts.candidatesVisited += cache ? result.length : world.units.length;
   recordDuration("query", startedAt, false);
-  return result;
+  if (!cache || parityMode === "off" || (parityMode === "sampled" && counts.queries !== 1 && counts.queries % 257 !== 0)) return result;
+  const authoritative = queryWorldOccupantsAtTileFullScan(world, tileX, tileY);
+  if (result.length === authoritative.length && result.every((unit, index) => unit === authoritative[index])) return result;
+  counts.parityFailures += 1;
+  counts.fullScanFallbacks += 1;
+  cache.valid = false;
+  return authoritative;
+}
+
+export function queryWorldOccupantsInFootprintFullScan(world: WorldState, left: number, top: number, width: number, height: number): WorldUnit[] {
+  const keys = new Set<number>();
+  for (let y = Math.max(0, top); y < Math.min(world.map.height, top + height); y += 1) {
+    for (let x = Math.max(0, left); x < Math.min(world.map.width, left + width); x += 1) keys.add(y * world.map.width + x);
+  }
+  return world.units.filter((unit) => coveredTileKeys(world, unit).some((key) => keys.has(key)));
 }
 
 export function queryWorldOccupantsInFootprint(world: WorldState, left: number, top: number, width: number, height: number): WorldUnit[] {
-  const startedAt = now();
   counts.queries += 1;
   const cache = queryCache(world);
+  const startedAt = now();
   if (!cache) {
-    const keys = new Set<number>();
-    for (let y = top; y < top + height; y += 1) for (let x = left; x < left + width; x += 1) keys.add(y * world.map.width + x);
-    const result = world.units.filter((unit) => coveredTileKeys(world, unit).some((key) => keys.has(key)));
+    const result = queryWorldOccupantsInFootprintFullScan(world, left, top, width, height);
     counts.candidatesVisited += world.units.length;
     recordDuration("query", startedAt, false);
     return result;
   }
   const seen = new Set<WorldUnit>();
-  for (let y = top; y < top + height; y += 1) {
-    for (let x = left; x < left + width; x += 1) for (const unit of cache.buckets.get(y * world.map.width + x) ?? []) seen.add(unit);
+  let candidateVisits = 0;
+  for (let y = Math.max(0, top); y < Math.min(world.map.height, top + height); y += 1) {
+    for (let x = Math.max(0, left); x < Math.min(world.map.width, left + width); x += 1) {
+      for (const unit of cache.buckets.get(y * world.map.width + x) ?? []) {
+        candidateVisits += 1;
+        seen.add(unit);
+      }
+    }
   }
   const result = [...seen].sort((leftUnit, rightUnit) => (cache.ranks.get(leftUnit) ?? 0) - (cache.ranks.get(rightUnit) ?? 0));
-  counts.candidatesVisited += result.length;
+  counts.candidatesVisited += candidateVisits;
   recordDuration("query", startedAt, false);
-  return result;
+  if (parityMode === "off" || (parityMode === "sampled" && counts.queries !== 1 && counts.queries % 257 !== 0)) return result;
+  const authoritative = queryWorldOccupantsInFootprintFullScan(world, left, top, width, height);
+  if (result.length === authoritative.length && result.every((unit, index) => unit === authoritative[index])) return result;
+  counts.parityFailures += 1;
+  counts.fullScanFallbacks += 1;
+  cache.valid = false;
+  return authoritative;
 }
 
 export function registerWorldOccupant(world: WorldState, unit: WorldUnit): void {

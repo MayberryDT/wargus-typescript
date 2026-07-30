@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -26,6 +26,7 @@ try {
   assert.equal(compiler.status, 0, `Occupancy-index fixture compile failed:\n${compiler.stdout}${compiler.stderr}`);
 
   const occupancy = createRequire(import.meta.url)(join(output, "simulation/occupancyIndex.js"));
+  occupancy.setWorldOccupancyParityMode("full");
   const makeUnit = (id, tileX, tileY, tileWidth = 1, tileHeight = 1) => ({
     id, x: tileX * 32 + 16, y: tileY * 32 + 16, tileWidth, tileHeight
   });
@@ -90,6 +91,45 @@ try {
     assert.ok(finalDiagnostics[`plan023.occupancy.${key}DurationMs`].sampleCount > 0, `${key} duration must be recorded.`);
   }
   assert.ok(finalDiagnostics["plan023.occupancy.maintenanceTotalMs"] >= 0);
+
+  occupancy.setWorldOccupancyParityMode("off");
+  const reorderA = makeUnit("reorder-a", 3, 3);
+  const reorderB = makeUnit("reorder-b", 3, 3);
+  const driftWorld = { map: { width: 16, height: 16 }, tileSize: 32, units: [reorderA, reorderB] };
+  occupancy.resetWorldOccupancyDiagnostics();
+  assert.deepEqual(occupancy.queryWorldOccupantsAtTile(driftWorld, 3, 3), [reorderA, reorderB]);
+  driftWorld.units.reverse();
+  assert.deepEqual(occupancy.queryWorldOccupantsAtTile(driftWorld, 3, 3), [reorderB, reorderA],
+    "Same-reference order drift must use the authoritative full-scan result.");
+  assert.equal(occupancy.snapshotWorldOccupancyDiagnostics()["plan023.occupancy.fullScanFallbacks"], 1);
+  occupancy.queryWorldOccupantsAtTile(driftWorld, 3, 3);
+  reorderA.x = 6 * 32 + 16;
+  reorderA.y = 6 * 32 + 16;
+  assert.deepEqual(occupancy.queryWorldOccupantsAtTile(driftWorld, 3, 3), [reorderB],
+    "Unowned position drift must not return stale former-tile membership.");
+  assert.equal(occupancy.snapshotWorldOccupancyDiagnostics()["plan023.occupancy.fullScanFallbacks"], 2);
+  assert.deepEqual(occupancy.queryWorldOccupantsAtTile(driftWorld, 6, 6), [reorderA],
+    "The query after a drift fallback must rebuild current membership.");
+
+  occupancy.resetWorldOccupancyDiagnostics();
+  for (let index = 0; index < 2100; index += 1) occupancy.queryWorldOccupantsAtTile(driftWorld, 3, 3);
+  assert.equal(occupancy.snapshotWorldOccupancyDiagnostics()["plan023.occupancy.queryDurationMs"].sampleCount, 2048,
+    "Hot-path timing must remain bounded without shifting the sample array.");
+
+  const ordersSource = readFileSync(resolve(root, "src/simulation/orders.ts"), "utf8");
+  const passabilitySource = readFileSync(resolve(root, "src/simulation/passability.ts"), "utf8");
+  const saveSource = readFileSync(resolve(root, "src/wargus/saveGame.ts"), "utf8");
+  const fixtureBoundary = ordersSource.indexOf("export function runPlan014AiScoutEligibilityFixture");
+  const runtimeOrdersSource = ordersSource.slice(0, fixtureBoundary);
+  assert.equal(runtimeOrdersSource.split("appendWorldUnits(").length - 2, 11, "All eleven production append seams must route through registration.");
+  assert.equal(runtimeOrdersSource.split("replaceWorldUnits(").length - 2, 11, "All eleven production replacements must route through unregister and invalidation.");
+  assert.ok(runtimeOrdersSource.includes("for (const unit of units) {\n    world.units.push(unit);\n    registerWorldOccupant(world, unit);"),
+    "Batch append must register each unit immediately after its authoritative append.");
+  assert.ok(passabilitySource.includes("for (const unit of queryWorldOccupantsAtTile(world, tileX, tileY))"),
+    "Passability blocker enumeration must use ordered tile candidates.");
+  assert.ok(runtimeOrdersSource.includes("queryWorldOccupantsAtTile(world, unitTile.x, unitTile.y).find"),
+    "Stack recovery must retain first-match semantics over ordered tile candidates.");
+  assert.equal(/occupancy(?:Index|Cache|Diagnostics)/i.test(saveSource), false, "Transient occupancy state must not enter save serialization.");
 } finally {
   rmSync(output, { recursive: true, force: true });
 }
