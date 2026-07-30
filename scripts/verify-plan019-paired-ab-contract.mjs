@@ -184,20 +184,58 @@ const scaleAwareJustOverFivePercent = classifyPairedDiagnostic({
   baseTrials: scaleAwareBaseTrials,
   plan019Trials: scaleAwareBaseTrials.map((trial) => ({
     ...trial,
-    statistics: { frame: { p95Ms: 67.3051 } },
-    stopped: { frameSamples: [67.3051, 67.3051, 67.3051, 67.3051] }
+    statistics: { frame: { p95Ms: 67.4 } },
+    stopped: { frameSamples: [67.4, 67.4, 67.4, 67.4] }
   }))
 });
 assert.deepEqual(scaleAwareJustOverFivePercent.conditions, {
   medianOverFivePercent: true,
   atLeastElevenPairsOverFivePercent: true,
   pooledOverFivePercent: true
-}, "A genuine regression above the scale-aware ULP tolerance must fail every strict threshold.");
+}, "The smallest meaningful 0.1ms regression step above the boundary must fail every strict threshold.");
 assert.equal(scaleAwareJustOverFivePercent.realRegression, true);
 
-for (let baseTenths = 1; baseTenths <= 10_000; baseTenths += 1) {
+const positiveBoundaryNoise = 52.5000000000015;
+const positiveBoundaryNoiseResult = classifyPairedDiagnostic({
+  baseTrials,
+  plan019Trials: withRegressions(15, {
+    frameP95Ms: positiveBoundaryNoise,
+    frameSamples: [16.7, 33.3, positiveBoundaryNoise, positiveBoundaryNoise]
+  })
+});
+assert.deepEqual(positiveBoundaryNoiseResult.conditions, {
+  medianOverFivePercent: false,
+  atLeastElevenPairsOverFivePercent: false,
+  pooledOverFivePercent: false
+}, "Positive timestamp noise below the 0.1ms decision precision must not fail the +5% boundary.");
+assert.ok(
+  positiveBoundaryNoiseResult.medianPairedFrameP95RegressionPercent > 5,
+  "The reported paired delta must retain its raw noisy value."
+);
+assert.equal(
+  positiveBoundaryNoiseResult.pooledPlan019FrameP95Ms,
+  positiveBoundaryNoise,
+  "The reported pooled p95 must retain its raw noisy value."
+);
+
+const negativeBoundaryNoise = 52.499999999998;
+const negativeBoundaryNoiseResult = classifyPairedDiagnostic({
+  baseTrials,
+  plan019Trials: withRegressions(15, {
+    frameP95Ms: negativeBoundaryNoise,
+    frameSamples: [16.7, 33.3, negativeBoundaryNoise, negativeBoundaryNoise]
+  })
+});
+assert.deepEqual(negativeBoundaryNoiseResult.conditions, {
+  medianOverFivePercent: false,
+  atLeastElevenPairsOverFivePercent: false,
+  pooledOverFivePercent: false
+}, "Negative timestamp noise below the 0.1ms decision precision must not fail the +5% boundary.");
+assert.equal(negativeBoundaryNoiseResult.pooledPlan019FrameP95Ms, negativeBoundaryNoise);
+
+for (let baseTenths = 20; baseTenths <= 10_000; baseTenths += 20) {
   const baseValue = baseTenths / 10;
-  const exactFivePercentValue = baseTenths * 105 / 1_000;
+  const exactFivePercentValue = baseTenths * 21 / 200;
   const sweepBaseTrials = baseTrials.map((trial) => ({
     ...trial,
     statistics: { frame: { p95Ms: baseValue } },
@@ -221,7 +259,7 @@ for (let baseTenths = 1; baseTenths <= 10_000; baseTenths += 1) {
   assert.equal(
     Object.values(sweepResult.conditions).some(Boolean),
     false,
-    `Exact +5% decimal sweep case ${baseValue} -> ${exactFivePercentValue} must pass.`
+    `Exact +5% 0.1ms-lattice sweep case ${baseValue} -> ${exactFivePercentValue} must pass.`
   );
 }
 

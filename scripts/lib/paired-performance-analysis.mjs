@@ -11,6 +11,8 @@ import path from "node:path";
 const REQUIRED_PAIR_COUNT = 15;
 const REGRESSION_THRESHOLD_PERCENT = 5;
 const REQUIRED_REGRESSED_PAIR_COUNT = 11;
+// Captured browser timestamps have nominal 0.1ms precision; smaller deviations are floating noise.
+const DECISION_PRECISION_MS = 0.1;
 const MANIFEST_NAME = "sha256.json";
 
 export function buildAlternatingPairs(count) {
@@ -181,8 +183,10 @@ function validateTrial(trial, label) {
 }
 
 function exceedsRegressionThreshold(base, after) {
-  const scaledAfter = after * 100;
-  const scaledThreshold = base * (100 + REGRESSION_THRESHOLD_PERCENT);
+  const decisionBase = Math.round(base / DECISION_PRECISION_MS) * DECISION_PRECISION_MS;
+  const decisionAfter = Math.round(after / DECISION_PRECISION_MS) * DECISION_PRECISION_MS;
+  const scaledAfter = decisionAfter * 100;
+  const scaledThreshold = decisionBase * (100 + REGRESSION_THRESHOLD_PERCENT);
   const tolerance = Number.EPSILON
     * Math.max(1, Math.abs(scaledAfter), Math.abs(scaledThreshold))
     * 8;
