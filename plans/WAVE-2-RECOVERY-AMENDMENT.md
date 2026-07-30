@@ -29,7 +29,7 @@ video/render groups, Git worktrees, SHA-256 retained artifacts.
   `5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/20260730T075608266Z` and
   manifest SHA-256
   `21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06`
-  as read-only baseline inputs. Preserve the superseded schema-version 3
+  as read-only baseline inputs. Preserve the superseded schema-version 1
   packet as immutable historical evidence; do not load it for successors.
 - Do not relabel the failed 2026-07-29 Plan 019–021 packets as accepted and do
   not delete them.
@@ -89,7 +89,7 @@ trials, zero invalid attempts, zero replacements, `ready: true`, and
 comparability, fixed-tick, and checksum gates passed; residual PIDs and open
 ports were empty. Independent audit returned zero findings. The exact identity
 is pinned in the successor loader, so Task 4B Step 4 is complete and successor
-recapture may proceed serially. Preserve the schema-version 3 Plan 018 packet
+recapture may proceed serially. Preserve the schema-version 1 Plan 018 packet
 and every failed or diagnostic packet as immutable historical evidence.
 
 ---

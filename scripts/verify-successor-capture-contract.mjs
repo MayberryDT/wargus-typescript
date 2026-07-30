@@ -320,10 +320,15 @@ assert.doesNotThrow(() => helpers.validateAcceptedBaselineSummary(acceptedSchema
   "The pinned schema-v4 49-trial baseline summary shape must load.");
 assert.throws(() => helpers.validateAcceptedBaselineSummary({
   ...acceptedSchema4Summary,
-  schemaVersion: 3,
+  schemaVersion: 1,
   qualifiedTrialCount: 21
 }, pinnedBaseline.captureSha), /schema.*identity.*readiness.*canonical row count/i,
-  "The historical schema-v3 21-trial packet must remain rejected by the schema-v4 loader.");
+  "The historical schema-v1 21-trial Plan 018 packet must remain rejected by the schema-v4 loader.");
+assert.throws(() => helpers.validateAcceptedBaselineSummary({
+  ...acceptedSchema4Summary,
+  schemaVersion: 3
+}, pinnedBaseline.captureSha), /schema.*identity.*readiness.*canonical row count/i,
+  "A synthetic schema-v3 packet must remain rejected by the schema-v4 loader.");
 
 assert.doesNotThrow(() => helpers.validateCaptureAttribution("abc", "abc", ""));
 assert.throws(() => helpers.validateCaptureAttribution("abc", "def", ""), /capture SHA/i);
