@@ -23,7 +23,7 @@ const counts = {
   queries: 0, candidatesVisited: 0, registers: 0, unregisters: 0, transitions: 0,
   invalidations: 0, rebuilds: 0, maintenanceTotalMs: 0, fullScanFallbacks: 0, parityFailures: 0
 };
-let parityMode: "off" | "sampled" | "full" = "off";
+let parityMode: "off" | "sampled" | "full" = "sampled";
 const now = (): number => globalThis.performance?.now() ?? 0;
 
 function recordDuration(key: DurationKey, startedAt: number, maintenance: boolean): void {
@@ -162,9 +162,12 @@ function cacheMatchesAuthoritativeWorld(cache: OccupancyCache, world: WorldState
   return true;
 }
 
-function queryCache(world: WorldState): OccupancyCache | null {
+function queryCache(world: WorldState, validateAuthoritativeState: boolean): OccupancyCache | null {
   const existing = caches.get(world);
-  if (existing?.fallbackOnce || (existing?.valid && !cacheMatchesAuthoritativeWorld(existing, world))) {
+  const validatesExisting = Boolean(existing?.valid && validateAuthoritativeState);
+  if (validatesExisting) counts.candidatesVisited += world.units.length;
+  const validationFailed = validatesExisting && existing ? !cacheMatchesAuthoritativeWorld(existing, world) : false;
+  if (existing?.fallbackOnce || validationFailed) {
     if (existing) {
       existing.fallbackOnce = false;
       existing.valid = false;
@@ -178,8 +181,11 @@ function queryCache(world: WorldState): OccupancyCache | null {
 
 export function queryWorldOccupantsAtTile(world: WorldState, tileX: number, tileY: number): WorldUnit[] {
   counts.queries += 1;
-  const cache = queryCache(world);
-  const startedAt = now();
+  let startedAt = now();
+  const rebuildsBefore = counts.rebuilds;
+  const validateAuthoritativeState = parityMode === "full" || (parityMode === "sampled" && (counts.queries === 1 || counts.queries % 257 === 0));
+  const cache = queryCache(world, validateAuthoritativeState);
+  if (counts.rebuilds !== rebuildsBefore) startedAt = now();
   const result = cache ? [...(cache.buckets.get(tileY * world.map.width + tileX) ?? [])] : queryWorldOccupantsAtTileFullScan(world, tileX, tileY);
   counts.candidatesVisited += cache ? result.length : world.units.length;
   recordDuration("query", startedAt, false);
@@ -202,8 +208,11 @@ export function queryWorldOccupantsInFootprintFullScan(world: WorldState, left: 
 
 export function queryWorldOccupantsInFootprint(world: WorldState, left: number, top: number, width: number, height: number): WorldUnit[] {
   counts.queries += 1;
-  const cache = queryCache(world);
-  const startedAt = now();
+  let startedAt = now();
+  const rebuildsBefore = counts.rebuilds;
+  const validateAuthoritativeState = parityMode === "full" || (parityMode === "sampled" && (counts.queries === 1 || counts.queries % 257 === 0));
+  const cache = queryCache(world, validateAuthoritativeState);
+  if (counts.rebuilds !== rebuildsBefore) startedAt = now();
   if (!cache) {
     const result = queryWorldOccupantsInFootprintFullScan(world, left, top, width, height);
     counts.candidatesVisited += world.units.length;
