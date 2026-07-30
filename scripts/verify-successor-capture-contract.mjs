@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { publishChecksummedSummary, summaryPublicationOperations } from "./lib/checksummed-summary-publisher.mjs";
+import { cleanupDisposableWorktree } from "./lib/disposable-worktree-cleanup.mjs";
 
 const source = readFileSync("scripts/run-successor-performance-matrix.mjs", "utf8");
 const fixedTickSource = readFileSync("scripts/verify-successor-fixed-tick.mjs", "utf8");
@@ -95,7 +96,46 @@ const rejectedWave2Mode = spawnSync(process.execPath, ["scripts/run-wave2-succes
 });
 assert.notEqual(rejectedWave2Mode.status, 0, "The Step 5 coordinator must reject non-incremental acceptance mode.");
 assert.doesNotMatch(wave2CoordinatorSource, /comm=,args=|process\.argv/, "Coordinator evidence must not capture process argv.");
+assert.doesNotMatch(wave2CoordinatorSource, /const matrix = spawnSync\(process\.execPath, \[matrixHarness\], \{[^;]+timeout:/s,
+  "Successor coordinator must not impose a parent-only timeout that bypasses matrix finally cleanup.");
+assert.doesNotMatch(baselineCoordinatorSource, /const matrix = spawnSync\(process\.execPath, \[matrixHarness\], \{[^;]+timeout:/s,
+  "Baseline coordinator must not impose a parent-only timeout that bypasses matrix finally cleanup.");
 assert.equal(packageJson.scripts["capture:wave2-successor"], "node scripts/run-wave2-successor-capture.mjs");
+
+const successfulCleanupSequence = [];
+const successfulCleanup = cleanupDisposableWorktree({
+  nodeModulesLinked: true,
+  worktreeAdded: true,
+  targetWorktree: "/owned/worktree",
+  unlinkOwnedNodeModules: () => { successfulCleanupSequence.push("unlink"); },
+  removeOwnedWorktree: () => { successfulCleanupSequence.push("remove"); }
+});
+assert.deepEqual(successfulCleanupSequence, ["unlink", "remove"]);
+assert.deepEqual(successfulCleanup, []);
+
+const rejectedOwnershipSequence = [];
+const rejectedOwnershipCleanup = cleanupDisposableWorktree({
+  nodeModulesLinked: true,
+  worktreeAdded: true,
+  targetWorktree: "/preserved/worktree",
+  unlinkOwnedNodeModules: () => { rejectedOwnershipSequence.push("unlink"); throw new Error("replacement path rejected"); },
+  removeOwnedWorktree: () => { rejectedOwnershipSequence.push("remove"); }
+});
+assert.deepEqual(rejectedOwnershipSequence, ["unlink"], "Ownership rejection must prevent forced worktree removal.");
+assert.equal(rejectedOwnershipCleanup.length, 1);
+assert.match(rejectedOwnershipCleanup[0].message, /preserved.*\/preserved\/worktree.*replacement path rejected/i);
+
+const failedRemovalSequence = [];
+const failedRemovalCleanup = cleanupDisposableWorktree({
+  nodeModulesLinked: true,
+  worktreeAdded: true,
+  targetWorktree: "/owned/worktree",
+  unlinkOwnedNodeModules: () => { failedRemovalSequence.push("unlink"); },
+  removeOwnedWorktree: () => { failedRemovalSequence.push("remove"); throw new Error("remove failed"); }
+});
+assert.deepEqual(failedRemovalSequence, ["unlink", "remove"]);
+assert.equal(failedRemovalCleanup.length, 1);
+assert.match(failedRemovalCleanup[0].message, /remove failed/);
 
 assert.equal(helpers.commandPairReady({
   inputToCommandDelta: 2,

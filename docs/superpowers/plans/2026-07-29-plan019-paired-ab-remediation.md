@@ -393,7 +393,12 @@ creates one disposable detached worktree at the frozen target, links the
 coordinator's ignored `node_modules`, runs the target asset and build gates,
 uses the current fixed-tick verifier and matrix harness by absolute path,
 records external coordinator provenance without process argv or secrets, and
-removes only its exact owned link and worktree in `finally`.
+does not impose a parent-only timeout on the matrix process. The matrix
+harness's own no-progress watchdog, operation deadlines, resource abort, and
+asynchronous `finally` cleanup remain authoritative. Coordinator `finally`
+removes the disposable worktree only after verifying and unlinking its owned
+`node_modules` symlink. If that identity check or unlink fails, it preserves
+the worktree and reports cleanup failure instead of forcing removal.
 
 | Plan | Frozen target | Canonical rows |
 |---|---|---|

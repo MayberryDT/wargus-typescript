@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { preflightArtifactRoot } from "./lib/browser-execution-controller.mjs";
+import { cleanupDisposableWorktree } from "./lib/disposable-worktree-cleanup.mjs";
 
 const TARGET_SHA = "5b7d9cc81072c8aeda1ce1a9c22602569e1a691b";
 const PLAN_ID = "018";
@@ -104,23 +105,22 @@ async function main() {
       WARGUS_RUN_FULL_MATRIX: "1"
     };
     delete matrixEnvironment.WARGUS_PERF_ACCEPTANCE_MODE;
-    const matrix = spawnSync(process.execPath, [matrixHarness], { cwd: targetWorktree, env: matrixEnvironment, encoding: "utf8", timeout: 60 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 });
+    const matrix = spawnSync(process.execPath, [matrixHarness], { cwd: targetWorktree, env: matrixEnvironment, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     if (matrix.error || matrix.status !== 0) throw new Error(`Plan 018 baseline matrix failed:\n${matrix.stdout ?? ""}${matrix.stderr ?? ""}${matrix.error?.message ?? ""}`);
     console.log(JSON.stringify({ ready: true, artifactDirectory, targetSha: TARGET_SHA, coordinatorCommit }, null, 2));
   } catch (error) {
     primaryError = error;
   } finally {
-    const cleanupErrors = [];
-    if (nodeModulesLinked) {
-      try {
+    const cleanupErrors = cleanupDisposableWorktree({
+      nodeModulesLinked,
+      worktreeAdded,
+      targetWorktree,
+      unlinkOwnedNodeModules: () => {
         if (!lstatSync(targetNodeModules).isSymbolicLink()) throw new Error("Owned node_modules path is no longer a symlink.");
         unlinkSync(targetNodeModules);
-      } catch (error) { cleanupErrors.push(error); }
-    }
-    if (worktreeAdded) {
-      try { command("git", ["worktree", "remove", "--force", targetWorktree], { cwd: coordinatorRoot, timeout: 120000 }); }
-      catch (error) { cleanupErrors.push(error); }
-    }
+      },
+      removeOwnedWorktree: () => command("git", ["worktree", "remove", "--force", targetWorktree], { cwd: coordinatorRoot, timeout: 120000 })
+    });
     if (primaryError && cleanupErrors.length) throw new AggregateError([primaryError, ...cleanupErrors], "Baseline capture and exact cleanup failed.");
     if (primaryError) throw primaryError;
     if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Baseline capture cleanup failed.");

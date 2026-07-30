@@ -178,6 +178,13 @@ proof using the absolute reviewed verifier path, and invokes the reviewed
 matrix harness for all seven canonical rows with exactly seven valid trials
 per row.
 
+The coordinator does not impose an outer timeout on the matrix child; the
+matrix harness owns no-progress detection, operation deadlines, resource
+aborts, and asynchronous cleanup. The coordinator removes its disposable
+worktree only after verifying and unlinking the owned `node_modules` symlink.
+An ownership or unlink failure preserves the worktree and fails cleanup rather
+than forcing removal.
+
 The baseline schema-version 4 readiness verdict is independent of absolute
 budget success. It requires complete qualified capture, internal environment
 and fingerprint comparability, fixed-tick proof, exact lifecycle cleanup, lock
