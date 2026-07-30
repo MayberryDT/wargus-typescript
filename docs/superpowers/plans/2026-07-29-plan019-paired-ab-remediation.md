@@ -356,7 +356,7 @@ fingerprints, cleanup, locks, and checksums unchanged.
 Document why the worst-of-three rule was unstable, cite the paired packet, and
 state the new exact seven-trial arithmetic. Preserve all historical packets.
 
-- [ ] **Step 4: Capture a fresh Plan 018 baseline**
+- [x] **Step 4: Capture a fresh Plan 018 baseline**
 
 Capture all seven rows with seven valid trials each under the amended reviewed
 harness. The capture path is
@@ -374,6 +374,14 @@ capture, qualification, comparability, fixed-tick, lifecycle, raw-evidence,
 and checksum integrity even when an absolute budget fails. Independently
 review this coordinator before running browser work, then independently verify
 and accept the new packet before successors.
+
+Completed with accepted packet stamp `20260730T075608266Z`, manifest SHA-256
+`21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06`,
+and coordinator `136bdf81557c1a2feba7f2dd6472d1e5ba9c4b1e`. The capture
+recorded 49/49 qualified trials, zero invalid attempts, zero replacements,
+`ready: true`, `absoluteBudgetsPass: false`, complete cleanup, and an
+independent audit with zero findings. The exact identity is pinned in the
+schema-version 4 successor loader.
 
 - [ ] **Step 5: Rerun Plans 019–021 serially**
 

@@ -25,11 +25,12 @@ video/render groups, Git worktrees, SHA-256 retained artifacts.
 
 - Run implementation, verification, browser, and capture work only on `halla`
   in isolated worktrees under `/home/halla/workspaces/`.
-- Preserve Plan 018's accepted capture
-  `033629474959122749f6acb013ed6c2a0c0d2556/20260729T051148Z` and accepted
+- Use Plan 018's accepted schema-version 4 capture
+  `5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/20260730T075608266Z` and
   manifest SHA-256
-  `657dec5af935823fc27beaf16034b78813b4090244f22146effefc430040bed1`
-  as read-only baseline inputs.
+  `21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06`
+  as read-only baseline inputs. Preserve the superseded schema-version 3
+  packet as immutable historical evidence; do not load it for successors.
 - Do not relabel the failed 2026-07-29 Plan 019–021 packets as accepted and do
   not delete them.
 - Run browser/performance captures serially. Use unique ports, exact PID
@@ -65,7 +66,7 @@ require both robust p95 components. Absolute budgets, no-new-failure checks,
 replacement limits, comparability, deterministic proof, cleanup, locking, raw
 evidence, and checksums remain unchanged.
 
-The repository now tracks the reviewed capture candidate
+The repository tracks the independently approved capture coordinator
 `scripts/run-plan018-seven-trial-baseline.mjs`. It checks out exact Plan 018
 target `5b7d9cc81072c8aeda1ce1a9c22602569e1a691b` in a disposable Halla
 worktree, runs the target asset and build gates, creates the fixed-tick proof
@@ -77,14 +78,19 @@ fixed-tick integrity, cleanup, lock release, finalization, raw evidence, and
 checksums. Absolute budget failures remain truthfully reported but do not
 invalidate baseline readiness.
 
-The coordinator can be inspected without browser work by running
-`WARGUS_BASELINE_COORDINATOR_GUARD_CHECK=1 node scripts/run-plan018-seven-trial-baseline.mjs`.
-After an independent review accepts this capture path, run
-`npm run capture:plan018-seven-trial-baseline`. Successor browser capture
-remains blocked until the resulting schema-version 4 packet is independently
-accepted and its exact identity is pinned in the successor runner. Preserve
-the accepted three-trial Plan 018 packet and every failed or diagnostic packet
-as immutable historical evidence.
+The accepted packet is
+`.artifacts/performance/018/5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/20260730T075608266Z/`,
+with manifest SHA-256
+`21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06`
+and reviewed coordinator commit
+`136bdf81557c1a2feba7f2dd6472d1e5ba9c4b1e`. It contains 49/49 qualified
+trials, zero invalid attempts, zero replacements, `ready: true`, and
+`absoluteBudgetsPass: false`. Cleanup, lock release, finalization,
+comparability, fixed-tick, and checksum gates passed; residual PIDs and open
+ports were empty. Independent audit returned zero findings. The exact identity
+is pinned in the successor loader, so Task 4B Step 4 is complete and successor
+recapture may proceed serially. Preserve the schema-version 3 Plan 018 packet
+and every failed or diagnostic packet as immutable historical evidence.
 
 ---
 

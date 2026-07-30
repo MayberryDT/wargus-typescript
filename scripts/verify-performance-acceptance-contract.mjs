@@ -7,6 +7,7 @@ const read = (file) => readFileSync(resolve(root, file), "utf8");
 const performanceContract = read("plans/PERFORMANCE-ACCEPTANCE.md");
 const wave2Recovery = read("plans/WAVE-2-RECOVERY-AMENDMENT.md");
 const pairedRemediationPlan = read("docs/superpowers/plans/2026-07-29-plan019-paired-ab-remediation.md");
+const plan018Evidence = read("plans/evidence/018.md");
 const hallaPolicy = read("plans/HALLA-EXECUTION-POLICY.md");
 const roadmap = read("plans/README.md");
 const detailedPlans = [
@@ -54,6 +55,17 @@ assert.match(wave2Recovery, /WARGUS_BASELINE_CAPTURE=1/);
 assert.match(performanceContract, /run-plan018-seven-trial-baseline\.mjs/);
 assert.match(pairedRemediationPlan, /capture:plan018-seven-trial-baseline/);
 assert.match(pairedRemediationPlan, /5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/);
+for (const [label, document] of [["performance contract", performanceContract], ["Wave 2 recovery", wave2Recovery], ["Plan 018 evidence", plan018Evidence]]) {
+  assert.match(document, /20260730T075608266Z/, `${label} must pin the accepted schema-v4 stamp.`);
+  assert.match(document, /21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06/, `${label} must pin the accepted schema-v4 manifest.`);
+}
+assert.match(plan018Evidence, /49\/49/);
+assert.match(plan018Evidence, /zero invalid/i);
+assert.match(plan018Evidence, /zero replacements/i);
+assert.match(plan018Evidence, /absoluteBudgetsPass.*false/i);
+assert.match(plan018Evidence, /audit.*zero findings/is);
+assert.match(pairedRemediationPlan, /\[x\].*Step 4: Capture a fresh Plan 018 baseline/i);
+assert.match(roadmap, /20260730T075608266Z/);
 assert.doesNotMatch(wave2Recovery, /Every measured row still needs three independent valid trials/i);
 
 for (const [file, plan] of detailedPlans) {

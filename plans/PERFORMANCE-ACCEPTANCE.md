@@ -168,7 +168,7 @@ schema-version 4 evidence.
 
 ### Plan 018 seven-trial baseline capture
 
-The reviewed capture candidate is
+The independently approved capture coordinator is
 `scripts/run-plan018-seven-trial-baseline.mjs`, exposed as
 `npm run capture:plan018-seven-trial-baseline`. It requires a clean reviewed
 coordinator checkout on Halla and creates a disposable detached worktree at
@@ -184,9 +184,17 @@ and fingerprint comparability, fixed-tick proof, exact lifecycle cleanup, lock
 release, finalization, retained raw samples, and checksummed publication.
 Absolute failures are still recorded row by row. Baseline mode does not load
 an accepted predecessor baseline and does not require a successor targeted
-work-reduction proof. The packet is not an accepted baseline until independent
-review approves it and its exact manifest identity is pinned; existing
-three-trial and failed packets remain immutable.
+work-reduction proof. The accepted packet is
+`.artifacts/performance/018/5b7d9cc81072c8aeda1ce1a9c22602569e1a691b/20260730T075608266Z/`,
+with manifest SHA-256
+`21c25b2cdab0948a704f125cd3c97b51f0d676ee798f5fc00431023f0babba06`
+and coordinator commit `136bdf81557c1a2feba7f2dd6472d1e5ba9c4b1e`.
+It records 49/49 qualified trials, zero invalid attempts, zero replacements,
+`ready: true`, `absoluteBudgetsPass: false`, and successful comparability,
+fixed-tick, cleanup, lock-release, finalization, and checksum gates.
+Independent audit returned zero findings. This exact identity is pinned for
+schema-version 4 successors. Existing three-trial and failed packets remain
+immutable historical evidence and are not loadable schema-version 4 baselines.
 
 The absolute-release verdict is:
 
