@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { Container, Graphics, Sprite, Text, Texture } from "pixi.js";
 import ts from "typescript";
 
 const cacheSource = readFileSync(new URL("../src/view/worldRenderCache.ts", import.meta.url), "utf8");
 const rendererSource = readFileSync(new URL("../src/view/renderWorld.ts", import.meta.url), "utf8");
+const trackerSource = readFileSync(new URL("../src/performance/displayObjectPerformance.ts", import.meta.url), "utf8");
 const trackedPixiConstructors = new Set(["Container", "Graphics", "Sprite", "Text", "BitmapText"]);
 const assertNoDirectPixiConstruction = (source, fileName) => {
   const parsed = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -31,6 +33,21 @@ const assertNoDirectPixiConstruction = (source, fileName) => {
 };
 assertNoDirectPixiConstruction(cacheSource, "worldRenderCache.ts");
 assertNoDirectPixiConstruction(rendererSource, "renderWorld.ts");
+assert.match(rendererSource, /drawUnits\(unitLayer,/, "Primary viewport must reconcile retained unit records");
+assert.match(rendererSource, /drawUnits\(renderer\.unitLayer,/, "Secondary viewports must own independent retained unit records");
+assert.match(rendererSource, /disposeRetainedWorldRenderCache\(renderers\[rendererIndex\]\.unitLayer\)/, "Closed secondary viewports must dispose their exact cache owner");
+assert.match(rendererSource, /shapeKeyOf: \(unit\) => unitRenderShapeKey\(/, "Unit records must recreate only from an explicit complete child-shape key");
+assert.match(rendererSource, /beginRetainedUnitRender\(record\)[\s\S]*finishRetainedUnitRender\(record\)/, "Changed units must update reusable child slots in one bounded render pass");
+assert.doesNotMatch(rendererSource, /destroyLayerChildren\(record\.root\)/, "Visual-state updates must not destroy retained unit children");
+assert.match(rendererSource, /takeRetainedRenderSlot\(objects, "graphics"/, "Retained unit graphics must clear and reuse their stable identity");
+assert.match(rendererSource, /takeRetainedRenderSlot\(objects, "sprites"/, "Retained unit sprites must update texture without recreation");
+assert.match(rendererSource, /takeRetainedRenderSlot\(objects, "texts"/, "Retained unit text must update content without recreation");
+assert.match(rendererSource, /retainedSceneOrder\(records, \(record\) => record\.root, \(record\) => record\.unitObjects\.graphics\)/, "Unit painter order must flatten roots before graphics overlays");
+assert.match(rendererSource, /const root = createWorldRenderRecordRoot\(\);\s*retainedWorldDisplayRoots\.add\(root\)/, "Every retained unit root must register before immediate-layer cleanup");
+assert.match(rendererSource, /const graphics = createTrackedGraphics\(\);\s*retainedWorldDisplayRoots\.add\(graphics\)/, "Every flattened retained Graphics overlay must register before immediate-layer cleanup");
+assert.match(rendererSource, /if \(!\(child instanceof Container \&\& retainedWorldDisplayRoots\.has\(child\)\)\) \{\s*destroyImmediateWorldDisplayObject\(child, \{ children: true \}\);\s*\}/, "Immediate-layer cleanup must preserve registered retained objects and destroy only immediate objects");
+assert.match(rendererSource, /replaceWorldRenderCacheOwner\(existing, world, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord\)/, "Production cache lookup must execute world-owner replacement disposal");
+assert.match(rendererSource, /function unitRenderSignature[\s\S]*sourceDeclaredReactionRangeForUnit\(world, unit\)/, "Unit signature must include the live AI/person reaction-range dependency");
 
 const sourceFile = ts.createSourceFile("worldRenderCache.ts", cacheSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const executableSource = sourceFile.statements
@@ -40,8 +57,166 @@ const executableSource = sourceFile.statements
 const javascript = ts.transpileModule(executableSource, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
 }).outputText;
-const load = Function("exports", `${javascript}\nreturn { createWorldRenderCache, disposeWorldRenderCache, planWorldRenderReconciliation, reconcileWorldRenderKind };`);
-const { createWorldRenderCache, disposeWorldRenderCache, planWorldRenderReconciliation, reconcileWorldRenderKind } = load({});
+const load = Function("exports", `${javascript}\nreturn { beginRetainedRenderSlots, createRetainedRenderSlots, createWorldRenderCache, disposeWorldRenderCache, finishRetainedRenderSlots, planWorldRenderReconciliation, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot };`);
+const { beginRetainedRenderSlots, createRetainedRenderSlots, createWorldRenderCache, disposeWorldRenderCache, finishRetainedRenderSlots, planWorldRenderReconciliation, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot } = load({});
+
+const trackerFile = ts.createSourceFile("displayObjectPerformance.ts", trackerSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const trackerExecutable = trackerFile.statements
+  .filter((statement) => !ts.isImportDeclaration(statement) && !ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement))
+  .map((statement) => statement.getText(trackerFile))
+  .join("\n");
+const trackerJavascript = ts.transpileModule(trackerExecutable, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+}).outputText;
+const loadTracker = Function("exports", "Container", "Graphics", "Sprite", "Text", `${trackerJavascript}\nreturn { createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, destroyTrackedDisplayObject, resetDisplayObjectPerformance, setDisplayObjectPerformanceCapture, snapshotDisplayObjectPerformance };`);
+const tracked = loadTracker({}, Container, Graphics, Sprite, Text);
+
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const createPixiRecord = () => ({ root: tracked.createTrackedContainer(), slots: createRetainedRenderSlots() });
+const renderPixiRecord = (record, frame) => {
+  record.root.removeChildren();
+  beginRetainedRenderSlots(record.slots);
+  const graphics = takeRetainedRenderSlot(
+    record.slots,
+    "graphics",
+    () => tracked.createTrackedGraphics(),
+    (value) => value.clear()
+  );
+  graphics.rect(frame, frame, 8, 8);
+  graphics.fill(0xffffff);
+  const texture = frame % 2 === 0 ? Texture.EMPTY : Texture.WHITE;
+  const sprite = takeRetainedRenderSlot(
+    record.slots,
+    "sprites",
+    () => tracked.createTrackedSprite(texture),
+    (value) => { value.texture = texture; }
+  );
+  sprite.position.set(frame, frame + 1);
+  const text = takeRetainedRenderSlot(
+    record.slots,
+    "texts",
+    () => tracked.createTrackedText({ text: String(frame), style: { fontSize: 12 } }),
+    (value) => { value.text = String(frame); }
+  );
+  text.position.set(frame + 2, frame + 3);
+  finishRetainedRenderSlots(record.slots);
+  record.root.addChild(sprite, text, graphics);
+  return { graphics, sprite, text };
+};
+const pixiA = createPixiRecord();
+const pixiB = createPixiRecord();
+const pixiAFirst = renderPixiRecord(pixiA, 0);
+const pixiBFirst = renderPixiRecord(pixiB, 0);
+assert.notEqual(pixiAFirst.graphics, pixiBFirst.graphics, "Independent views must not share mutable Pixi objects");
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, 8, "Two unit records must track root plus graphics, sprite, and text creation");
+for (let frame = 1; frame <= 300; frame += 1) {
+  const currentA = renderPixiRecord(pixiA, frame);
+  const currentB = renderPixiRecord(pixiB, frame);
+  assert.equal(currentA.graphics, pixiAFirst.graphics, "Unit Graphics identity must remain stable while geometry changes");
+  assert.equal(currentA.sprite, pixiAFirst.sprite, "Unit Sprite identity must remain stable while texture and transform change");
+  assert.equal(currentA.text, pixiAFirst.text, "Unit Text identity must remain stable while content and transform change");
+  assert.equal(currentB.graphics, pixiBFirst.graphics, "Split-view Graphics identity must remain stable");
+}
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, 8, "300 changed frames must create zero additional tracked unit display objects");
+assert.equal(pixiAFirst.sprite.texture, Texture.EMPTY, "Retained sprite texture must reflect the latest frame");
+assert.equal(pixiAFirst.text.text, "300", "Retained text must reflect the latest frame");
+assert.deepEqual(
+  retainedSceneOrder([pixiA, pixiB], (record) => record.root, (record) => record.slots.graphics),
+  [pixiA.root, pixiB.root, pixiAFirst.graphics, pixiBFirst.graphics],
+  "Accepted painter order must place all prepared unit roots before all graphics overlays"
+);
+beginRetainedRenderSlots(pixiA.slots);
+takeRetainedRenderSlot(pixiA.slots, "graphics", () => assert.fail("Existing graphics must be reused"), (value) => value.clear());
+assert.throws(() => finishRetainedRenderSlots(pixiA.slots), /shape mismatch/i, "Incomplete child reset must fail closed");
+renderPixiRecord(pixiA, 300);
+for (const record of [pixiA, pixiB]) {
+  record.root.removeChildren();
+  for (const object of [...record.slots.graphics, ...record.slots.sprites, ...record.slots.texts]) tracked.destroyTrackedDisplayObject(object, { children: true });
+  tracked.destroyTrackedDisplayObject(record.root, { children: true });
+}
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance(), {
+  scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true, trackedCreated: 8, trackedDestroyed: 8, windowLiveDelta: 0
+}, "Tracked retained record disposal must return exact tree counts to zero");
+tracked.setDisplayObjectPerformanceCapture(false);
+
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const productionWorld = {};
+const productionCacheA = createWorldRenderCache(productionWorld);
+const productionCacheB = createWorldRenderCache(productionWorld);
+const productionLayerA = new Container();
+const productionLayerB = new Container();
+const detachPixiRecord = (record) => {
+  record.root.removeFromParent();
+  for (const graphics of record.slots.graphics) graphics.removeFromParent();
+};
+const destroyPixiRecord = (record) => {
+  detachPixiRecord(record);
+  record.root.removeChildren();
+  for (const object of [...record.slots.graphics, ...record.slots.sprites, ...record.slots.texts]) tracked.destroyTrackedDisplayObject(object, { children: true });
+  tracked.destroyTrackedDisplayObject(record.root, { children: true });
+};
+const productionOptions = (cache, layer, items, liveKeys, worldIdentity = productionWorld) => ({
+  cache,
+  worldIdentity,
+  kind: "unit",
+  items,
+  liveKeys,
+  keyOf: (item) => item.key,
+  shapeKeyOf: (item) => item.shape,
+  create: () => ({ ...createPixiRecord(), signature: null }),
+  update: (record, item) => {
+    if (record.signature === item.signature) return;
+    renderPixiRecord(record, item.frame);
+    record.signature = item.signature;
+  },
+  attach: (record) => layer.addChild(record.root),
+  detach: detachPixiRecord,
+  destroy: destroyPixiRecord,
+  reorder: (records) => {
+    for (const object of retainedSceneOrder(records, (record) => record.root, (record) => record.slots.graphics)) layer.addChild(object);
+  }
+});
+const stableUnit = { key: "u1", shape: "unit-record-v1", signature: "stable", frame: 0 };
+const firstProductionA = reconcileWorldRenderKind(productionOptions(productionCacheA, productionLayerA, [stableUnit], new Set(["u1"]))).records[0].value;
+const firstProductionB = reconcileWorldRenderKind(productionOptions(productionCacheB, productionLayerB, [stableUnit], new Set(["u1"]))).records[0].value;
+assert.notEqual(firstProductionA.root, firstProductionB.root, "Primary and split reconciliation must create independent roots for the same world ID");
+assert.deepEqual(productionLayerA.children, [firstProductionA.root, firstProductionA.slots.graphics[0]], "Production reconciliation must install root then graphics overlay");
+assert.deepEqual(firstProductionA.root.children, [firstProductionA.slots.sprites[0], firstProductionA.slots.texts[0]], "Flattening must preserve nested Sprite/Text ownership");
+for (let frame = 0; frame < 300; frame += 1) {
+  productionLayerA.removeChildren();
+  productionLayerB.removeChildren();
+  const stableA = reconcileWorldRenderKind(productionOptions(productionCacheA, productionLayerA, [stableUnit], new Set(["u1"]))).records[0].value;
+  const stableB = reconcileWorldRenderKind(productionOptions(productionCacheB, productionLayerB, [stableUnit], new Set(["u1"]))).records[0].value;
+  assert.equal(stableA.root, firstProductionA.root);
+  assert.equal(stableA.slots.graphics[0], firstProductionA.slots.graphics[0]);
+  assert.equal(stableA.slots.sprites[0], firstProductionA.slots.sprites[0]);
+  assert.equal(stableA.slots.texts[0], firstProductionA.slots.texts[0]);
+  assert.equal(stableB.root, firstProductionB.root);
+}
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, 8, "Production reconciliation must create zero display objects across 300 unchanged primary/split frames");
+productionLayerA.removeChildren();
+const cullActions = reconcileWorldRenderKind(productionOptions(productionCacheA, productionLayerA, [], new Set(["u1"]))).actions;
+assert.ok(cullActions.some(({ type, key }) => type === "detach" && key === "u1"));
+assert.deepEqual(firstProductionA.root.children, [firstProductionA.slots.sprites[0], firstProductionA.slots.texts[0]], "Cull detach must preserve nested retained children");
+const reenteredProductionA = reconcileWorldRenderKind(productionOptions(productionCacheA, productionLayerA, [stableUnit], new Set(["u1"]))).records[0].value;
+assert.equal(reenteredProductionA.root, firstProductionA.root, "Unchanged dormant re-entry must retain root identity");
+assert.deepEqual(reenteredProductionA.root.children, [firstProductionA.slots.sprites[0], firstProductionA.slots.texts[0]], "Unchanged dormant re-entry must restore the complete unit visual");
+assert.deepEqual(productionLayerA.children, [firstProductionA.root, firstProductionA.slots.graphics[0]], "Dormant re-entry must restore accepted painter order");
+const replacementWorld = {};
+const replacementCache = replaceWorldRenderCacheOwner(productionCacheA, replacementWorld, detachPixiRecord, destroyPixiRecord);
+assert.equal(replacementCache.worldIdentity, replacementWorld, "World replacement must install the exact new owner");
+assert.equal(firstProductionA.root.destroyed, true, "World replacement must synchronously destroy the old same-key record");
+const replacementLayer = new Container();
+const replacementRecord = reconcileWorldRenderKind(productionOptions(replacementCache, replacementLayer, [stableUnit], new Set(["u1"]), replacementWorld)).records[0].value;
+assert.notEqual(replacementRecord.root, firstProductionA.root, "Same stable ID after world replacement must create a new record identity");
+disposeWorldRenderCache(replacementCache, detachPixiRecord, destroyPixiRecord);
+disposeWorldRenderCache(productionCacheB, detachPixiRecord, destroyPixiRecord);
+assert.deepEqual(tracked.snapshotDisplayObjectPerformance(), {
+  scope: "instrumented-pixi-scene-objects-textures-excluded", captureActive: true, trackedCreated: 12, trackedDestroyed: 12, windowLiveDelta: 0
+}, "Production world replacement and split closure disposal must return exact tracked counts to zero");
+tracked.setDisplayObjectPerformanceCapture(false);
 
 let nextIdentity = 1;
 const created = [];

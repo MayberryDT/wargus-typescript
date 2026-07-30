@@ -1,4 +1,4 @@
-import { Application, BlurFilter, Container, Graphics } from "pixi.js";
+import { Application, BlurFilter, Container, Graphics, type Texture } from "pixi.js";
 import { destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText } from "../performance/displayObjectPerformance";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
@@ -17,6 +17,7 @@ import { sourceSelectedOrderRenderState } from "./sourceSelectedOrders";
 import { prepareWorldRenderSnapshot, type WorldRenderSnapshot, type WorldViewport } from "./renderPreparation";
 import { getStatusBarTexture, getStatusDecorationTexture, type StatusDecorationAtlas } from "./statusDecorationAtlas";
 import { fogByteToAlpha, sourceCompletedBarColor, sourceCompletedBarShadow, sourceMapAreaRect, sourcePlayerColor, sourceViewportModeRects } from "./sourceUiHelpers";
+import { beginRetainedRenderSlots, createRetainedRenderSlots, disposeWorldRenderCache, finishRetainedRenderSlots, reconcileWorldRenderKind, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot, type RetainedRenderSlots, type WorldRenderCache } from "./worldRenderCache";
 
 const mapRenderKeys = new WeakMap<Container, string>();
 const fogRenderKeys = new WeakMap<Container, string>();
@@ -26,10 +27,29 @@ const sourceViewportPaneRenderers = new WeakMap<Container, SourceViewportPaneRen
 const tileAtlasIds = new WeakMap<TileTextureAtlas, number>();
 const fogAtlasIds = new WeakMap<FogTextureAtlas, number>();
 const sourceFogBlurFilters = new WeakMap<Container, BlurFilter>();
+const retainedWorldDisplayRoots = new WeakSet<Container>();
+const retainedWorldRenderCaches = new WeakMap<Container, WorldRenderCache<RetainedWorldDisplayRecord>>();
+const retainedRenderResourceIds = new WeakMap<object, number>();
+const createWorldRenderRecordRoot = createTrackedContainer;
+const destroyWorldRenderRecordRoot = destroyTrackedDisplayObject;
+const destroyImmediateWorldDisplayObject = destroyTrackedDisplayObject;
 let nextTileAtlasId = 1;
 let nextFogAtlasId = 1;
+let nextRetainedRenderResourceId = 1;
 const sourceTiledFogTable = [0, 11, 10, 2, 13, 6, 14, 3, 12, 15, 4, 1, 8, 9, 7, 0] as const;
 const sourceBlackFogVisibleSuppressionRadius = 1;
+
+type RetainedWorldDisplayRecord = {
+  root: Container;
+  signature: string;
+  manifest: WargusManifest | null;
+  unitAtlases: Map<string, UnitTextureAtlas> | null;
+  missileAtlases: Map<string, MissileTextureAtlas> | null;
+  statusDecorationAtlas: StatusDecorationAtlas | null;
+  unitObjects: RetainedUnitRenderObjects;
+};
+
+type RetainedUnitRenderObjects = RetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>;
 
 interface RenderWorldArgs {
   world: WorldState;
@@ -67,7 +87,7 @@ export function renderWorld(args: RenderWorldArgs): void {
   const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
 
   drawMap(mapLayer, world, tileAtlas, viewport);
-  destroyLayerChildren(unitLayer);
+  clearImmediateWorldLayer(unitLayer);
   drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
   drawLastSeenBuildings(unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
   drawProjectiles(unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -191,7 +211,7 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     const viewport = worldViewportForRect(viewCamera, rect);
     const prepared = prepareWorldRenderSnapshot(world, manifest, viewport);
     drawMap(renderer.mapLayer, world, tileAtlas, viewport);
-    destroyLayerChildren(renderer.unitLayer);
+    clearImmediateWorldLayer(renderer.unitLayer);
     drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
     drawLastSeenBuildings(renderer.unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
     drawProjectiles(renderer.unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -204,6 +224,7 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     drawFog(renderer.fogLayer, world, viewport, fogAtlas);
   }
   for (; rendererIndex < renderers.length; rendererIndex += 1) {
+    disposeRetainedWorldRenderCache(renderers[rendererIndex].unitLayer);
     renderers[rendererIndex].root.visible = false;
   }
 }
@@ -441,6 +462,290 @@ function destroyLayerChildren(layer: Container): void {
   });
 }
 
+function clearImmediateWorldLayer(layer: Container): void {
+  for (const child of [...layer.children]) {
+    child.removeFromParent();
+    if (!(child instanceof Container && retainedWorldDisplayRoots.has(child))) {
+      destroyImmediateWorldDisplayObject(child, { children: true });
+    }
+  }
+}
+
+function retainedWorldRenderCacheFor(layer: Container, world: WorldState): WorldRenderCache<RetainedWorldDisplayRecord> {
+  const existing = retainedWorldRenderCaches.get(layer);
+  const owned = replaceWorldRenderCacheOwner(existing, world, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
+  if (owned !== existing) retainedWorldRenderCaches.set(layer, owned);
+  return owned;
+}
+
+export function disposeRetainedWorldRenderCache(layer: Container): void {
+  const cache = retainedWorldRenderCaches.get(layer);
+  if (!cache) return;
+  disposeWorldRenderCache(cache, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
+  retainedWorldRenderCaches.delete(layer);
+}
+
+function detachRetainedWorldDisplayRecord(record: RetainedWorldDisplayRecord): void {
+  record.root.removeFromParent();
+  for (const graphics of record.unitObjects.graphics) {
+    graphics.removeFromParent();
+  }
+}
+
+function destroyRetainedWorldDisplayRecord(record: RetainedWorldDisplayRecord): void {
+  detachRetainedWorldDisplayRecord(record);
+  record.root.removeChildren();
+  for (const object of [...record.unitObjects.graphics, ...record.unitObjects.sprites, ...record.unitObjects.texts]) {
+    destroyWorldRenderRecordRoot(object, { children: true });
+  }
+  destroyWorldRenderRecordRoot(record.root, { children: true });
+}
+
+function reconcileUnits(
+  layer: Container,
+  world: WorldState,
+  manifest: WargusManifest,
+  selectedUnitIds: string[],
+  controlGroups: Record<number, string[]>,
+  sourceShowOrdersVisible: boolean,
+  unitAtlases: Map<string, UnitTextureAtlas>,
+  missileAtlases: Map<string, MissileTextureAtlas>,
+  statusDecorationAtlas: StatusDecorationAtlas | null,
+  prepared: WorldRenderSnapshot
+): void {
+  const selected = new Set(selectedUnitIds);
+  reconcileWorldRenderKind({
+    cache: retainedWorldRenderCacheFor(layer, world),
+    worldIdentity: world,
+    kind: "unit",
+    items: prepared.units,
+    liveKeys: new Set(world.units.filter((unit) => unit.hitPoints > 0).map((unit) => unit.id)),
+    keyOf: (unit) => unit.id,
+    shapeKeyOf: (unit) => unitRenderShapeKey(world, unit, selected, controlGroups, sourceShowOrdersVisible, manifest, unitAtlases, missileAtlases, statusDecorationAtlas, prepared),
+    create: () => {
+      const root = createWorldRenderRecordRoot();
+      retainedWorldDisplayRoots.add(root);
+      return {
+        root,
+        signature: "",
+        manifest: null,
+        unitAtlases: null,
+        missileAtlases: null,
+        statusDecorationAtlas: null,
+        unitObjects: createRetainedRenderSlots<Graphics, ReturnType<typeof createTrackedSprite>, ReturnType<typeof createTrackedText>>()
+      };
+    },
+    update: (record, stateUnit) => {
+      const signature = unitRenderSignature(world, stateUnit, selected, controlGroups, sourceShowOrdersVisible, manifest, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
+      if (
+        record.signature === signature
+        && record.manifest === manifest
+        && record.unitAtlases === unitAtlases
+        && record.missileAtlases === missileAtlases
+        && record.statusDecorationAtlas === statusDecorationAtlas
+      ) {
+        return;
+      }
+      beginRetainedUnitRender(record);
+      drawUnits(
+        record.root,
+        world,
+        manifest,
+        selectedUnitIds,
+        controlGroups,
+        sourceShowOrdersVisible,
+        unitAtlases,
+        missileAtlases,
+        statusDecorationAtlas,
+        { ...prepared, units: [stateUnit] },
+        record.unitObjects
+      );
+      finishRetainedUnitRender(record);
+      record.signature = signature;
+      record.manifest = manifest;
+      record.unitAtlases = unitAtlases;
+      record.missileAtlases = missileAtlases;
+      record.statusDecorationAtlas = statusDecorationAtlas;
+    },
+    attach: (record) => layer.addChild(record.root),
+    detach: detachRetainedWorldDisplayRecord,
+    destroy: destroyRetainedWorldDisplayRecord,
+    reorder: (records) => {
+      for (const object of retainedSceneOrder(records, (record) => record.root, (record) => record.unitObjects.graphics)) {
+        layer.addChild(object);
+      }
+    }
+  });
+}
+
+function unitRenderSignature(
+  world: WorldState,
+  stateUnit: WorldState["units"][number],
+  selected: ReadonlySet<string>,
+  controlGroups: Record<number, string[]>,
+  sourceShowOrdersVisible: boolean,
+  manifest: WargusManifest,
+  unitAtlases: Map<string, UnitTextureAtlas>,
+  missileAtlases: Map<string, MissileTextureAtlas>,
+  statusDecorationAtlas: StatusDecorationAtlas | null,
+  prepared: WorldRenderSnapshot
+): string {
+  const unit = visualUnitForRender(stateUnit, world);
+  const destination = unit.teleportDestinationId ? prepared.unitById.get(unit.teleportDestinationId) : undefined;
+  const constructionFrame = constructionFrameForUnit(unit, manifest);
+  const unitAtlas = constructionFrame?.file === "construction"
+    ? unitAtlases.get(unit.constructionTypeId ?? "") ?? unitAtlases.get(unit.typeId)
+    : unitAtlases.get(unit.typeId);
+  const burningStage = isRuntimeSourceBuildingUnit(unit) && !unit.construction && unit.hitPoints > 0 && unit.maxHitPoints > 1
+    ? burningStageForUnit(manifest, unit)
+    : null;
+  const burningAtlas = burningStage?.missile ? missileAtlases.get(burningStage.missile) : undefined;
+  return JSON.stringify([
+    unit,
+    selected.has(unit.id),
+    selected.size,
+    sourceControlGroupNumberForUnit(unit.id, controlGroups),
+    sourceShowOrdersVisible,
+    world.engineSettings,
+    world.visibilityPlayer,
+    world.tick,
+    world.elapsed,
+    world.tileSize,
+    isFixedBrowserDemoMap(world.map),
+    isSourceUpgradeProduction(world, unit),
+    sourceDeclaredReactionRangeForUnit(world, unit),
+    retainedRenderResourceId(unitAtlas),
+    retainedRenderResourceId(burningAtlas),
+    retainedRenderResourceId(statusDecorationAtlas),
+    sourcePlayerColor(world, unit.player, 0, [214, 208, 163]),
+    sourceCompletedBarColor(world),
+    sourceCompletedBarShadow(world),
+    prepared.pendingAttackBySourceId.get(unit.id) ?? null,
+    prepared.researchByBuildingId.get(unit.id) ?? null,
+    destination
+      ? [destination, isUnitVisibleToPlayer(world, destination, world.visibilityPlayer)]
+      : null
+  ]);
+}
+
+function retainedRenderResourceId(resource: object | null | undefined): number {
+  if (!resource) return 0;
+  const existing = retainedRenderResourceIds.get(resource);
+  if (existing) return existing;
+  const id = nextRetainedRenderResourceId++;
+  retainedRenderResourceIds.set(resource, id);
+  return id;
+}
+
+function unitRenderShapeKey(
+  world: WorldState,
+  stateUnit: WorldState["units"][number],
+  selected: ReadonlySet<string>,
+  controlGroups: Record<number, string[]>,
+  sourceShowOrdersVisible: boolean,
+  manifest: WargusManifest,
+  unitAtlases: Map<string, UnitTextureAtlas>,
+  missileAtlases: Map<string, MissileTextureAtlas>,
+  statusDecorationAtlas: StatusDecorationAtlas | null,
+  prepared: WorldRenderSnapshot
+): string {
+  const unit = visualUnitForRender(stateUnit, world);
+  const isOwned = unit.player === world.visibilityPlayer;
+  const constructionFrame = constructionFrameForUnit(unit, manifest);
+  const atlas = constructionFrame?.file === "construction"
+    ? unitAtlases.get(unit.constructionTypeId ?? "") ?? unitAtlases.get(unit.typeId)
+    : unitAtlases.get(unit.typeId);
+  const sprites: string[] = [];
+  if (atlas) sprites.push("unit");
+  const burningStage = isRuntimeSourceBuildingUnit(unit) && !unit.construction && unit.hitPoints > 0 && unit.maxHitPoints > 1
+    ? burningStageForUnit(manifest, unit)
+    : null;
+  if (burningStage?.missile && missileAtlases.has(burningStage.missile)) sprites.push("burning");
+  if (statusDecorationAtlas) {
+    sprites.push(...sourceStatusDecorations(unit, isOwned, manifest.decorations ?? []).map((decoration) => `status:${decoration.index}`));
+  }
+  const activeResearch = isOwned ? prepared.researchByBuildingId.get(unit.id) : undefined;
+  const bars = sourceVariableDecorationBars(unit, isOwned, activeResearch, manifest.decorations ?? []);
+  if (statusDecorationAtlas?.health) {
+    const healthDecoration = sourceDecorationForIndex(manifest.decorations ?? [], "HitPoints");
+    const healthRatio = unit.maxHitPoints > 0 ? unit.hitPoints / unit.maxHitPoints : 0;
+    if (
+      healthDecoration
+      && getStatusBarTexture(statusDecorationAtlas, "health", healthRatio)
+      && sourceDecorationValueVisible(healthDecoration, unit.hitPoints, unit.maxHitPoints, unit, isOwned)
+    ) {
+      sprites.push("health");
+    }
+    if (statusDecorationAtlas.mana) {
+      for (const bar of bars) {
+        if (getStatusBarTexture(statusDecorationAtlas, "mana", bar.ratio)) sprites.push(`bar:${bar.kind}:${bar.decoration.index}`);
+      }
+    }
+  }
+  const showControlGroup = selected.has(unit.id)
+    && world.engineSettings.showOrdersDefault
+    && sourceShowOrdersVisible
+    && unit.player === world.visibilityPlayer
+    && sourceControlGroupNumberForUnit(unit.id, controlGroups) !== null;
+  return JSON.stringify({ graphics: 1, sprites, texts: showControlGroup ? ["control-group"] : [] });
+}
+
+function beginRetainedUnitRender(record: RetainedWorldDisplayRecord): void {
+  record.root.removeChildren();
+  beginRetainedRenderSlots(record.unitObjects);
+}
+
+function finishRetainedUnitRender(record: RetainedWorldDisplayRecord): void {
+  finishRetainedRenderSlots(record.unitObjects);
+}
+
+function takeUnitGraphics(objects: RetainedUnitRenderObjects): Graphics {
+  return takeRetainedRenderSlot(objects, "graphics", () => {
+    const graphics = createTrackedGraphics();
+    retainedWorldDisplayRoots.add(graphics);
+    return graphics;
+  }, (graphics) => graphics.clear());
+}
+
+type UnitSpriteTexture = Texture;
+
+function takeUnitSpriteSlot(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects, create: () => ReturnType<typeof createTrackedSprite>): ReturnType<typeof createTrackedSprite> {
+  return takeRetainedRenderSlot(objects, "sprites", create, (sprite) => { sprite.texture = texture; });
+}
+
+function takeUnitMainSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+}
+
+function takeUnitBurningSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+}
+
+function takeUnitHealthSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+}
+
+function takeUnitVariableBarSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+}
+
+function takeUnitStatusDecorationSprite(texture: UnitSpriteTexture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeUnitSpriteSlot(texture, objects, () => createTrackedSprite(texture));
+}
+
+function takeUnitText(textValue: string, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedText> {
+  return takeRetainedRenderSlot(objects, "texts", () => createTrackedText({
+    text: textValue,
+    style: {
+      fill: "#ffffff",
+      fontFamily: "system-ui, sans-serif",
+      fontSize: 14,
+      fontWeight: "700",
+      stroke: { color: "#111111", width: 3 }
+    }
+  }), (text) => { text.text = textValue; });
+}
+
 function colorForTile(world: WorldState, tile: number): number {
   const flags = sourceTilesetFlagsForTile(world, tile);
   const tilesetName = world.tilesetTerrain?.name ?? "";
@@ -526,13 +831,18 @@ function drawUnits(
   unitAtlases: Map<string, UnitTextureAtlas>,
   missileAtlases: Map<string, MissileTextureAtlas>,
   statusDecorationAtlas: StatusDecorationAtlas | null,
-  prepared: WorldRenderSnapshot
+  prepared: WorldRenderSnapshot,
+  objects?: RetainedUnitRenderObjects
 ): void {
+  if (!objects) {
+    reconcileUnits(layer, world, manifest, selectedUnitIds, controlGroups, sourceShowOrdersVisible, unitAtlases, missileAtlases, statusDecorationAtlas, prepared);
+    return;
+  }
   const visibleUnits = prepared.units;
   if (visibleUnits.length === 0) {
     return;
   }
-  const graphics = createTrackedGraphics();
+  const graphics = takeUnitGraphics(objects);
   const selected = new Set(selectedUnitIds);
   const sourceSelectedOrdersVisible = world.engineSettings.showOrdersDefault && sourceShowOrdersVisible;
   for (const stateUnit of visibleUnits) {
@@ -553,7 +863,7 @@ function drawUnits(
             ? 0
           : getAnimatedFrameNumber(unit, world, atlas.numDirections, prepared);
       const texture = getFrameTexture(atlas, frameNumber);
-      const sprite = createTrackedSprite(texture);
+      const sprite = takeUnitMainSprite(texture, objects);
       const direction = spriteDirectionForFacing(unit.facing ?? 4, atlas.numDirections);
       const fixedDemo = isFixedBrowserDemoMap(world.map);
       const building = isRuntimeSourceBuildingUnit(unit);
@@ -583,7 +893,7 @@ function drawUnits(
 
     drawCarriedResourceMarker(graphics, unit);
 
-    drawBurningBuilding(layer, world, manifest, unit, missileAtlases);
+    drawBurningBuilding(layer, world, manifest, unit, missileAtlases, objects);
 
     if (unit.teleporter) {
       const destination = unit.teleportDestinationId ? prepared.unitById.get(unit.teleportDestinationId) : undefined;
@@ -598,7 +908,7 @@ function drawUnits(
 
     if (selected.has(unit.id)) {
       drawSourceSelectionMarker(graphics, world, unit);
-      drawSourceControlGroupNumber(layer, world, unit, controlGroups, sourceSelectedOrdersVisible);
+      drawSourceControlGroupNumber(layer, world, unit, controlGroups, sourceSelectedOrdersVisible, objects);
       if (selected.size === 1) {
         drawSourceSelectedRangeMarkers(graphics, world, unit);
       }
@@ -634,7 +944,7 @@ function drawUnits(
       graphics.stroke({ width: 3, color: 0xff7b3d, alpha: 0.9 });
     }
 
-    drawSourceStatusDecorations(layer, unit, isOwned, statusDecorationAtlas, manifest.decorations ?? []);
+    drawSourceStatusDecorations(layer, unit, isOwned, statusDecorationAtlas, manifest.decorations ?? [], objects);
     const selectedOrder = sourceSelectedOrderRenderState(world, unit, selected, sourceSelectedOrdersVisible);
 
     if (selectedOrder.order?.kind === "move") {
@@ -831,7 +1141,7 @@ function drawUnits(
 
     const activeResearch = isOwned ? prepared.researchByBuildingId.get(unit.id) : undefined;
     const sourceDecorationBars = sourceVariableDecorationBars(unit, isOwned, activeResearch, manifest.decorations ?? []);
-    drawSourceVariableDecorations(layer, unit, isOwned, sourceDecorationBars, statusDecorationAtlas, manifest.decorations ?? []);
+    drawSourceVariableDecorations(layer, unit, isOwned, sourceDecorationBars, statusDecorationAtlas, manifest.decorations ?? [], objects);
     const completedBarColor = sourceCompletedBarColor(world);
     const completedBarShadow = sourceCompletedBarShadow(world);
 
@@ -879,7 +1189,7 @@ function sourceUnitSpriteY(world: WorldState, unit: WorldState["units"][number],
   return unit.y + halfHeight - atlas.frameHeight * scale * (1 - anchorY);
 }
 
-function drawSourceControlGroupNumber(layer: Container, world: WorldState, unit: WorldState["units"][number], controlGroups: Record<number, string[]>, sourceSelectedOrdersVisible: boolean): void {
+function drawSourceControlGroupNumber(layer: Container, world: WorldState, unit: WorldState["units"][number], controlGroups: Record<number, string[]>, sourceSelectedOrdersVisible: boolean, objects: RetainedUnitRenderObjects): void {
   if (!sourceSelectedOrdersVisible || unit.player !== world.visibilityPlayer) {
     return;
   }
@@ -887,16 +1197,7 @@ function drawSourceControlGroupNumber(layer: Container, world: WorldState, unit:
   if (groupId === null) {
     return;
   }
-  const text = createTrackedText({
-    text: String(groupId),
-    style: {
-      fill: "#ffffff",
-      fontFamily: "system-ui, sans-serif",
-      fontSize: 14,
-      fontWeight: "700",
-      stroke: { color: "#111111", width: 3 }
-    }
-  });
+  const text = takeUnitText(String(groupId), objects);
   text.anchor.set(1, 1);
   text.position.set(unit.x + unit.boxWidth / 2 - 2, unit.y + unit.boxHeight / 2 - 2);
   text.resolution = 1;
@@ -978,7 +1279,7 @@ function drawSourceRangeMarker(graphics: Graphics, x: number, y: number, radius:
   graphics.stroke({ width: 2, color, alpha });
 }
 
-function drawSourceVariableDecorations(layer: Container, unit: WorldState["units"][number], isOwned: boolean, bars: SourceVariableDecorationBar[], atlas: StatusDecorationAtlas | null, decorations: WargusDecoration[]): number {
+function drawSourceVariableDecorations(layer: Container, unit: WorldState["units"][number], isOwned: boolean, bars: SourceVariableDecorationBar[], atlas: StatusDecorationAtlas | null, decorations: WargusDecoration[], objects: RetainedUnitRenderObjects): number {
   if (!atlas?.health) {
     return 0;
   }
@@ -986,7 +1287,7 @@ function drawSourceVariableDecorations(layer: Container, unit: WorldState["units
   const healthRatio = unit.maxHitPoints > 0 ? unit.hitPoints / unit.maxHitPoints : 0;
   const healthTexture = getStatusBarTexture(atlas, "health", healthRatio);
   if (healthDecoration && healthTexture && sourceDecorationValueVisible(healthDecoration, unit.hitPoints, unit.maxHitPoints, unit, isOwned)) {
-    const health = createTrackedSprite(healthTexture);
+    const health = takeUnitHealthSprite(healthTexture, objects);
     health.anchor.set(0.5, 1);
     const position = sourceDecorationPosition(unit, healthDecoration, sourceDecorationSpriteOffset("sprite-health"));
     health.position.set(position.x, position.y);
@@ -999,7 +1300,7 @@ function drawSourceVariableDecorations(layer: Container, unit: WorldState["units
       if (!manaTexture) {
         return;
       }
-      const mana = createTrackedSprite(manaTexture);
+      const mana = takeUnitVariableBarSprite(manaTexture, objects);
       mana.anchor.set(0.5, 1);
       const position = sourceDecorationPosition(unit, bar.decoration, sourceDecorationSpriteOffset("sprite-mana"));
       mana.position.set(position.x, position.y + index * 5);
@@ -1062,13 +1363,13 @@ function drawSourceCompletionBar(graphics: Graphics, x: number, y: number, width
   graphics.fill(color);
 }
 
-function drawSourceStatusDecorations(layer: Container, unit: WorldState["units"][number], isOwned: boolean, atlas: StatusDecorationAtlas | null, decorations: WargusDecoration[]): void {
+function drawSourceStatusDecorations(layer: Container, unit: WorldState["units"][number], isOwned: boolean, atlas: StatusDecorationAtlas | null, decorations: WargusDecoration[], objects: RetainedUnitRenderObjects): void {
   if (!atlas) {
     return;
   }
   const entries = sourceStatusDecorations(unit, isOwned, decorations);
   entries.forEach((decoration, index) => {
-    const sprite = createTrackedSprite(getStatusDecorationTexture(atlas, decoration.frame ?? index));
+    const sprite = takeUnitStatusDecorationSprite(getStatusDecorationTexture(atlas, decoration.frame ?? index), objects);
     sprite.anchor.set(0.5, 1);
     const position = sourceDecorationPosition(unit, decoration, sourceDecorationSpriteOffset(decoration.sprite));
     sprite.position.set(position.x - 8, position.y - unit.radius - 12);
@@ -1134,7 +1435,7 @@ function sourceDecorationSpriteOffset(sprite: string | null): [number, number] {
   return [0, 0];
 }
 
-function drawBurningBuilding(layer: Container, world: WorldState, manifest: WargusManifest, unit: WorldState["units"][number], missileAtlases: Map<string, MissileTextureAtlas>): void {
+function drawBurningBuilding(layer: Container, world: WorldState, manifest: WargusManifest, unit: WorldState["units"][number], missileAtlases: Map<string, MissileTextureAtlas>, objects: RetainedUnitRenderObjects): void {
   if (!isRuntimeSourceBuildingUnit(unit) || unit.construction || unit.hitPoints <= 0 || unit.maxHitPoints <= 1) {
     return;
   }
@@ -1147,7 +1448,7 @@ function drawBurningBuilding(layer: Container, world: WorldState, manifest: Warg
     return;
   }
   const texture = getMissileFrameTexture(atlas, burningBuildingMissileFrame(world, atlas));
-  const sprite = createTrackedSprite(texture);
+  const sprite = takeUnitBurningSprite(texture, objects);
   sprite.anchor.set(0.5, 0.82);
   sprite.position.set(unit.x + burningOffsetX(unit), unit.y - Math.max(4, unit.boxHeight * 0.25));
   const scale = Math.max(0.72, Math.min(1.35, Math.max(unit.boxWidth, unit.boxHeight) / 96));

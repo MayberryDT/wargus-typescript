@@ -82,6 +82,57 @@ export type ReconcileWorldRenderKindOptions<T, I> = {
   reorder: (values: readonly T[]) => void;
 };
 
+export type RetainedRenderSlots<G, S, X> = {
+  graphics: G[];
+  sprites: S[];
+  texts: X[];
+  graphicsCursor: number;
+  spriteCursor: number;
+  textCursor: number;
+};
+
+export function createRetainedRenderSlots<G, S, X>(): RetainedRenderSlots<G, S, X> {
+  return { graphics: [], sprites: [], texts: [], graphicsCursor: 0, spriteCursor: 0, textCursor: 0 };
+}
+
+export function beginRetainedRenderSlots<G, S, X>(slots: RetainedRenderSlots<G, S, X>): void {
+  slots.graphicsCursor = 0;
+  slots.spriteCursor = 0;
+  slots.textCursor = 0;
+}
+
+export function takeRetainedRenderSlot<G, S, X, K extends "graphics" | "sprites" | "texts">(
+  slots: RetainedRenderSlots<G, S, X>,
+  kind: K,
+  create: () => RetainedRenderSlots<G, S, X>[K][number],
+  update: (value: RetainedRenderSlots<G, S, X>[K][number]) => void
+): RetainedRenderSlots<G, S, X>[K][number] {
+  const cursor = kind === "graphics" ? "graphicsCursor" : kind === "sprites" ? "spriteCursor" : "textCursor";
+  const index = slots[cursor]++;
+  const values = slots[kind] as Array<G | S | X>;
+  let value = values[index] as RetainedRenderSlots<G, S, X>[K][number] | undefined;
+  if (value === undefined) {
+    value = create();
+    values.push(value);
+  } else {
+    update(value);
+  }
+  return value;
+}
+
+export function finishRetainedRenderSlots<G, S, X>(slots: RetainedRenderSlots<G, S, X>): void {
+  if (slots.graphicsCursor !== slots.graphics.length || slots.spriteCursor !== slots.sprites.length || slots.textCursor !== slots.texts.length) {
+    throw new Error("Retained render child shape mismatch");
+  }
+}
+
+export function retainedSceneOrder<T, O>(records: readonly T[], rootOf: (record: T) => O, overlaysOf: (record: T) => readonly O[]): O[] {
+  return [
+    ...records.map(rootOf),
+    ...records.flatMap((record) => overlaysOf(record))
+  ];
+}
+
 const dormantLimits: Record<WorldRenderCacheKind, number> = { unit: 256, lastSeenBuilding: 128, corpse: 64, projectile: 64, spellEffect: 64 };
 const poolLimits: Record<WorldRenderCacheKind, number> = { unit: 0, lastSeenBuilding: 0, corpse: 0, projectile: 64, spellEffect: 64 };
 const createKindCache = <T>(): WorldRenderKindCache<T> => ({ active: new Map(), dormant: new Map(), pool: [] });
@@ -98,6 +149,17 @@ export function createWorldRenderCache<T>(worldIdentity: object): WorldRenderCac
       spellEffect: createKindCache()
     }
   };
+}
+
+export function replaceWorldRenderCacheOwner<T>(
+  existing: WorldRenderCache<T> | undefined,
+  worldIdentity: object,
+  detach: (value: T) => void,
+  destroy: (value: T) => void
+): WorldRenderCache<T> {
+  if (existing?.worldIdentity === worldIdentity) return existing;
+  if (existing) disposeWorldRenderCache(existing, detach, destroy);
+  return createWorldRenderCache<T>(worldIdentity);
 }
 
 export function planWorldRenderReconciliation(options: PlanWorldRenderReconciliationOptions): WorldRenderReconciliationPlan {
