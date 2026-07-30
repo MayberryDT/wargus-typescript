@@ -92,7 +92,7 @@ try {
   }
   assert.ok(finalDiagnostics["plan023.occupancy.maintenanceTotalMs"] >= 0);
 
-  occupancy.setWorldOccupancyParityMode("off");
+  occupancy.setWorldOccupancyParityMode("full");
   const reorderA = makeUnit("reorder-a", 3, 3);
   const reorderB = makeUnit("reorder-b", 3, 3);
   const driftWorld = { map: { width: 16, height: 16 }, tileSize: 32, units: [reorderA, reorderB] };
@@ -111,6 +111,7 @@ try {
   assert.deepEqual(occupancy.queryWorldOccupantsAtTile(driftWorld, 6, 6), [reorderA],
     "The query after a drift fallback must rebuild current membership.");
 
+  occupancy.setWorldOccupancyParityMode("off");
   occupancy.resetWorldOccupancyDiagnostics();
   for (let index = 0; index < 2100; index += 1) occupancy.queryWorldOccupantsAtTile(driftWorld, 3, 3);
   assert.equal(occupancy.snapshotWorldOccupancyDiagnostics()["plan023.occupancy.queryDurationMs"].sampleCount, 2048,
