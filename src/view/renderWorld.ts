@@ -34,6 +34,7 @@ const retainedLastSeenBuildings = new WeakMap<
   { world: WorldState; buildings: readonly WorldState["lastSeenBuildings"][number][] }
 >();
 const retainedCorpseStrata = new WeakMap<Container, { world: WorldState; corpses: PreparedRenderStrata<WorldState["corpses"][number]> }>();
+const retainedProjectileStrata = new WeakMap<Container, { world: WorldState; projectiles: PreparedRenderStrata<WorldState["projectiles"][number]> }>();
 const retainedRenderResourceIds = new WeakMap<object, number>();
 const createWorldRenderRecordRoot = createTrackedContainer;
 const destroyWorldRenderRecordRoot = destroyTrackedDisplayObject;
@@ -94,6 +95,7 @@ export function renderWorld(args: RenderWorldArgs): void {
   drawMap(mapLayer, world, tileAtlas, viewport);
   clearImmediateWorldLayer(unitLayer);
   prepareRetainedCorpseStrata(unitLayer, world, prepared.corpses);
+  prepareRetainedProjectileStrata(unitLayer, world, prepared.projectiles);
   drawCorpses(unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
   drawLastSeenBuildings(unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
   drawProjectiles(unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -219,6 +221,7 @@ function renderSourceViewportPaneWorlds(args: RenderWorldArgs & { sourceViewport
     drawMap(renderer.mapLayer, world, tileAtlas, viewport);
     clearImmediateWorldLayer(renderer.unitLayer);
     prepareRetainedCorpseStrata(renderer.unitLayer, world, prepared.corpses);
+    prepareRetainedProjectileStrata(renderer.unitLayer, world, prepared.projectiles);
     drawCorpses(renderer.unitLayer, world, unitAtlases, prepared.corpses.below40, prepared.animationById);
     drawLastSeenBuildings(renderer.unitLayer, world, unitAtlases, viewport, { maxDrawLevel: 39 }, prepared.animationById);
     drawProjectiles(renderer.unitLayer, world, missileAtlases, prepared.projectiles.below40);
@@ -488,6 +491,7 @@ function retainedWorldRenderCacheFor(layer: Container, world: WorldState): World
 export function disposeRetainedWorldRenderCache(layer: Container): void {
   retainedLastSeenBuildings.delete(layer);
   retainedCorpseStrata.delete(layer);
+  retainedProjectileStrata.delete(layer);
   const cache = retainedWorldRenderCaches.get(layer);
   if (!cache) return;
   disposeWorldRenderCache(cache, detachRetainedWorldDisplayRecord, destroyRetainedWorldDisplayRecord);
@@ -1791,91 +1795,129 @@ function getLastSeenBuildingFrameNumber(building: WorldState["lastSeenBuildings"
   return (frames?.[0]?.frame ?? 0) + spriteDirectionForFacing(building.facing ?? 4, numDirections).offset;
 }
 
+function prepareRetainedProjectileStrata(layer: Container, world: WorldState, projectiles: PreparedRenderStrata<WorldState["projectiles"][number]>): void {
+  retainedProjectileStrata.set(layer, { world, projectiles });
+}
+
 function drawProjectiles(layer: Container, world: WorldState, missileAtlases: Map<string, MissileTextureAtlas>, projectiles: readonly WorldState["projectiles"][number][]): void {
-  if (world.projectiles.length === 0) {
+  const prepared = retainedProjectileStrata.get(layer);
+  if (!prepared || prepared.world !== world) throw new Error("Projectile render strata were not prepared for this view");
+  const cache = retainedWorldRenderCacheFor(layer, world);
+  if (projectiles === prepared.projectiles.below40) {
+    const preparedProjectiles = [...prepared.projectiles.below40, ...prepared.projectiles.atLeast40];
+    reconcileWorldRenderKind({
+      cache,
+      worldIdentity: world,
+      kind: "projectile",
+      items: preparedProjectiles,
+      liveKeys: new Set(world.projectiles.map((projectile) => projectile.id)),
+      keyOf: (projectile) => projectile.id,
+      shapeKeyOf: (projectile) => projectileRenderShapeKey(projectile, missileAtlases),
+      create: createRetainedWorldDisplayRecord,
+      update: (record, projectile) => {
+        const atlas = projectile.missileId ? missileAtlases.get(projectile.missileId) : undefined;
+        const frameNumber = atlas ? missileFrameNumber(world, projectile, atlas) : null;
+        const signature = JSON.stringify([
+          projectile,
+          world.elapsed,
+          world.engineSettings,
+          world.missileDefinitions,
+          frameNumber,
+          retainedRenderResourceId(atlas)
+        ]);
+        if (record.signature === signature && record.missileAtlases === missileAtlases) return;
+        beginRetainedUnitRender(record);
+        drawProjectileVisual(record.root, world, projectile, atlas, frameNumber, record.unitObjects);
+        finishRetainedUnitRender(record);
+        record.signature = signature;
+        record.missileAtlases = missileAtlases;
+      },
+      attach: () => {},
+      detach: detachRetainedWorldDisplayRecord,
+      destroy: destroyRetainedWorldDisplayRecord,
+      reorder: () => {}
+    });
+  }
+  const records = projectiles
+    .map((projectile) => cache.kinds.projectile.active.get(projectile.id)?.value)
+    .filter((record): record is RetainedWorldDisplayRecord => Boolean(record));
+  for (const object of retainedSceneOrder(records, (record) => record.root, (record) => record.unitObjects.graphics)) {
+    layer.addChild(object);
+  }
+}
+
+function projectileRenderShapeKey(projectile: WorldState["projectiles"][number], missileAtlases: Map<string, MissileTextureAtlas>): string {
+  if (isDamageHitProjectile(projectile)) return "projectile-text-v1";
+  if (projectile.missileId && missileAtlases.has(projectile.missileId)) return "projectile-sprite-v1";
+  return "projectile-graphics-v1";
+}
+
+function drawProjectileVisual(
+  layer: Container,
+  world: WorldState,
+  projectile: WorldState["projectiles"][number],
+  atlas: MissileTextureAtlas | undefined,
+  frameNumber: number | null,
+  objects: RetainedUnitRenderObjects
+): void {
+  const drawPosition = projectileDrawPosition(projectile);
+  const dx = projectile.targetX - projectile.x;
+  const dy = projectile.targetY - projectile.y;
+  const distance = Math.max(1, Math.hypot(dx, dy));
+  const nx = dx / distance;
+  const ny = dy / distance;
+  if (isDamageHitProjectile(projectile)) {
+    drawDamageHitProjectile(layer, projectile, drawPosition, objects);
     return;
   }
-  const graphics = createTrackedGraphics();
-  let drewFallbackGraphics = false;
-  for (const projectile of projectiles) {
-    const atlas = projectile.missileId ? missileAtlases.get(projectile.missileId) : undefined;
-    const drawPosition = projectileDrawPosition(projectile);
-    const dx = projectile.targetX - projectile.x;
-    const dy = projectile.targetY - projectile.y;
-    const distance = Math.max(1, Math.hypot(dx, dy));
-    const nx = dx / distance;
-    const ny = dy / distance;
-    if (isDamageHitProjectile(projectile)) {
-      drawDamageHitProjectile(layer, projectile, drawPosition);
-      continue;
-    }
-    if (atlas) {
-      const texture = getMissileFrameTexture(atlas, missileFrameNumber(world, projectile, atlas));
-      const sprite = createTrackedSprite(texture);
-      sprite.anchor.set(0.5);
-      sprite.position.set(drawPosition.x, drawPosition.y);
-      sprite.rotation = atlas.numDirections > 1 ? 0 : Math.atan2(dy, dx);
-      sprite.scale.set(missileSpriteScale());
-      layer.addChild(sprite);
-      continue;
-    }
-    if (projectile.kind === "axe") {
-      drewFallbackGraphics = true;
-      const spin = world.elapsed * 18 + projectile.age * 20;
-      const size = 5 + Math.sin(spin) * 1.5;
-      graphics.circle(drawPosition.x, drawPosition.y, Math.max(3, size));
-      graphics.stroke({ width: 2, color: 0xd8d3bd, alpha: 0.95 });
-      graphics.moveTo(drawPosition.x - ny * 6, drawPosition.y + nx * 6);
-      graphics.lineTo(drawPosition.x + ny * 6, drawPosition.y - nx * 6);
-      graphics.stroke({ width: 2, color: 0x8b7346, alpha: 0.95 });
-      continue;
-    }
-    if (projectile.kind === "cannon") {
-      drewFallbackGraphics = true;
-      graphics.circle(drawPosition.x, drawPosition.y, 5);
-      graphics.fill(0x1b1712);
-      graphics.circle(drawPosition.x - nx * 5, drawPosition.y - ny * 5, 7);
-      graphics.fill({ color: 0xd95d45, alpha: 0.22 });
-      continue;
-    }
-    if (projectile.kind === "siege") {
-      drewFallbackGraphics = true;
-      const rockColor = siegeProjectileFallbackColor(world, projectile);
-      graphics.moveTo(drawPosition.x - nx * 14, drawPosition.y - ny * 14);
-      graphics.lineTo(drawPosition.x + nx * 10, drawPosition.y + ny * 10);
-      graphics.stroke({ width: 4, color: rockColor, alpha: 0.95 });
-      graphics.circle(drawPosition.x, drawPosition.y, 5);
-      graphics.fill(rockColor);
-      continue;
-    }
-    if (projectile.kind === "torpedo") {
-      drewFallbackGraphics = true;
-      graphics.moveTo(drawPosition.x - nx * 16, drawPosition.y - ny * 16);
-      graphics.lineTo(drawPosition.x + nx * 8, drawPosition.y + ny * 8);
-      graphics.stroke({ width: 3, color: 0x9fc6d5, alpha: 0.92 });
-      graphics.circle(drawPosition.x, drawPosition.y, 4);
-      graphics.fill(0x3d5f6a);
-      continue;
-    }
-    if (isLightningLikeProjectile(world, projectile)) {
-      drewFallbackGraphics = true;
-      graphics.moveTo(drawPosition.x - nx * 18, drawPosition.y - ny * 18);
-      graphics.lineTo(drawPosition.x - nx * 8 + ny * 4, drawPosition.y - ny * 8 - nx * 4);
-      graphics.lineTo(drawPosition.x, drawPosition.y);
-      graphics.stroke({ width: 3, color: 0x8fd5ff, alpha: 0.95 });
-      continue;
-    }
-    if (isFireLikeProjectile(world, projectile)) {
-      drewFallbackGraphics = true;
-      const griffonLike = sourceMissileVisualRole(world, projectile) === "hammer";
-      graphics.circle(drawPosition.x, drawPosition.y, griffonLike ? 5 : 7);
-      graphics.fill({ color: griffonLike ? 0xd8d3bd : 0xf07d28, alpha: 0.95 });
-      graphics.circle(drawPosition.x - nx * 6, drawPosition.y - ny * 6, 9);
-      graphics.fill({ color: 0xd95d45, alpha: 0.24 });
-      continue;
-    }
-
-    drewFallbackGraphics = true;
+  if (atlas && frameNumber !== null) {
+    const sprite = takeProjectileSprite(getMissileFrameTexture(atlas, frameNumber), objects);
+    sprite.anchor.set(0.5);
+    sprite.position.set(drawPosition.x, drawPosition.y);
+    sprite.rotation = atlas.numDirections > 1 ? 0 : Math.atan2(dy, dx);
+    sprite.scale.set(missileSpriteScale());
+    layer.addChild(sprite);
+    return;
+  }
+  const graphics = takeProjectileGraphics(objects);
+  if (projectile.kind === "axe") {
+    const spin = world.elapsed * 18 + projectile.age * 20;
+    const size = 5 + Math.sin(spin) * 1.5;
+    graphics.circle(drawPosition.x, drawPosition.y, Math.max(3, size));
+    graphics.stroke({ width: 2, color: 0xd8d3bd, alpha: 0.95 });
+    graphics.moveTo(drawPosition.x - ny * 6, drawPosition.y + nx * 6);
+    graphics.lineTo(drawPosition.x + ny * 6, drawPosition.y - nx * 6);
+    graphics.stroke({ width: 2, color: 0x8b7346, alpha: 0.95 });
+  } else if (projectile.kind === "cannon") {
+    graphics.circle(drawPosition.x, drawPosition.y, 5);
+    graphics.fill(0x1b1712);
+    graphics.circle(drawPosition.x - nx * 5, drawPosition.y - ny * 5, 7);
+    graphics.fill({ color: 0xd95d45, alpha: 0.22 });
+  } else if (projectile.kind === "siege") {
+    const rockColor = siegeProjectileFallbackColor(world, projectile);
+    graphics.moveTo(drawPosition.x - nx * 14, drawPosition.y - ny * 14);
+    graphics.lineTo(drawPosition.x + nx * 10, drawPosition.y + ny * 10);
+    graphics.stroke({ width: 4, color: rockColor, alpha: 0.95 });
+    graphics.circle(drawPosition.x, drawPosition.y, 5);
+    graphics.fill(rockColor);
+  } else if (projectile.kind === "torpedo") {
+    graphics.moveTo(drawPosition.x - nx * 16, drawPosition.y - ny * 16);
+    graphics.lineTo(drawPosition.x + nx * 8, drawPosition.y + ny * 8);
+    graphics.stroke({ width: 3, color: 0x9fc6d5, alpha: 0.92 });
+    graphics.circle(drawPosition.x, drawPosition.y, 4);
+    graphics.fill(0x3d5f6a);
+  } else if (isLightningLikeProjectile(world, projectile)) {
+    graphics.moveTo(drawPosition.x - nx * 18, drawPosition.y - ny * 18);
+    graphics.lineTo(drawPosition.x - nx * 8 + ny * 4, drawPosition.y - ny * 8 - nx * 4);
+    graphics.lineTo(drawPosition.x, drawPosition.y);
+    graphics.stroke({ width: 3, color: 0x8fd5ff, alpha: 0.95 });
+  } else if (isFireLikeProjectile(world, projectile)) {
+    const griffonLike = sourceMissileVisualRole(world, projectile) === "hammer";
+    graphics.circle(drawPosition.x, drawPosition.y, griffonLike ? 5 : 7);
+    graphics.fill({ color: griffonLike ? 0xd8d3bd : 0xf07d28, alpha: 0.95 });
+    graphics.circle(drawPosition.x - nx * 6, drawPosition.y - ny * 6, 9);
+    graphics.fill({ color: 0xd95d45, alpha: 0.24 });
+  } else {
     const tailX = drawPosition.x - nx * 18;
     const tailY = drawPosition.y - ny * 18;
     graphics.moveTo(tailX, tailY);
@@ -1887,25 +1929,45 @@ function drawProjectiles(layer: Container, world: WorldState, missileAtlases: Ma
     graphics.lineTo(drawPosition.x - nx * 6 - ny * 3, drawPosition.y - ny * 6 + nx * 3);
     graphics.stroke({ width: 1, color: 0xd8d3bd, alpha: 0.9 });
   }
-  if (drewFallbackGraphics) {
-    layer.addChild(graphics);
-  }
+  layer.addChild(graphics);
+}
+
+function takeProjectileGraphics(objects: RetainedUnitRenderObjects): Graphics {
+  return takeRetainedRenderSlot(objects, "graphics", () => {
+    const graphics = createTrackedGraphics();
+    retainedWorldDisplayRoots.add(graphics);
+    return graphics;
+  }, (graphics) => graphics.clear());
+}
+
+function takeProjectileSprite(texture: Texture, objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedSprite> {
+  return takeRetainedRenderSlot(objects, "sprites", () => createTrackedSprite(texture), (sprite) => { sprite.texture = texture; });
+}
+
+function takeProjectileText(projectile: WorldState["projectiles"][number], objects: RetainedUnitRenderObjects): ReturnType<typeof createTrackedText> {
+  const textValue = String(projectile.displayDamage ?? -projectile.damage);
+  const apply = (text: ReturnType<typeof createTrackedText>): void => {
+    text.text = textValue;
+    text.style = {
+      fontFamily: "monospace",
+      fontSize: 12,
+      fill: 0xf8e48a,
+      stroke: { color: 0x2a160c, width: 2 }
+    };
+  };
+  return takeRetainedRenderSlot(objects, "texts", () => {
+    const text = createTrackedText({ text: textValue });
+    apply(text);
+    return text;
+  }, apply);
 }
 
 function isDamageHitProjectile(projectile: WorldState["projectiles"][number]): boolean {
   return projectile.className === "missile-class-hit" && typeof projectile.displayDamage === "number";
 }
 
-function drawDamageHitProjectile(layer: Container, projectile: WorldState["projectiles"][number], position: { x: number; y: number }): void {
-  const text = createTrackedText({
-    text: String(projectile.displayDamage ?? -projectile.damage),
-    style: {
-      fontFamily: "monospace",
-      fontSize: 12,
-      fill: 0xf8e48a,
-      stroke: { color: 0x2a160c, width: 2 }
-    }
-  });
+function drawDamageHitProjectile(layer: Container, projectile: WorldState["projectiles"][number], position: { x: number; y: number }, objects: RetainedUnitRenderObjects): void {
+  const text = takeProjectileText(projectile, objects);
   text.anchor.set(0.5);
   text.position.set(position.x, position.y);
   layer.addChild(text);

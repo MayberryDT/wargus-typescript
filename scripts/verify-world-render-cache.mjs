@@ -58,6 +58,13 @@ assert.equal((rendererSource.match(/kind: "corpse"/g) ?? []).length, 1, "Corpses
 assert.match(rendererSource, /kind: "corpse"[\s\S]*liveKeys: new Set\(world\.corpses\.map\(\(corpse\) => corpse\.id\)\)[\s\S]*keyOf: \(corpse\) => corpse\.id/, "Corpse lifecycle must use stable corpse IDs");
 assert.match(rendererSource, /function takeCorpseGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Corpse fallback Graphics must register for immediate-layer preservation");
 assert.match(rendererSource, /shapeKeyOf: \(corpse\) => \{[\s\S]*"corpse-sprite-v1" : "corpse-graphics-v1"/, "Corpse shape key must distinguish Sprite and fallback Graphics records");
+assert.equal((rendererSource.match(/kind: "projectile"/g) ?? []).length, 1, "Projectiles must reconcile exactly once for both draw strata");
+assert.match(rendererSource, /kind: "projectile"[\s\S]*liveKeys: new Set\(world\.projectiles\.map\(\(projectile\) => projectile\.id\)\)[\s\S]*keyOf: \(projectile\) => projectile\.id/, "Projectile lifecycle must use stable projectile IDs");
+assert.match(rendererSource, /const signature = JSON\.stringify\(\[[\s\S]*world\.missileDefinitions[\s\S]*retainedRenderResourceId\(atlas\)/, "Projectile signature must include missile definitions and atlas identity");
+assert.match(rendererSource, /projectileRenderShapeKey[\s\S]*"projectile-text-v1"[\s\S]*"projectile-sprite-v1"[\s\S]*"projectile-graphics-v1"/, "Projectile shape key must distinguish Text, Sprite, and Graphics records");
+assert.match(rendererSource, /function takeProjectileGraphics[\s\S]*retainedWorldDisplayRoots\.add\(graphics\)/, "Projectile fallback Graphics must register for immediate-layer preservation");
+const projectileReconciliationSource = rendererSource.match(/function drawProjectiles[\s\S]*?(?=function projectileRenderShapeKey)/)?.[0] ?? "";
+assert.doesNotMatch(projectileReconciliationSource, /canResetForPool:/, "Projectile pooling must stay disabled without a complete reset contract");
 
 const sourceFile = ts.createSourceFile("worldRenderCache.ts", cacheSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const executableSource = sourceFile.statements
@@ -79,7 +86,14 @@ const retainedLastSeenFunctionNames = new Set([
   "drawCorpses",
   "drawCorpseVisual",
   "takeCorpseGraphics",
-  "takeCorpseSprite"
+  "takeCorpseSprite",
+  "drawProjectiles",
+  "projectileRenderShapeKey",
+  "drawProjectileVisual",
+  "takeProjectileGraphics",
+  "takeProjectileSprite",
+  "takeProjectileText",
+  "drawDamageHitProjectile"
 ]);
 const retainedLastSeenExecutable = rendererFile.statements
   .filter((statement) => ts.isFunctionDeclaration(statement) && statement.name && retainedLastSeenFunctionNames.has(statement.name.text))
@@ -93,12 +107,12 @@ const loadRetainedLastSeenRenderer = Function(
   "dependencies",
   `const { ${[
     "beginRetainedUnitRender", "circleIntersectsViewport", "compareLastSeenBuildingDrawOrder", "createRetainedWorldDisplayRecord",
-    "createTrackedGraphics", "createTrackedSprite", "detachRetainedWorldDisplayRecord", "destroyRetainedWorldDisplayRecord",
-    "finishRetainedUnitRender", "getCorpseFrameNumber", "getFrameTexture", "getLastSeenBuildingFrameNumber", "isLastSeenBuildingVisible",
-    "reconcileWorldRenderKind", "retainedCorpseStrata", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
-    "retainedWorldDisplayRoots", "retainedWorldRenderCacheFor", "sourceLastSeenFancyBuildingMirror", "spriteDirectionForFacing",
+    "createTrackedGraphics", "createTrackedSprite", "createTrackedText", "detachRetainedWorldDisplayRecord", "destroyRetainedWorldDisplayRecord",
+    "finishRetainedUnitRender", "getCorpseFrameNumber", "getFrameTexture", "getMissileFrameTexture", "getLastSeenBuildingFrameNumber", "isDamageHitProjectile", "isFireLikeProjectile", "isLastSeenBuildingVisible", "isLightningLikeProjectile",
+    "missileFrameNumber", "missileSpriteScale", "projectileDrawPosition", "reconcileWorldRenderKind", "retainedCorpseStrata", "retainedProjectileStrata", "retainedLastSeenBuildings", "retainedRenderResourceId", "retainedSceneOrder",
+    "retainedWorldDisplayRoots", "retainedWorldRenderCacheFor", "siegeProjectileFallbackColor", "sourceLastSeenFancyBuildingMirror", "sourceMissileVisualRole", "sourcePlayerColor", "spriteDirectionForFacing",
     "takeRetainedRenderSlot"
-  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawCorpses, drawLastSeenBuildings };`
+  ].join(", ")} } = dependencies;\n${retainedLastSeenJavascript}\nreturn { drawCorpses, drawLastSeenBuildings, drawProjectiles };`
 );
 
 const trackerFile = ts.createSourceFile("displayObjectPerformance.ts", trackerSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -263,6 +277,8 @@ tracked.resetDisplayObjectPerformance();
 tracked.setDisplayObjectPerformanceCapture(true);
 const lastSeenPrepared = new WeakMap();
 const corpsePrepared = new WeakMap();
+const projectilePrepared = new WeakMap();
+let currentProjectileFrame = 0;
 const lastSeenRoots = new WeakSet();
 const lastSeenCaches = new WeakMap();
 const lastSeenResources = new WeakMap();
@@ -306,18 +322,27 @@ const retainedLastSeen = loadRetainedLastSeenRenderer({
   createRetainedWorldDisplayRecord: createLastSeenRecord,
   createTrackedGraphics: tracked.createTrackedGraphics,
   createTrackedSprite: tracked.createTrackedSprite,
+  createTrackedText: tracked.createTrackedText,
   detachRetainedWorldDisplayRecord: detachLastSeenRecord,
   destroyRetainedWorldDisplayRecord: destroyLastSeenRecord,
   finishRetainedUnitRender: finishLastSeenRender,
   getCorpseFrameNumber: (corpse) => corpse.animation ? currentCorpseFrame : null,
   getFrameTexture: (_atlas, frame) => frame === 0 ? Texture.WHITE : Texture.EMPTY,
+  getMissileFrameTexture: (_atlas, frame) => frame === 0 ? Texture.WHITE : Texture.EMPTY,
   getLastSeenBuildingFrameNumber: () => currentLastSeenFrame,
+  isDamageHitProjectile: (projectile) => projectile.className === "missile-class-hit" && typeof projectile.displayDamage === "number",
+  isFireLikeProjectile: (_world, projectile) => projectile.visualRole === "flame" || projectile.visualRole === "hammer",
   isLastSeenBuildingVisible: (_world, building) => building.visible === true,
+  isLightningLikeProjectile: (_world, projectile) => projectile.visualRole === "lightning",
+  missileFrameNumber: () => currentProjectileFrame,
+  missileSpriteScale: () => 1,
+  projectileDrawPosition: (projectile) => ({ x: projectile.x, y: projectile.y }),
   reconcileWorldRenderKind: (options) => {
     lastSeenReconciliations += 1;
     return reconcileWorldRenderKind(options);
   },
   retainedCorpseStrata: corpsePrepared,
+  retainedProjectileStrata: projectilePrepared,
   retainedLastSeenBuildings: lastSeenPrepared,
   retainedRenderResourceId: (resource) => {
     if (!resource) return 0;
@@ -331,7 +356,10 @@ const retainedLastSeen = loadRetainedLastSeenRenderer({
   retainedSceneOrder,
   retainedWorldDisplayRoots: lastSeenRoots,
   retainedWorldRenderCacheFor: lastSeenCacheFor,
+  siegeProjectileFallbackColor: () => 0x5f554b,
   sourceLastSeenFancyBuildingMirror: () => false,
+  sourceMissileVisualRole: (_world, projectile) => projectile.visualRole ?? "arrow",
+  sourcePlayerColor: (world) => world.engineSettings.projectileColor ?? 0xd6d0a3,
   spriteDirectionForFacing: () => ({ mirror: false, offset: 0 }),
   takeRetainedRenderSlot
 });
@@ -477,7 +505,6 @@ assert.equal(retainedCorpseSprite.texture, Texture.EMPTY, "Corpse frame change m
 assert.ok(Math.abs(retainedCorpseSprite.alpha - 0.43) < 1e-12, "Changed corpse age must update retained Sprite alpha");
 const retainedCorpseFallback = lowerCorpseFallback.unitObjects.graphics[0];
 assert.equal(lastSeenRoots.has(retainedCorpseFallback), true, "Corpse fallback Graphics must register for immediate-layer preservation");
-assert.match(rendererSource, /shapeKeyOf: \(corpse\) => \{[\s\S]*"corpse-sprite-v1" : "corpse-graphics-v1"/, "Corpse shape key must distinguish Sprite and fallback Graphics records");
 const initialCorpseBounds = retainedCorpseFallback.getLocalBounds();
 assert.ok(initialCorpseBounds.width > 0 && initialCorpseBounds.height > 0, "Corpse fallback must draw non-empty geometry");
 Object.assign(corpseBelow40[1], { x: 80, y: 30, radius: 5, age: 0.75 });
@@ -528,6 +555,162 @@ for (const [layer, cache] of [[primaryCorpseLayer, lastSeenCaches.get(primaryCor
   corpsePrepared.delete(layer);
 }
 assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Production corpse split/world-replacement disposal must return tracked live delta to zero");
+tracked.setDisplayObjectPerformanceCapture(false);
+
+tracked.resetDisplayObjectPerformance();
+tracked.setDisplayObjectPerformanceCapture(true);
+const projectileFixture = (id, drawLevel, kind, overrides = {}) => ({
+  id, drawLevel, kind, sourceId: "source", targetId: null, sourceTypeId: "unit",
+  player: 0, x: drawLevel, y: drawLevel, originX: 0, originY: 0, targetX: drawLevel + 20, targetY: drawLevel,
+  speed: 100, damage: 7, missileId: null, className: null, impactSoundId: null, impactMissileId: null,
+  splashFactor: 0, range: 1, canHitOwner: false, friendlyFire: false, canTargetLand: true, canTargetSea: false,
+  canTargetAir: false, bouncesRemaining: 0, hitUnitIds: [], age: 0.25, delaySeconds: 0, ttlSeconds: 1,
+  ...overrides
+});
+let projectileBelow40 = [
+  projectileFixture("lower-projectile-sprite", 10, "arrow", { missileId: "missile", targetY: 30 }),
+  projectileFixture("lower-projectile-graphics", 20, "cannon"),
+  projectileFixture("lower-projectile-text", 30, "melee", { className: "missile-class-hit", displayDamage: 12 })
+];
+let projectileAtLeast40 = [projectileFixture("upper-projectile-graphics", 40, "axe")];
+const projectileWorld = {
+  projectiles: [...projectileBelow40, ...projectileAtLeast40], elapsed: 1,
+  engineSettings: { playerColors: [], playerColorIndex: { count: 1 } }, missileDefinitions: []
+};
+const projectileAtlases = new Map([["missile", { numDirections: 1 }]]);
+const primaryProjectileLayer = new Container();
+const splitProjectileLayer = new Container();
+const projectileUnitSentinel = new Container();
+const drawProjectileFrame = (layer, world = projectileWorld, below40 = projectileBelow40, atLeast40 = projectileAtLeast40, atlases = projectileAtlases) => {
+  layer.removeChildren();
+  projectilePrepared.set(layer, { world, projectiles: { below40, atLeast40 } });
+  retainedLastSeen.drawProjectiles(layer, world, atlases, below40);
+  layer.addChild(projectileUnitSentinel);
+  retainedLastSeen.drawProjectiles(layer, world, atlases, atLeast40);
+};
+const projectileReconciliationsBefore = lastSeenReconciliations;
+drawProjectileFrame(primaryProjectileLayer);
+assert.equal(lastSeenReconciliations, projectileReconciliationsBefore + 1, "Production projectile renderer must reconcile once across lower and upper calls");
+const primaryProjectileCache = lastSeenCaches.get(primaryProjectileLayer);
+const projectileRecords = primaryProjectileCache.kinds.projectile.active;
+const projectileSpriteRecord = projectileRecords.get("lower-projectile-sprite").value;
+const projectileGraphicsRecord = projectileRecords.get("lower-projectile-graphics").value;
+const projectileTextRecord = projectileRecords.get("lower-projectile-text").value;
+const upperProjectileRecord = projectileRecords.get("upper-projectile-graphics").value;
+assert.deepEqual(primaryProjectileLayer.children, [
+  projectileSpriteRecord.root, projectileGraphicsRecord.root, projectileTextRecord.root,
+  projectileGraphicsRecord.unitObjects.graphics[0], projectileUnitSentinel,
+  upperProjectileRecord.root, upperProjectileRecord.unitObjects.graphics[0]
+], "Production projectile renderer must preserve exact lower/unit/upper painter order");
+const retainedProjectileSprite = projectileSpriteRecord.unitObjects.sprites[0];
+const retainedProjectileGraphics = projectileGraphicsRecord.unitObjects.graphics[0];
+const retainedProjectileText = projectileTextRecord.unitObjects.texts[0];
+assert.equal(retainedProjectileSprite.texture, Texture.WHITE);
+assert.equal(retainedProjectileSprite.anchor.x, 0.5);
+assert.equal(retainedProjectileSprite.anchor.y, 0.5);
+assert.equal(retainedProjectileSprite.position.x, 10);
+assert.equal(retainedProjectileSprite.position.y, 10);
+assert.ok(Math.abs(retainedProjectileSprite.rotation - Math.PI / 4) < 1e-12);
+assert.equal(retainedProjectileSprite.scale.x, 1);
+assert.equal(retainedProjectileSprite.scale.y, 1);
+assert.equal(lastSeenRoots.has(retainedProjectileGraphics), true, "Projectile Graphics must register for immediate-layer preservation");
+assert.ok(retainedProjectileGraphics.getLocalBounds().width > 0, "Projectile fallback must draw non-empty geometry");
+const initialProjectileFills = retainedProjectileGraphics.context.instructions.filter(({ action }) => action === "fill").map(({ data }) => [data.style.color, data.style.alpha]);
+assert.deepEqual(initialProjectileFills, [[0x1b1712, 1], [0xd95d45, 0.22]], "Cannon fallback must preserve exact fill colors and alpha");
+assert.equal(retainedProjectileText.text, "12");
+assert.equal(retainedProjectileText.anchor.x, 0.5);
+assert.equal(retainedProjectileText.anchor.y, 0.5);
+assert.equal(retainedProjectileText.position.x, 30);
+assert.equal(retainedProjectileText.position.y, 30);
+assert.equal(retainedProjectileText.style.fill, 0xf8e48a);
+assert.equal(retainedProjectileText.style.stroke.color, 0x2a160c);
+assert.equal(retainedProjectileText.style.stroke.width, 2);
+assert.equal(retainedProjectileText.style.fontFamily, "monospace");
+assert.equal(retainedProjectileText.style.fontSize, 12);
+currentProjectileFrame = 1;
+projectileBelow40[0].x = 12;
+projectileBelow40[0].y = 14;
+projectileBelow40[1].x = 80;
+projectileBelow40[2].displayDamage = 15;
+projectileBelow40[2].y = 35;
+drawProjectileFrame(primaryProjectileLayer);
+assert.equal(projectileRecords.get("lower-projectile-sprite").value.unitObjects.sprites[0], retainedProjectileSprite);
+assert.equal(retainedProjectileSprite.texture, Texture.EMPTY, "Projectile frame change must update retained Sprite texture");
+assert.equal(retainedProjectileSprite.position.x, 12, "Projectile movement must update retained Sprite position");
+assert.equal(retainedProjectileSprite.position.y, 14, "Projectile movement must update retained Sprite vertical position");
+assert.ok(Math.abs(retainedProjectileSprite.rotation - Math.atan2(16, 18)) < 1e-12, "Projectile direction change must update retained Sprite rotation");
+assert.equal(projectileRecords.get("lower-projectile-graphics").value.unitObjects.graphics[0], retainedProjectileGraphics);
+assert.ok(retainedProjectileGraphics.getLocalBounds().minX > 65, "Projectile fallback update must clear stale geometry");
+assert.equal(projectileRecords.get("lower-projectile-text").value.unitObjects.texts[0], retainedProjectileText);
+assert.equal(retainedProjectileText.text, "15", "Damage-hit update must update retained Text content");
+assert.equal(retainedProjectileText.position.y, 35, "Damage-hit movement must update retained Text vertical position");
+const alternateProjectileAtlases = new Map(projectileAtlases);
+retainedProjectileSprite.anchor.y = 0;
+retainedProjectileSprite.rotation = 2;
+retainedProjectileSprite.scale.y = 3;
+drawProjectileFrame(primaryProjectileLayer, projectileWorld, projectileBelow40, projectileAtLeast40, alternateProjectileAtlases);
+assert.equal(retainedProjectileSprite.anchor.y, 0.5, "Atlas-map identity change must rerun complete Sprite reset");
+assert.ok(Math.abs(retainedProjectileSprite.rotation - Math.atan2(16, 18)) < 1e-12, "Atlas-map identity change must reset Sprite rotation");
+assert.equal(retainedProjectileSprite.scale.y, 1, "Atlas-map identity change must reset Sprite scale y");
+projectileBelow40[1].kind = "arrow";
+projectileWorld.engineSettings.projectileColor = 0x123456;
+drawProjectileFrame(primaryProjectileLayer);
+let projectileArrowStroke = retainedProjectileGraphics.context.instructions.find(({ action }) => action === "stroke");
+assert.equal(projectileArrowStroke.data.style.color, 0x123456, "Same-shape cannon-to-arrow transition must clear geometry and install player color");
+projectileWorld.engineSettings.projectileColor = 0x654321;
+drawProjectileFrame(primaryProjectileLayer);
+projectileArrowStroke = retainedProjectileGraphics.context.instructions.find(({ action }) => action === "stroke");
+assert.equal(projectileArrowStroke.data.style.color, 0x654321, "Engine-setting change must update retained fallback style");
+const retainedUpperProjectileGraphics = upperProjectileRecord.unitObjects.graphics[0];
+const upperBoundsBeforeElapsed = retainedUpperProjectileGraphics.getLocalBounds().width;
+projectileWorld.elapsed = 2;
+drawProjectileFrame(primaryProjectileLayer);
+assert.equal(upperProjectileRecord.unitObjects.graphics[0], retainedUpperProjectileGraphics, "Elapsed-time animation must retain projectile Graphics identity");
+assert.notEqual(retainedUpperProjectileGraphics.getLocalBounds().width, upperBoundsBeforeElapsed, "Elapsed-time change must redraw animated axe geometry");
+const projectileCreatedAfterWarmup = tracked.snapshotDisplayObjectPerformance().trackedCreated;
+for (let frame = 0; frame < 300; frame += 1) drawProjectileFrame(primaryProjectileLayer);
+assert.equal(tracked.snapshotDisplayObjectPerformance().trackedCreated, projectileCreatedAfterWarmup, "300 unchanged production projectile frames must create zero display objects");
+const shapeProjectileLayer = new Container();
+const shapeProjectile = projectileFixture("shape-projectile", 10, "arrow", { missileId: "missile" });
+const shapeProjectileWorld = { ...projectileWorld, projectiles: [shapeProjectile] };
+drawProjectileFrame(shapeProjectileLayer, shapeProjectileWorld, [shapeProjectile], []);
+const shapeProjectileSprite = lastSeenCaches.get(shapeProjectileLayer).kinds.projectile.active.get("shape-projectile").value;
+Object.assign(shapeProjectile, { missileId: null, className: "missile-class-hit", displayDamage: 8 });
+drawProjectileFrame(shapeProjectileLayer, shapeProjectileWorld, [shapeProjectile], []);
+const shapeProjectileText = lastSeenCaches.get(shapeProjectileLayer).kinds.projectile.active.get("shape-projectile").value;
+assert.notEqual(shapeProjectileText.root, shapeProjectileSprite.root, "Sprite-to-Text projectile shape transition must replace identity");
+assert.equal(shapeProjectileSprite.root.destroyed, true, "Sprite-to-Text projectile shape transition must destroy incompatible record");
+Object.assign(shapeProjectile, { className: null, displayDamage: undefined, kind: "cannon" });
+drawProjectileFrame(shapeProjectileLayer, shapeProjectileWorld, [shapeProjectile], []);
+const shapeProjectileGraphics = lastSeenCaches.get(shapeProjectileLayer).kinds.projectile.active.get("shape-projectile").value;
+assert.notEqual(shapeProjectileGraphics.root, shapeProjectileText.root, "Text-to-Graphics projectile shape transition must replace identity");
+assert.equal(shapeProjectileText.root.destroyed, true, "Text-to-Graphics projectile shape transition must destroy incompatible record");
+assert.equal(lastSeenCaches.get(shapeProjectileLayer).kinds.projectile.pool.length, 0, "Shape transitions must not pool without reset contract");
+disposeWorldRenderCache(lastSeenCaches.get(shapeProjectileLayer), detachLastSeenRecord, destroyLastSeenRecord);
+lastSeenCaches.delete(shapeProjectileLayer);
+projectilePrepared.delete(shapeProjectileLayer);
+drawProjectileFrame(splitProjectileLayer);
+assert.notEqual(lastSeenCaches.get(splitProjectileLayer).kinds.projectile.active.get("lower-projectile-sprite").value.root, projectileSpriteRecord.root, "Split viewport must own independent projectile objects");
+drawProjectileFrame(primaryProjectileLayer, projectileWorld, projectileBelow40.filter(({ id }) => id !== "lower-projectile-sprite"), projectileAtLeast40);
+assert.equal(primaryProjectileCache.kinds.projectile.dormant.get("lower-projectile-sprite").value.root, projectileSpriteRecord.root, "Culled projectile must detach to dormant");
+drawProjectileFrame(primaryProjectileLayer);
+assert.equal(primaryProjectileCache.kinds.projectile.active.get("lower-projectile-sprite").value.root, projectileSpriteRecord.root, "Projectile cull re-entry must retain identity");
+projectileWorld.projectiles = projectileWorld.projectiles.filter(({ id }) => id !== "lower-projectile-text");
+projectileBelow40 = projectileBelow40.filter(({ id }) => id !== "lower-projectile-text");
+drawProjectileFrame(primaryProjectileLayer);
+assert.equal(projectileTextRecord.root.destroyed, true, "Projectile removal must destroy its exact record while pooling is disabled");
+assert.equal(primaryProjectileCache.kinds.projectile.pool.length, 0, "Projectile pool must remain empty without a reset contract");
+const replacementProjectileBelow = [projectileFixture("lower-projectile-sprite", 10, "arrow", { missileId: "missile" })];
+const replacementProjectileWorld = { ...projectileWorld, projectiles: replacementProjectileBelow };
+drawProjectileFrame(primaryProjectileLayer, replacementProjectileWorld, replacementProjectileBelow, []);
+assert.notEqual(lastSeenCaches.get(primaryProjectileLayer).kinds.projectile.active.get("lower-projectile-sprite").value.root, projectileSpriteRecord.root, "World replacement with same projectile ID must create a new identity");
+assert.equal(projectileSpriteRecord.root.destroyed, true, "Projectile world replacement must destroy old identity");
+for (const [layer, cache] of [[primaryProjectileLayer, lastSeenCaches.get(primaryProjectileLayer)], [splitProjectileLayer, lastSeenCaches.get(splitProjectileLayer)]]) {
+  disposeWorldRenderCache(cache, detachLastSeenRecord, destroyLastSeenRecord);
+  lastSeenCaches.delete(layer);
+  projectilePrepared.delete(layer);
+}
+assert.equal(tracked.snapshotDisplayObjectPerformance().windowLiveDelta, 0, "Production projectile split/world-replacement disposal must return tracked live delta to zero");
 tracked.setDisplayObjectPerformanceCapture(false);
 
 let nextIdentity = 1;
@@ -648,6 +831,21 @@ assert.deepEqual(
   Array.from({ length: 64 }, (_, index) => `corpse-${index + 2}`),
   "Corpse dormant cache must retain the newest 64 records"
 );
+
+const projectileDormantCache = createWorldRenderCache({});
+const projectileLiveKeys = new Set();
+for (let index = 0; index < 66; index += 1) {
+  const key = `dormant-projectile-${index}`;
+  projectileLiveKeys.add(key);
+  reconcileWorldRenderKind({ ...options(projectileDormantCache, "projectile", [{ key, shape: "projectile-graphics-v1" }], new Set(projectileLiveKeys)), canResetForPool: undefined });
+}
+reconcileWorldRenderKind({ ...options(projectileDormantCache, "projectile", [], projectileLiveKeys), canResetForPool: undefined });
+assert.deepEqual(
+  [...projectileDormantCache.kinds.projectile.dormant.keys()],
+  Array.from({ length: 64 }, (_, index) => `dormant-projectile-${index + 2}`),
+  "Projectile dormant cache must retain the newest 64 records"
+);
+assert.equal(projectileDormantCache.kinds.projectile.pool.length, 0, "Projectile pool must stay empty without reset contract");
 
 for (const startingState of ["active", "dormant"]) {
   const shapeCache = createWorldRenderCache({});
