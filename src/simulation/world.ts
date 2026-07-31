@@ -1,6 +1,7 @@
 import type { WargusAiDefinition, WargusAllowRule, WargusAnimation, WargusButton, WargusDependencyRule, WargusEngineSettings, WargusMap, WargusMapSetup, WargusMissile, WargusSpeedFactors, WargusSpell, WargusTilesetTerrain, WargusUnit, WargusUnitDatabaseEntry, WargusUpgrade } from "../wargus/types";
 import { sourceRaceScoreForUnitDefinition } from "../wargus/sourceRace";
 import { rawTerrainMaskForTile, terrainMaskHasFlag } from "./terrainMetadata";
+import { canSkipLocalVisibilityRebuild, computeLocalVisionSignature, noteVisibilityFullRebuild, noteVisibilitySkip } from "./visibilityCache";
 
 const WARGUS_SPEED_TO_PIXELS_PER_SECOND = 8.4;
 
@@ -1755,11 +1756,28 @@ export function updateVisibility(world: WorldState): void {
         state.nextExplorationUpdateTick = world.tick + world.tickRate;
       }
     }
+    noteVisibilityFullRebuild(world, 0);
+    updateLastSeenBuildings(world);
+    return;
+  }
+  if (canSkipLocalVisibilityRebuild(world)) {
+    noteVisibilitySkip(world);
+    for (const state of world.aiStates) {
+      if (!state.enabled || world.tick < state.nextExplorationUpdateTick) {
+        continue;
+      }
+      const buffer = world.exploredTilesByPlayer[state.player] ?? new Uint8Array(tileCount);
+      world.exploredTilesByPlayer[state.player] = buffer;
+      markExploredTilesForPlayer(world, state.player, buffer);
+      state.nextExplorationUpdateTick = world.tick + world.tickRate;
+    }
     updateLastSeenBuildings(world);
     return;
   }
   world.visibleTiles.fill(0);
   markExploredTilesForPlayer(world, world.visibilityPlayer, world.exploredTiles, world.visibleTiles);
+  const sourcesVisited = computeLocalVisionSignature(world, world.visibilityPlayer).sourceCount;
+  noteVisibilityFullRebuild(world, sourcesVisited);
   for (const state of world.aiStates) {
     if (!state.enabled || world.tick < state.nextExplorationUpdateTick) {
       continue;
