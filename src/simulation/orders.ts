@@ -4,6 +4,7 @@ import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
 import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath, findPathResult } from "./pathfinding";
+import { cancelPathRequestsForUnit, enqueueAttackPathRequest, enqueuePointPathRequest, hasPendingPathRequest, stepPathRequests } from "./pathRequests";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
 import { findWorldUnitById } from "./worldSelectors";
@@ -1079,13 +1080,13 @@ function commitMoveOrder(unit: WorldUnit, planned: PlannedMoveOrder, clearQueue:
 
 export function issueMoveOrder(world: WorldState, unitId: string, x: number, y: number): void {
   const unit = findUnit(world, unitId);
-  if (!unit) {
-    return;
-  }
-  const planned = planMoveOrder(world, unit, x, y);
-  if (planned) {
-    commitMoveOrder(unit, planned, true);
-  }
+  if (!unit || !canReceiveMoveOrders(unit)) return;
+  const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
+  const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
+  cancelPathRequestsForUnit(world, unit.id);
+  unit.moveQueue = [];
+  unit.order = null;
+  enqueuePointPathRequest(world, unit.id, clampedX, clampedY, "move");
 }
 
 export function canIssueMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
@@ -1338,6 +1339,7 @@ export function issueStopOrder(world: WorldState, unitId: string): boolean {
   if (!unit || !canIssueStop(unit)) {
     return false;
   }
+  cancelPathRequestsForUnit(world, unit.id);
   unit.order = null;
   unit.moveQueue = [];
   return true;
@@ -1349,21 +1351,20 @@ export function canIssueStop(unit: WorldUnit): boolean {
 
 export function issueAttackMoveOrder(world: WorldState, unitId: string, x: number, y: number): boolean {
   const unit = findUnit(world, unitId);
-  if (!unit || !canIssueCombatMoveAt(world, unit, x, y)) {
-    return false;
-  }
+  if (!unit || !canReceiveCombatMoveOrders(unit)) return false;
   const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
   const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
-  const path = findPath(world, unit, clampedX, clampedY);
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "attack-move",
     targetId: null,
-    targetX: path.at(-1)?.x ?? clampedX,
-    targetY: path.at(-1)?.y ?? clampedY,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    targetX: clampedX,
+    targetY: clampedY,
+    path: [],
+    pathIndex: 0
   };
+  enqueuePointPathRequest(world, unit.id, clampedX, clampedY, "attack-move");
   return true;
 }
 
@@ -1508,12 +1509,8 @@ function canReceiveCombatMoveOrders(unit: WorldUnit): boolean {
 }
 
 export function canIssueCombatMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
-  if (!canReceiveCombatMoveOrders(unit)) {
-    return false;
-  }
-  const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, x));
-  const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
-  return findPath(world, unit, clampedX, clampedY).length > 0;
+  return canReceiveCombatMoveOrders(unit) && Number.isFinite(x) && Number.isFinite(y)
+    && x >= 0 && y >= 0 && x <= world.map.width * world.tileSize && y <= world.map.height * world.tileSize;
 }
 
 export function canIssueQueueCombatMoveAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
@@ -1766,18 +1763,8 @@ function issueGroupQueueSmartOrderWithDestinations(world: WorldState, unitIds: s
 
 export function issueGroupMoveOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
   const movableUnits = selectedUnitsForPlayer(world, unitIds, playerId);
-  if (movableUnits.length === 0) {
-    return false;
-  }
-  let issued = false;
-  movableUnits.forEach((unit) => {
-    const planned = planMoveOrder(world, unit, x, y);
-    if (planned) {
-      commitMoveOrder(unit, planned, true);
-      issued = true;
-    }
-  });
-  return issued;
+  for (const unit of movableUnits) issueMoveOrder(world, unit.id, x, y);
+  return movableUnits.length > 0;
 }
 
 export function issueGroupQueueMoveOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
@@ -2546,20 +2533,20 @@ function issueReturnGoodsToDropoffOrder(world: WorldState, unitId: string, dropo
 export function issueAttackOrder(world: WorldState, unitId: string, targetId: string): boolean {
   const unit = findUnit(world, unitId);
   const target = findUnit(world, targetId);
-  if (!unit || !target || !canIssueAttackTargetWithPath(world, unit, target)) {
+  if (!unit || !target || !canIssueAttackTarget(world, unit, target)) return false;
+  cancelPathRequestsForUnit(world, unit.id);
+  unit.moveQueue = [];
+  if (isInAttackRange(unit, target, world)) {
+    unit.order = { kind: "attack", targetId, targetX: target.x, targetY: target.y, autoReturn: null, path: [], pathIndex: 0 };
+    return true;
+  }
+  const candidates = sourceAttackTargetCandidates(world, unit, target);
+  if (candidates.length === 0) {
+    unit.order = null;
     return false;
   }
-  const path = sourceAttackTargetPath(world, unit, target);
-  unit.moveQueue = [];
-  unit.order = {
-    kind: "attack",
-    targetId,
-    targetX: target.x,
-    targetY: target.y,
-    autoReturn: null,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
-  };
+  unit.order = { kind: "attack", targetId, targetX: target.x, targetY: target.y, autoReturn: null, path: [], pathIndex: 0 };
+  enqueueAttackPathRequest(world, unit.id, target.id, candidates, null);
   return true;
 }
 
@@ -2576,7 +2563,7 @@ export function canIssueAttackTarget(world: WorldState, unit: WorldUnit, target:
 
 export function canIssueAttackTargetWithPath(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
   return canIssueAttackTarget(world, unit, target)
-    && (isInAttackRange(unit, target, world) || sourceAttackTargetPath(world, unit, target).length > 0);
+    && (isInAttackRange(unit, target, world) || sourceAttackTargetCandidates(world, unit, target).length > 0);
 }
 
 export function canIssueAttackTargetAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
@@ -5680,6 +5667,7 @@ function stepWorld(world: WorldState, tickSeconds: number, suppressMatchResoluti
     clearReferencesToDeadUnits(world, expiredUnitIds);
   }
   stepObjectiveCapture(world);
+  stepPathRequests(world);
   removeDeadUnits(world, expiredUnitIds);
   if (!suppressMatchResolution) {
     updateMatchState(world);
@@ -6056,31 +6044,30 @@ function stepAttackMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: nu
       }
       return;
     }
-    if (world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-      const result = sourceAttackTargetPathResult(world, unit, target);
-      if (result.status === "unreachable") {
+    if (!hasPendingPathRequest(world, unit.id) && world.tick % sourceOrderRetryTicks(world, 15) === 0) {
+      const candidates = sourceAttackTargetCandidates(world, unit, target);
+      if (candidates.length === 0) {
         order.targetId = null;
-        const destination = findPathResult(world, unit, order.targetX, order.targetY);
-        if (destination.status === "unreachable") {
-          unit.order = null;
-          startNextQueuedMove(world, unit);
-          return;
-        }
-        order.path = destination.path;
+        enqueuePointPathRequest(world, unit.id, order.targetX, order.targetY, "attack-move");
       } else {
-        order.path = result.path;
+        enqueueAttackPathRequest(world, unit.id, target.id, candidates, null);
       }
-      order.pathIndex = order.path.length > 1 ? 1 : 0;
     }
-    stepMoveOrder(world, unit, tickSeconds);
+    if (unit.order.path.length > 0) {
+      stepMoveOrder(world, unit, tickSeconds);
+    }
     return;
   }
 
-  if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-    unit.order.path = findPath(world, unit, unit.order.targetX, unit.order.targetY);
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+  if (
+    !hasPendingPathRequest(world, unit.id)
+    && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)
+  ) {
+    enqueuePointPathRequest(world, unit.id, unit.order.targetX, unit.order.targetY, "attack-move");
   }
-  stepMoveOrder(world, unit, tickSeconds);
+  if (unit.order.path.length > 0) {
+    stepMoveOrder(world, unit, tickSeconds);
+  }
 }
 
 function stepAttackGroundOrder(world: WorldState, unit: WorldUnit, tickSeconds: number): void {
@@ -6810,84 +6797,29 @@ function setSourceAiForce(world: WorldState, playerId: number, state: WorldAiSta
   }
 }
 
-type SourceAiLaunchOrder = Extract<NonNullable<WorldUnit["order"]>, { kind: "attack" | "attack-move" }>;
-
-function planSourceAiLaunchOrder(world: WorldState, playerId: number, unit: WorldUnit): SourceAiLaunchOrder | null {
-  const target = findPrimaryEnemyTargetForUnit(world, playerId, unit);
-  if (target) {
-    if (!canIssueAttackTargetWithPath(world, unit, target)) {
-      return null;
-    }
-    const path = sourceAttackTargetPath(world, unit, target);
-    return {
-      kind: "attack",
-      targetId: target.id,
-      targetX: target.x,
-      targetY: target.y,
-      autoReturn: null,
-      path,
-      pathIndex: path.length > 1 ? 1 : 0
-    };
-  }
-  const pressurePoint = findAiPressurePointForUnit(world, playerId, unit);
-  if (!pressurePoint || !canIssueCombatMoveAt(world, unit, pressurePoint.x, pressurePoint.y)) {
-    return null;
-  }
-  const clampedX = Math.max(0, Math.min(world.map.width * world.tileSize, pressurePoint.x));
-  const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, pressurePoint.y));
-  const path = findPath(world, unit, clampedX, clampedY);
-  if (path.length === 0) {
-    return null;
-  }
-  return {
-    kind: "attack-move",
-    targetId: null,
-    targetX: path.at(-1)?.x ?? clampedX,
-    targetY: path.at(-1)?.y ?? clampedY,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
-  };
-}
-
 function launchSourceAiAttackForce(world: WorldState, playerId: number, state: WorldAiState, id: number): boolean {
   const force = state.sourceScriptForces.find((candidate) => candidate.id === id);
-  if (!force || !sourceAiForceReady(world, playerId, state, id)) {
-    return false;
-  }
-  const plans: Array<{
-    unit: WorldUnit;
-    order: SourceAiLaunchOrder;
-    previousOrder: WorldUnit["order"];
-    previousMoveQueue: WorldUnit["moveQueue"];
-  }> = [];
+  if (!force || !sourceAiForceReady(world, playerId, state, id)) return false;
+  const unitIds: string[] = [];
   for (const unitId of force.assignedUnitIds) {
     const unit = findUnit(world, unitId);
     if (!unit || unit.hitPoints <= 0) {
+      for (const issuedUnitId of unitIds) cancelPathRequestsForUnit(world, issuedUnitId);
       return false;
     }
-    const order = planSourceAiLaunchOrder(world, playerId, unit);
-    if (!order) {
+    const target = findPrimaryEnemyTargetForUnit(world, playerId, unit);
+    const pressurePoint = target ? null : findAiPressurePointForUnit(world, playerId, unit);
+    const issued = target
+      ? issueAttackOrder(world, unit.id, target.id)
+      : Boolean(pressurePoint && issueAttackMoveOrder(world, unit.id, pressurePoint.x, pressurePoint.y));
+    if (!issued) {
+      for (const issuedUnitId of unitIds) cancelPathRequestsForUnit(world, issuedUnitId);
       return false;
     }
-    plans.push({ unit, order, previousOrder: unit.order, previousMoveQueue: unit.moveQueue });
+    unitIds.push(unit.id);
   }
-  for (const plan of plans) {
-    plan.unit.moveQueue = [];
-    plan.unit.order = plan.order;
-  }
-  if (plans.some((plan) => plan.unit.order !== plan.order || plan.unit.moveQueue.length !== 0)) {
-    for (const plan of plans) {
-      plan.unit.order = plan.previousOrder;
-      plan.unit.moveQueue = plan.previousMoveQueue;
-    }
-    return false;
-  }
-  const unitIds = plans.map((plan) => plan.unit.id);
   const launchLimit = sourceAiScriptForState(state)?.filter((instruction) => instruction.kind === "attack-force").length ?? 0;
-  state.sourceScriptLaunches = [
-    ...state.sourceScriptLaunches,
-    { sourceForceId: id, unitIds, launchedTick: world.tick }
-  ].slice(-Math.max(1, launchLimit));
+  state.sourceScriptLaunches = [...state.sourceScriptLaunches, { sourceForceId: id, unitIds, launchedTick: world.tick }].slice(-Math.max(1, launchLimit));
   state.sourceScriptForces = state.sourceScriptForces.filter((candidate) => candidate.id !== id);
   state.sourceScriptForceRoles = state.sourceScriptForceRoles.filter((entry) => entry.id !== id);
   return true;
@@ -10117,14 +10049,18 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
     return;
   }
 
-  if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-    const result = sourceAttackTargetPathResult(world, unit, target);
-    if (result.status === "unreachable" && order.autoReturn) {
-      restoreAutomaticAttackReturn(world, unit, order.autoReturn);
+  if (
+    !hasPendingPathRequest(world, unit.id)
+    && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0)
+  ) {
+    const candidates = sourceAttackTargetCandidates(world, unit, target);
+    if (candidates.length === 0) {
+      if (order.autoReturn) {
+        restoreAutomaticAttackReturn(world, unit, order.autoReturn);
+      }
       return;
     }
-    unit.order.path = result.path;
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+    enqueueAttackPathRequest(world, unit.id, target.id, candidates, order.autoReturn);
   }
   if (unit.order.path.length > 0) {
     stepMoveOrder(world, unit, tickSeconds);
@@ -10142,19 +10078,17 @@ function canContinueAutomaticAttackTarget(world: WorldState, unit: WorldUnit, ta
 }
 
 function restoreAutomaticAttackReturn(world: WorldState, unit: WorldUnit, autoReturn: { x: number; y: number }): void {
-  const result = findPathResult(world, unit, autoReturn.x, autoReturn.y);
-  if (result.status === "unreachable") {
-    unit.order = null;
-    return;
-  }
+  cancelPathRequestsForUnit(world, unit.id);
+  unit.moveQueue = [];
   unit.order = {
     kind: "attack-move",
     targetId: null,
     targetX: autoReturn.x,
     targetY: autoReturn.y,
-    path: result.path,
-    pathIndex: result.path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  enqueuePointPathRequest(world, unit.id, autoReturn.x, autoReturn.y, "attack-move");
 }
 
 function stepDefensiveAutoAttack(world: WorldState, unit: WorldUnit): void {
@@ -10174,8 +10108,21 @@ function stepDefensiveAutoAttack(world: WorldState, unit: WorldUnit): void {
     }
     return;
   }
-  const result = sourceAttackTargetPathResult(world, unit, target);
-  if (result.status === "unreachable") {
+  if (isInAttackRange(unit, target, world)) {
+    unit.moveQueue = [];
+    unit.order = {
+      kind: "attack",
+      targetId: target.id,
+      targetX: target.x,
+      targetY: target.y,
+      autoReturn: { x: unit.x, y: unit.y },
+      path: [],
+      pathIndex: 0
+    };
+    return;
+  }
+  const candidates = sourceAttackTargetCandidates(world, unit, target);
+  if (candidates.length === 0) {
     return;
   }
   unit.moveQueue = [];
@@ -10185,9 +10132,10 @@ function stepDefensiveAutoAttack(world: WorldState, unit: WorldUnit): void {
     targetX: target.x,
     targetY: target.y,
     autoReturn: { x: unit.x, y: unit.y },
-    path: result.path,
-    pathIndex: result.path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  enqueueAttackPathRequest(world, unit.id, target.id, candidates, { x: unit.x, y: unit.y });
 }
 
 function attackCooldownForUnit(world: WorldState, unit: WorldUnit): number {
@@ -11505,23 +11453,23 @@ interface AttackTargetPathResult {
   path: Array<{ x: number; y: number }>;
 }
 
-function sourceAttackTargetPathResult(world: WorldState, unit: WorldUnit, target: WorldUnit): AttackTargetPathResult {
-  if (isInAttackRange(unit, target, world)) {
-    return { status: "ready", path: [] };
-  }
+function sourceAttackTargetCandidates(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
   const bounds = unitFootprintBounds(world, target);
   const rangeTiles = Math.max(1, Math.ceil((unit.attackRange + target.radius) / world.tileSize) + 1);
   const candidates: Array<{ x: number; y: number; distance: number }> = [];
   for (let tileY = Math.max(0, bounds.minTileY - rangeTiles); tileY <= Math.min(world.map.height - 1, bounds.maxTileY + rangeTiles); tileY += 1) {
     for (let tileX = Math.max(0, bounds.minTileX - rangeTiles); tileX <= Math.min(world.map.width - 1, bounds.maxTileX + rangeTiles); tileX += 1) {
       const point = tileToWorldCenter(world, tileX, tileY);
-      if (!isAttackTargetInRangeFromPosition(world, unit, target, point.x, point.y)) {
-        continue;
-      }
-      candidates.push({ ...point, distance: distanceSquared(unit, point) });
+      if (isAttackTargetInRangeFromPosition(world, unit, target, point.x, point.y)) candidates.push({ ...point, distance: distanceSquared(unit, point) });
     }
   }
   candidates.sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x);
+  return candidates.map(({ x, y }) => ({ x, y }));
+}
+
+function sourceAttackTargetPathResult(world: WorldState, unit: WorldUnit, target: WorldUnit): AttackTargetPathResult {
+  if (isInAttackRange(unit, target, world)) return { status: "ready", path: [] };
+  const candidates = sourceAttackTargetCandidates(world, unit, target);
   let temporarilyBlocked: AttackTargetPathResult | null = null;
   for (const candidate of candidates) {
     const result = findPathResult(world, unit, candidate.x, candidate.y);
@@ -16206,6 +16154,7 @@ function removeDeadUnits(world: WorldState, expiredUnitIds: Set<string> = new Se
   const deadUnitIds = new Set<string>(expiredUnitIds);
   for (const unit of world.units) {
     if (unit.hitPoints <= 0) {
+      cancelPathRequestsForUnit(world, unit.id);
       deadUnitIds.add(unit.id);
       if (expiredUnitIds.has(unit.id)) {
         for (const cargoUnit of unit.cargo ?? []) {

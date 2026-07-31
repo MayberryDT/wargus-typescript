@@ -29,6 +29,16 @@ interface ReachableSearchResult {
   nearestPath: PathPoint[] | null;
 }
 
+const pathfindingDiagnostics = { synchronousFindPathCalls: 0, synchronousFindPathResultCalls: 0, expansionAttempts: 0 };
+
+export function resetPathfindingDiagnostics(): void {
+  pathfindingDiagnostics.synchronousFindPathCalls = 0;
+  pathfindingDiagnostics.synchronousFindPathResultCalls = 0;
+  pathfindingDiagnostics.expansionAttempts = 0;
+}
+
+export function snapshotPathfindingDiagnostics() { return { ...pathfindingDiagnostics }; }
+
 const sourceDirections = [
   { x: 0, y: -1 },
   { x: 1, y: -1 },
@@ -102,6 +112,7 @@ export function advanceResumablePathSearch(search: ResumablePathSearch, expansio
 }
 
 export function findPath(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathPoint[] {
+  pathfindingDiagnostics.synchronousFindPathCalls += 1;
   const start = worldToTile(world, unit.x, unit.y);
   const target = worldToTile(world, targetX, targetY);
   const targetTerrainPassable = Number.isFinite(footprintSearchCost(world, unit, target.x, target.y, "none"));
@@ -122,6 +133,7 @@ export function findPath(world: WorldState, unit: WorldUnit, targetX: number, ta
 }
 
 export function findPathResult(world: WorldState, unit: WorldUnit, targetX: number, targetY: number): PathSearchResult {
+  pathfindingDiagnostics.synchronousFindPathResultCalls += 1;
   const start = worldToTile(world, unit.x, unit.y);
   const target = worldToTile(world, targetX, targetY);
   const search = searchReachable(world, unit, start, target, "path-planning", true);
@@ -216,6 +228,7 @@ function advanceReachableSearch(search: ReachableSearchState, expansionBudget: n
   while (search.openHeap.length > 0 && expansions < budget) {
     const current = popOpenNode(search.openHeap);
     expansions += 1;
+    pathfindingDiagnostics.expansionAttempts += 1;
     const currentKey = key(current.x, current.y);
     if (search.openByKey.get(currentKey) !== current || search.closed.has(currentKey)) continue;
     search.openByKey.delete(currentKey);
