@@ -1,7 +1,7 @@
 import type { WargusAiDefinition, WargusAllowRule, WargusAnimation, WargusButton, WargusDependencyRule, WargusEngineSettings, WargusMap, WargusMapSetup, WargusMissile, WargusSpeedFactors, WargusSpell, WargusTilesetTerrain, WargusUnit, WargusUnitDatabaseEntry, WargusUpgrade } from "../wargus/types";
 import { sourceRaceScoreForUnitDefinition } from "../wargus/sourceRace";
 import { rawTerrainMaskForTile, terrainMaskHasFlag } from "./terrainMetadata";
-import { canSkipLocalVisibilityRebuild, computeLocalVisionSignature, noteVisibilityFullRebuild, noteVisibilitySkip } from "./visibilityCache";
+import { canSkipLocalVisibilityRebuild, computeLocalVisionSignature, noteVisibilityFullRebuild, noteVisibilitySkip, tryApplyIncrementalLocalVisibility, reseedLocalVisibilityContributions } from "./visibilityCache";
 
 const WARGUS_SPEED_TO_PIXELS_PER_SECOND = 8.4;
 
@@ -1774,10 +1774,30 @@ export function updateVisibility(world: WorldState): void {
     updateLastSeenBuildings(world);
     return;
   }
+  if (tryApplyIncrementalLocalVisibility(world, {
+    collectUnitTiles: collectUnitFieldOfViewTileIndices,
+    collectRevealTiles: collectRevealTileIndices
+  })) {
+    for (const state of world.aiStates) {
+      if (!state.enabled || world.tick < state.nextExplorationUpdateTick) {
+        continue;
+      }
+      const buffer = world.exploredTilesByPlayer[state.player] ?? new Uint8Array(tileCount);
+      world.exploredTilesByPlayer[state.player] = buffer;
+      markExploredTilesForPlayer(world, state.player, buffer);
+      state.nextExplorationUpdateTick = world.tick + world.tickRate;
+    }
+    updateLastSeenBuildings(world);
+    return;
+  }
   world.visibleTiles.fill(0);
   markExploredTilesForPlayer(world, world.visibilityPlayer, world.exploredTiles, world.visibleTiles);
   const sourcesVisited = computeLocalVisionSignature(world, world.visibilityPlayer).sourceCount;
   noteVisibilityFullRebuild(world, sourcesVisited);
+  reseedLocalVisibilityContributions(world, {
+    collectUnitTiles: collectUnitFieldOfViewTileIndices,
+    collectRevealTiles: collectRevealTileIndices
+  });
   for (const state of world.aiStates) {
     if (!state.enabled || world.tick < state.nextExplorationUpdateTick) {
       continue;
@@ -1820,6 +1840,42 @@ export function markExploredTilesForPlayer(world: WorldState, playerId: number, 
   for (const reveal of world.visibilityReveals ?? []) {
     if (reveal.remainingTicks > 0 && doesPlayerShareVisionWith(world, playerId, reveal.player)) {
       revealTilesAround(world, reveal.x, reveal.y, reveal.radiusTiles, explored, visible);
+    }
+  }
+}
+
+
+export function collectUnitFieldOfViewTileIndices(world: WorldState, unit: WorldUnit, out: number[]): void {
+  if (unit.hitPoints <= 0) {
+    return;
+  }
+  const footprint = sourceFieldOfViewFootprintForUnit(world, unit);
+  const radius = unit.sightRangeTiles;
+  for (let y = footprint.top - radius; y < footprint.top + footprint.height + radius; y += 1) {
+    for (let x = footprint.left - radius; x < footprint.left + footprint.width + radius; x += 1) {
+      if (x < 0 || y < 0 || x >= world.map.width || y >= world.map.height) {
+        continue;
+      }
+      if (!isSourceFieldOfViewTileVisible(world, footprint, x, y, radius, unit.elevated)) {
+        continue;
+      }
+      out.push(y * world.map.width + x);
+    }
+  }
+}
+
+export function collectRevealTileIndices(world: WorldState, x: number, y: number, radiusTiles: number, out: number[]): void {
+  const centerX = Math.floor(x / world.tileSize);
+  const centerY = Math.floor(y / world.tileSize);
+  for (let tileY = centerY - radiusTiles; tileY <= centerY + radiusTiles; tileY += 1) {
+    for (let tileX = centerX - radiusTiles; tileX <= centerX + radiusTiles; tileX += 1) {
+      if (tileX < 0 || tileY < 0 || tileX >= world.map.width || tileY >= world.map.height) {
+        continue;
+      }
+      if (Math.hypot(tileX - centerX, tileY - centerY) > radiusTiles + 0.45) {
+        continue;
+      }
+      out.push(tileY * world.map.width + tileX);
     }
   }
 }

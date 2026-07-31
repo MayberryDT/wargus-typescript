@@ -4,7 +4,7 @@ import { isExploreOnReadyValue } from "../wargus/sourceActions";
 import { sourceRaceScoreForUnitDefinition, sourceUnitDefinitionText } from "../wargus/sourceRace";
 import { boxDimensionsForUnit, createWorldUnit, defaultForestTileResources, getPlayerSupply, imageForTileset, isCircleVisibleToPlayer, isInvisibleUtilityUnit, isSourceBuildingDefinition, isSourceResourcePatchDefinition, isSourceResourceSiteDefinition, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, maxSelectableForEngine, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, recordPlayerUnitCreated, resourceCapacityForUnit, resourceStepForUnit, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, revealAreaToPlayer, sightRangeForUnit, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, unitFootprintHalfSize, updateVisibility, worldKindForUnitDefinition, type WorldAiState, type WorldEvent, type WorldPathPoint, type WorldProjectile, type WorldState, type WorldUnit } from "./world";
 import { findPath, findPathResult } from "./pathfinding";
-import { cancelPathRequestsForUnit, enqueueAttackPathRequest, enqueuePointPathRequest, hasPendingPathRequest, stepPathRequests } from "./pathRequests";
+import { cancelPathRequestsForUnit, enqueueAttackPathRequest, enqueuePointPathRequest, enqueueRepathRequest, hasPendingPathRequest, stepPathRequests } from "./pathRequests";
 import { isSourceBuildableTerrainTile, isSourceHarvestableWoodTile, isSourceWaterTile, isTilePassable, isUnitFootprintPassable, movementKindForUnit, tileToWorldCenter, worldToTile } from "./passability";
 import { isGoldOrWoodWorkerUnit } from "./workerSelection";
 import { findWorldUnitById } from "./worldSelectors";
@@ -2032,7 +2032,8 @@ export function issueRepairOrder(world: WorldState, unitId: string, targetId: st
   if (!unit || !target || !canIssueRepairTarget(world, unit, target)) {
     return false;
   }
-  const path = sourceUnitInteractionPath(world, unit, target, sourceRepairRange(unit));
+  const inRange = isInRepairRange(unit, target, world);
+  cancelPathRequestsForUnit(world, unit.id);
   if (target.construction) {
     if (target.construction.builderInside) {
       return false;
@@ -2053,9 +2054,12 @@ export function issueRepairOrder(world: WorldState, unitId: string, targetId: st
       targetX: target.x,
       targetY: target.y,
       buildCycle: 0,
-      path,
-      pathIndex: path.length > 1 ? 1 : 0
+      path: [],
+      pathIndex: 0
     };
+    if (!inRange) {
+      enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+    }
     return true;
   }
   unit.order = {
@@ -2064,9 +2068,12 @@ export function issueRepairOrder(world: WorldState, unitId: string, targetId: st
     targetX: target.x,
     targetY: target.y,
     repairCycle: 0,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!inRange) {
+    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+  }
   return true;
 }
 
@@ -2108,7 +2115,7 @@ export function issueLoadIntoTransportOrder(world: WorldState, unitId: string, t
   if (!unit || !transport || !canIssueLoadIntoTransportTarget(world, unit, transport)) {
     return false;
   }
-  const path = findPath(world, unit, transport.x, transport.y);
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "load-transport",
@@ -2118,9 +2125,12 @@ export function issueLoadIntoTransportOrder(world: WorldState, unitId: string, t
     boardWaitTicks: 0,
     targetX: transport.x,
     targetY: transport.y,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!canLoadIntoTransport(transport, unit)) {
+    enqueueRepathRequest(world, unit.id, [{ x: transport.x, y: transport.y }]);
+  }
   return true;
 }
 
@@ -2144,7 +2154,7 @@ export function issueFollowOrder(world: WorldState, unitId: string, targetId: st
   if (!unit || !target || !canIssueFollowTarget(world, unit, target)) {
     return false;
   }
-  const path = findPath(world, unit, target.x, target.y);
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "follow",
@@ -2153,9 +2163,12 @@ export function issueFollowOrder(world: WorldState, unitId: string, targetId: st
     followRange: 1,
     targetX: target.x,
     targetY: target.y,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!isInFollowRange(unit, target)) {
+    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+  }
   return true;
 }
 
@@ -2268,29 +2281,30 @@ function issueGoldHarvestOrder(world: WorldState, unit: WorldUnit, target: World
     return false;
   }
 
-  const path = sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit));
-  if (path.length === 0 && !isInResourceSourceRange(world, unit, target)) {
-    return false;
-  }
+  const inRange = isInResourceSourceRange(world, unit, target);
   const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "harvest",
     targetId: target.id,
     resource: "gold",
-      phase: "to-resource",
-      targetX: target.x,
-      targetY: target.y,
-      tileX: null,
-      tileY: null,
-      dropoffId: dropoff.id,
-      dropoffX: dropoffPoint.x,
-      dropoffY: dropoffPoint.y,
+    phase: "to-resource",
+    targetX: target.x,
+    targetY: target.y,
+    tileX: null,
+    tileY: null,
+    dropoffId: dropoff.id,
+    dropoffX: dropoffPoint.x,
+    dropoffY: dropoffPoint.y,
     gatherSeconds: 0,
     returnSeconds: 0,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!inRange) {
+    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+  }
   return true;
 }
 
@@ -2324,11 +2338,9 @@ export function issueHarvestWoodOrder(world: WorldState, unitId: string, tileX: 
   tileX = resolvedTile.x;
   tileY = resolvedTile.y;
   const target = tileToWorldCenter(world, tileX, tileY);
-  const path = findPath(world, unit, target.x, target.y);
-  if (path.length === 0 && Math.hypot(target.x - unit.x, target.y - unit.y) > world.tileSize + unit.radius) {
-    return false;
-  }
   const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
+  const near = Math.hypot(target.x - unit.x, target.y - unit.y) <= world.tileSize + unit.radius;
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "harvest",
@@ -2344,9 +2356,12 @@ export function issueHarvestWoodOrder(world: WorldState, unitId: string, tileX: 
     dropoffY: dropoffPoint.y,
     gatherSeconds: 0,
     returnSeconds: 0,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!near) {
+    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+  }
   return true;
 }
 
@@ -2385,11 +2400,9 @@ export function issueHarvestOilOrder(world: WorldState, unitId: string, targetId
     return false;
   }
 
-  const path = sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit));
-  if (path.length === 0 && !isInResourceSourceRange(world, unit, target)) {
-    return false;
-  }
+  const inRange = isInResourceSourceRange(world, unit, target);
   const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "harvest",
@@ -2405,9 +2418,12 @@ export function issueHarvestOilOrder(world: WorldState, unitId: string, targetId
     dropoffY: dropoffPoint.y,
     gatherSeconds: 0,
     returnSeconds: 0,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!inRange) {
+    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+  }
   return true;
 }
 
@@ -2422,10 +2438,8 @@ export function issueReturnGoodsOrder(world: WorldState, unitId: string): boolea
     return false;
   }
   const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
-  const path = findPath(world, unit, dropoffPoint.x, dropoffPoint.y);
-  if (path.length === 0 && !isInResourceDropoffRange(world, unit, dropoff)) {
-    return false;
-  }
+  const inRange = isInResourceDropoffRange(world, unit, dropoff);
+  cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
     kind: "harvest",
@@ -2441,9 +2455,12 @@ export function issueReturnGoodsOrder(world: WorldState, unitId: string): boolea
     dropoffY: dropoffPoint.y,
     gatherSeconds: 0,
     returnSeconds: 0,
-    path,
-    pathIndex: path.length > 1 ? 1 : 0
+    path: [],
+    pathIndex: 0
   };
+  if (!inRange) {
+    enqueueRepathRequest(world, unit.id, [{ x: dropoffPoint.x, y: dropoffPoint.y }]);
+  }
   return true;
 }
 
@@ -9212,7 +9229,8 @@ function canReachAttackTarget(world: WorldState, attacker: WorldUnit, target: Wo
   if (isInAttackRange(attacker, target, world) || attacker.kind === "fly") {
     return true;
   }
-  return sourceAttackTargetPath(world, attacker, target).length > 0;
+  // Candidate existence is enough for AI targeting; actual routes are budgeted later.
+  return sourceAttackTargetCandidates(world, attacker, target).length > 0;
 }
 
 function canAutoAcquireSourceTarget(attacker: WorldUnit, target: WorldUnit): boolean {
@@ -10485,11 +10503,10 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
       }
       return;
     }
-    if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-      unit.order.path = target
-        ? sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit))
-        : findPath(world, unit, targetX, targetY);
-      unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+    if (
+      !hasPendingPathRequest(world, unit.id)
+      && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)
+    ) {
       if (unit.order.resource === "wood" && unit.order.tileX !== null && unit.order.tileY !== null && !isReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY)) {
         const woodTile = resolveReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY);
         if (!woodTile || !issueHarvestWoodOrder(world, unit.id, woodTile.x, woodTile.y)) {
@@ -10497,8 +10514,11 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
         }
         return;
       }
+      enqueueRepathRequest(world, unit.id, [{ x: targetX, y: targetY }]);
     }
-    stepMoveOrder(world, unit, tickSeconds);
+    if (unit.order.path.length > 0) {
+      stepMoveOrder(world, unit, tickSeconds);
+    }
     return;
   }
 
@@ -10607,11 +10627,15 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     return;
   }
 
-  if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-    unit.order.path = findPath(world, unit, unit.order.dropoffX, unit.order.dropoffY);
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+  if (
+    !hasPendingPathRequest(world, unit.id)
+    && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)
+  ) {
+    enqueueRepathRequest(world, unit.id, [{ x: unit.order.dropoffX, y: unit.order.dropoffY }]);
   }
-  stepMoveOrder(world, unit, tickSeconds);
+  if (unit.order.path.length > 0) {
+    stepMoveOrder(world, unit, tickSeconds);
+  }
 }
 
 function dropMismatchedHarvestCargo(unit: WorldUnit, resource: "gold" | "wood" | "oil"): void {
@@ -11857,8 +11881,9 @@ function nearestReachableDropoff(world: WorldState, unit: WorldUnit, buildings: 
     if (isInResourceDropoffRange(world, unit, building)) {
       return true;
     }
+    // Cheap perimeter candidate existence; scheduler owns actual path cost.
     const point = resourceDropoffTargetPoint(world, unit, building);
-    return findPath(world, unit, point.x, point.y).length > 0;
+    return Number.isFinite(point.x) && Number.isFinite(point.y);
   });
 }
 
@@ -11883,10 +11908,10 @@ function resourceDropoffTargetPoint(world: WorldState, unit: WorldUnit, dropoff:
     }
   }
   candidates.sort((left, right) => left.distance - right.distance);
-  for (const candidate of candidates) {
-    if (findPath(world, unit, candidate.x, candidate.y).length > 0 || Math.hypot(candidate.x - unit.x, candidate.y - unit.y) <= world.tileSize) {
-      return { x: candidate.x, y: candidate.y };
-    }
+  // Prefer nearest passable perimeter tile without a synchronous A* probe.
+  // Path reachability is resolved by the budgeted path scheduler on order issue/repath.
+  if (candidates.length > 0) {
+    return { x: candidates[0].x, y: candidates[0].y };
   }
   return { x: dropoff.x, y: dropoff.y };
 }

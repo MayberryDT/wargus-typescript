@@ -97,19 +97,24 @@ orders.issueMoveOrder(world, mover.id, mover.x + world.tileSize * 4, mover.y);
 step(20);
 const afterMove = visibilityCache.snapshotVisibilityDiagnostics(world);
 assert.ok(
-  afterMove["plan025.visibility.fullRebuilds"] > rebuildsBefore,
+  afterMove["plan025.visibility.fullRebuilds"] + (afterMove["plan025.visibility.incrementalRebuilds"] || 0)
+    > rebuildsBefore,
   "unit movement must invalidate and rebuild visibility"
+);
+// After movement settles, idle ticks should skip again.
+step(12);
+const afterSettle = visibilityCache.snapshotVisibilityDiagnostics(world);
+assert.ok(
+  afterSettle["plan025.visibility.skippedRebuilds"] > afterIdle["plan025.visibility.skippedRebuilds"],
+  "post-move idle ticks should resume FOV skips"
 );
 
 console.log(JSON.stringify({
   ok: true,
   warm: afterWarm,
   idle: afterIdle,
-  afterMove: {
-    fullRebuilds: afterMove["plan025.visibility.fullRebuilds"],
-    skippedRebuilds: afterMove["plan025.visibility.skippedRebuilds"],
-    revision: afterMove["plan025.visibility.revision"]
-  }
+  afterMove: afterMove,
+  afterSettle: afterSettle
 }, null, 2));
 `, "utf8");
 

@@ -18,7 +18,14 @@ import { prepareWorldRenderSnapshot, type PreparedRenderStrata, type WorldRender
 import { getStatusBarTexture, getStatusDecorationTexture, type StatusDecorationAtlas } from "./statusDecorationAtlas";
 import { fogByteToAlpha, sourceCompletedBarColor, sourceCompletedBarShadow, sourceMapAreaRect, sourcePlayerColor, sourceViewportModeRects } from "./sourceUiHelpers";
 import { beginRetainedRenderSlots, createRetainedRenderSlots, disposeWorldRenderCache, finishRetainedRenderSlots, reconcileWorldRenderKind as reconcileWorldRenderKindBase, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot, type ReconcileWorldRenderKindOptions, type RetainedRenderSlots, type WorldRenderCache } from "./worldRenderCache";
-import { getVisibilityRevision } from "../simulation/visibilityCache";
+import { getVisibilityDirtyTiles, getVisibilityRevision } from "../simulation/visibilityCache";
+import {
+  clearFogLayerCache,
+  dirtyFogChunkKeysFromTiles,
+  ensureFogLayerCache,
+  fogChunkKey,
+  listVisibleFogChunks,
+} from "./fogChunkCache";
 
 const mapRenderKeys = new WeakMap<Container, string>();
 const fogRenderKeys = new WeakMap<Container, string>();
@@ -2465,6 +2472,7 @@ function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, f
       destroyLayerChildren(layer);
       layer.filters = [];
       fogRenderKeys.set(layer, "disabled");
+      clearFogLayerCache(layer);
     }
     layer.visible = false;
     return;
@@ -2477,99 +2485,139 @@ function drawFog(layer: Container, world: WorldState, viewport: WorldViewport, f
   const maxY = Math.min(world.map.height - 1, Math.ceil(viewport.bottom / world.tileSize));
   const fastFog = world.engineSettings.fogOfWarType === null || world.engineSettings.fogOfWarType === "fast";
   const bounds = { minX, minY, maxX, maxY };
-  const key = fogRenderKey(world, fogAtlas, bounds, fogAlphas, fastFog);
-  if (fogRenderKeys.get(layer) === key) {
-    return;
-  }
-  fogRenderKeys.set(layer, key);
-  destroyLayerChildren(layer);
-  applySourceFogBlur(layer, world, fastFog);
-  const sourceEdgeLayer = createTrackedContainer();
-  const knownFogGraphics = createTrackedGraphics();
-  const unknownFogGraphics = createTrackedGraphics();
-  let drewKnownFallbackGraphics = false;
-  let drewUnknownFogGraphics = false;
-  let drewSourceEdges = false;
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      const index = y * world.map.width + x;
-      const sourceVisible = world.visibleTiles[index] === 1;
-      const sourceFogTiles = sourceFogTextureFramesForTile(world, x, y);
-      const sourceKnown = isFogTileExplored(world, x, y);
-      if (!sourceVisible) {
-        if (sourceKnown) {
-          drewKnownFallbackGraphics = true;
-          drawSolidFogTile(knownFogGraphics, x, y, world.tileSize, sourceFogTileAlpha(world, x, y, fogAlphas, fastFog));
-        } else {
-          drewUnknownFogGraphics = true;
-          drawOpaqueUnknownFogTile(unknownFogGraphics, x, y, world.tileSize);
-        }
-      }
-      if (sourceVisible && sourceKnown && fogAtlas && sourceFogTiles.fogTile && sourceFogTiles.fogTile !== sourceFogTiles.blackFogTile) {
-        drawSourceFogTile(sourceEdgeLayer, knownFogGraphics, fogAtlas, sourceFogTiles.fogTile, x, y, world.tileSize, fogAlphas[0]);
-        drewSourceEdges = true;
-      }
-      if (sourceKnown && fogAtlas && sourceFogTiles.blackFogTile && shouldDrawSourceBlackFogTile(world, x, y, sourceVisible)) {
-        drawSourceFogTile(sourceEdgeLayer, knownFogGraphics, fogAtlas, sourceFogTiles.blackFogTile, x, y, world.tileSize, fogAlphas[2]);
-        drewSourceEdges = true;
-      }
-    }
-  }
-  if (drewKnownFallbackGraphics) {
-    layer.addChild(knownFogGraphics);
-  }
-  if (drewSourceEdges) {
-    layer.addChild(sourceEdgeLayer);
-  } else {
-    destroyTrackedDisplayObject(sourceEdgeLayer, { children: true });
-  }
-  if (drewUnknownFogGraphics) {
-    layer.addChild(unknownFogGraphics);
-  }
-}
-
-function fogRenderKey(
-  world: WorldState,
-  fogAtlas: FogTextureAtlas | null,
-  bounds: MapTileRenderBounds,
-  fogAlphas: [number, number, number],
-  fastFog: boolean
-): string {
-  const visibilityRevision = getVisibilityRevision(world);
-  return [
+  const settingsKey = [
     "enabled",
     world.map.path,
     `${world.map.width}x${world.map.height}`,
-    `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}`,
     fogAtlas ? idForFogAtlas(fogAtlas) : 0,
     fastFog ? 1 : 0,
     world.engineSettings.fogOfWarBilinear ? 1 : 0,
     sourceFogBlurRadius(world, fastFog),
     sourceFogBlurIterations(world),
-    fogAlphas.join(","),
-    // Prefer authoritative visibility revision over per-frame viewport bit hashing.
-    // Fall back to the legacy hash only before the first published revision.
-    visibilityRevision > 0 ? `rev:${visibilityRevision}` : fogVisibilityHash(world, bounds)
+    fogAlphas.join(",")
   ].join(":");
-}
+  const visibilityRevision = getVisibilityRevision(world);
+  const boundsKey = `${minX},${minY},${maxX},${maxY}`;
+  const outerKey = `${settingsKey}:${boundsKey}:rev:${visibilityRevision}`;
+  const cache = ensureFogLayerCache(layer, world);
+  const settingsChanged = fogRenderKeys.get(layer) !== outerKey && cache.lastBoundsKey !== `${settingsKey}:${boundsKey}`;
+  // Always keep blur in sync.
+  applySourceFogBlur(layer, world, fastFog);
 
-function fogVisibilityHash(world: WorldState, bounds: MapTileRenderBounds): number {
-  let hash = 2166136261;
-  const padding = sourceBlackFogVisibleSuppressionRadius + 1;
-  const minX = Math.max(0, bounds.minX - padding);
-  const minY = Math.max(0, bounds.minY - padding);
-  const maxX = Math.min(world.map.width - 1, bounds.maxX + padding);
-  const maxY = Math.min(world.map.height - 1, bounds.maxY + padding);
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      const index = y * world.map.width + x;
-      const state = (world.visibleTiles[index] === 1 ? 1 : 0) | (isFogTileExplored(world, x, y) ? 2 : 0);
-      hash ^= state + 31 * x + 131 * y;
-      hash = Math.imul(hash, 16777619);
+  const visibleChunkSpecs = listVisibleFogChunks(world, minX, minY, maxX, maxY);
+  const visibleKeys = new Set(visibleChunkSpecs.map((chunk) => fogChunkKey(chunk.chunkX, chunk.chunkY)));
+  const dirtyTiles = getVisibilityDirtyTiles(world);
+  const fullDirty = dirtyTiles.length === 0 && (cache.lastRevision !== visibilityRevision || cache.chunks.size === 0);
+  const dirtyKeys = fullDirty
+    ? visibleKeys
+    : dirtyFogChunkKeysFromTiles(world, dirtyTiles, sourceBlackFogVisibleSuppressionRadius + 1);
+
+  // Drop chunks that left the viewport (or world replaced).
+  for (const [key, record] of [...cache.chunks.entries()]) {
+    if (!visibleKeys.has(key)) {
+      destroyTrackedDisplayObject(record.container, { children: true });
+      cache.chunks.delete(key);
+      cache.destroyed += 1;
     }
   }
-  return hash >>> 0;
+
+  for (const spec of visibleChunkSpecs) {
+    const key = fogChunkKey(spec.chunkX, spec.chunkY);
+    let record = cache.chunks.get(key);
+    const mustRebuild = !record
+      || record.revision !== visibilityRevision && (fullDirty || dirtyKeys.has(key) || settingsChanged)
+      || settingsChanged && record.revision !== visibilityRevision;
+    if (!record) {
+      const container = createTrackedContainer();
+      const knownGraphics = createTrackedGraphics();
+      const unknownGraphics = createTrackedGraphics();
+      const edgeLayer = createTrackedContainer();
+      record = {
+        key,
+        chunkX: spec.chunkX,
+        chunkY: spec.chunkY,
+        minTileX: spec.minTileX,
+        minTileY: spec.minTileY,
+        maxTileX: spec.maxTileX,
+        maxTileY: spec.maxTileY,
+        container,
+        knownGraphics,
+        unknownGraphics,
+        edgeLayer,
+        revision: -1
+      };
+      cache.chunks.set(key, record);
+      cache.created += 1;
+      layer.addChild(container);
+    } else {
+      cache.reused += 1;
+      if (!record.container.parent) {
+        layer.addChild(record.container);
+      }
+    }
+    if (!mustRebuild && record.revision === visibilityRevision) {
+      continue;
+    }
+    // Rebuild chunk contents.
+    destroyLayerChildren(record.container);
+    record.knownGraphics = createTrackedGraphics();
+    record.unknownGraphics = createTrackedGraphics();
+    record.edgeLayer = createTrackedContainer();
+    let drewKnown = false;
+    let drewUnknown = false;
+    let drewEdges = false;
+    for (let y = record.minTileY; y <= record.maxTileY; y += 1) {
+      for (let x = record.minTileX; x <= record.maxTileX; x += 1) {
+        const index = y * world.map.width + x;
+        const sourceVisible = world.visibleTiles[index] === 1;
+        const sourceFogTiles = sourceFogTextureFramesForTile(world, x, y);
+        const sourceKnown = isFogTileExplored(world, x, y);
+        if (!sourceVisible) {
+          if (sourceKnown) {
+            drewKnown = true;
+            drawSolidFogTile(record.knownGraphics, x, y, world.tileSize, sourceFogTileAlpha(world, x, y, fogAlphas, fastFog));
+          } else {
+            drewUnknown = true;
+            drawOpaqueUnknownFogTile(record.unknownGraphics, x, y, world.tileSize);
+          }
+        }
+        if (sourceVisible && sourceKnown && fogAtlas && sourceFogTiles.fogTile && sourceFogTiles.fogTile !== sourceFogTiles.blackFogTile) {
+          drawSourceFogTile(record.edgeLayer, record.knownGraphics, fogAtlas, sourceFogTiles.fogTile, x, y, world.tileSize, fogAlphas[0]);
+          drewEdges = true;
+        }
+        if (sourceKnown && fogAtlas && sourceFogTiles.blackFogTile && shouldDrawSourceBlackFogTile(world, x, y, sourceVisible)) {
+          drawSourceFogTile(record.edgeLayer, record.knownGraphics, fogAtlas, sourceFogTiles.blackFogTile, x, y, world.tileSize, fogAlphas[2]);
+          drewEdges = true;
+        }
+      }
+    }
+    if (drewKnown) {
+      record.container.addChild(record.knownGraphics);
+    } else {
+      destroyTrackedDisplayObject(record.knownGraphics, { children: true });
+    }
+    if (drewEdges) {
+      record.container.addChild(record.edgeLayer);
+    } else {
+      destroyTrackedDisplayObject(record.edgeLayer, { children: true });
+    }
+    if (drewUnknown) {
+      record.container.addChild(record.unknownGraphics);
+    } else {
+      destroyTrackedDisplayObject(record.unknownGraphics, { children: true });
+    }
+    record.revision = visibilityRevision;
+    cache.rebuilt += 1;
+  }
+
+  cache.lastBoundsKey = `${settingsKey}:${boundsKey}`;
+  cache.lastRevision = visibilityRevision;
+  fogRenderKeys.set(layer, outerKey);
+  // silence unused bounds for lint parity
+  void bounds;
 }
+
+
 
 function idForFogAtlas(fogAtlas: FogTextureAtlas): number {
   const existing = fogAtlasIds.get(fogAtlas);

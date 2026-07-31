@@ -15,7 +15,7 @@ export type ScheduledPointPathKind = "move" | "attack-move";
 type PendingPathRequest = {
   sequence: number;
   unitId: string;
-  kind: ScheduledPointPathKind | "attack";
+  kind: ScheduledPointPathKind | "attack" | "repath";
   candidates: PathPoint[];
   candidateIndex: number;
   targetId: string | null;
@@ -111,6 +111,21 @@ export function enqueueAttackPathRequest(
   });
 }
 
+export function enqueueRepathRequest(
+  world: WorldState,
+  unitId: string,
+  candidates: PathPoint[]
+): number {
+  return enqueue(world, {
+    unitId,
+    kind: "repath",
+    candidates: candidates.map((point) => ({ ...point })),
+    candidateIndex: 0,
+    targetId: null,
+    autoReturn: null
+  });
+}
+
 export function cancelPathRequestsForUnit(world: WorldState, unitId: string): void {
   const state = stateFor(world);
   const before = state.requests.length;
@@ -154,6 +169,13 @@ function finishRequest(world: WorldState, state: SchedulerState, request: Pendin
         pathIndex: path.length > 1 ? 1 : 0
       };
     }
+  } else if (request.kind === "repath") {
+    if (!unit.order || !("path" in unit.order)) {
+      diagnostics.failed += 1;
+      return;
+    }
+    unit.order.path = path;
+    unit.order.pathIndex = path.length > 1 ? 1 : 0;
   } else if (target) {
     if (unit.order?.kind === "attack-move") {
       unit.order.targetId = target.id;

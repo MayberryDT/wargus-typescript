@@ -34,3 +34,11 @@ Tip: after Plan 025 merge
 - verify:visibility-fog-incremental
 - verify:save-schema
 - verify:runtime-determinism
+
+## Leftovers pass (same day)
+
+- Plan 025 B/C contribution FOV + fog chunks
+- Harvest/repair/load/follow scheduled repaths
+- AI attack reachability no longer sync-A*
+- Browser playable 12/12 green
+- Pushed to origin/main after commit
