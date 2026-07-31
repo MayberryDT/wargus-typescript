@@ -213,7 +213,8 @@
     "verify:plan019-paired-ab-contract": "node scripts/verify-plan019-paired-ab-contract.mjs",
     "diagnose:plan019-paired-ab": "node scripts/run-plan019-paired-ab-diagnostic.mjs",
     "verify:pathfinding-budget": "node scripts/verify-pathfinding-budget.mjs",
-    "verify:x12-first-tick": "node scripts/verify-x12-first-tick.mjs"
+    "verify:x12-first-tick": "node scripts/verify-x12-first-tick.mjs",
+    "verify:visibility-fog-incremental": "node scripts/verify-visibility-fog-incremental.mjs"
   },
   "dependencies": {
     "@types/node": "^24.10.1",

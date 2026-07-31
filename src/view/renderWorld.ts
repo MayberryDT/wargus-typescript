@@ -18,6 +18,7 @@ import { prepareWorldRenderSnapshot, type PreparedRenderStrata, type WorldRender
 import { getStatusBarTexture, getStatusDecorationTexture, type StatusDecorationAtlas } from "./statusDecorationAtlas";
 import { fogByteToAlpha, sourceCompletedBarColor, sourceCompletedBarShadow, sourceMapAreaRect, sourcePlayerColor, sourceViewportModeRects } from "./sourceUiHelpers";
 import { beginRetainedRenderSlots, createRetainedRenderSlots, disposeWorldRenderCache, finishRetainedRenderSlots, reconcileWorldRenderKind as reconcileWorldRenderKindBase, replaceWorldRenderCacheOwner, retainedSceneOrder, takeRetainedRenderSlot, type ReconcileWorldRenderKindOptions, type RetainedRenderSlots, type WorldRenderCache } from "./worldRenderCache";
+import { getVisibilityRevision } from "../simulation/visibilityCache";
 
 const mapRenderKeys = new WeakMap<Container, string>();
 const fogRenderKeys = new WeakMap<Container, string>();
@@ -2534,6 +2535,7 @@ function fogRenderKey(
   fogAlphas: [number, number, number],
   fastFog: boolean
 ): string {
+  const visibilityRevision = getVisibilityRevision(world);
   return [
     "enabled",
     world.map.path,
@@ -2545,7 +2547,9 @@ function fogRenderKey(
     sourceFogBlurRadius(world, fastFog),
     sourceFogBlurIterations(world),
     fogAlphas.join(","),
-    fogVisibilityHash(world, bounds)
+    // Prefer authoritative visibility revision over per-frame viewport bit hashing.
+    // Fall back to the legacy hash only before the first published revision.
+    visibilityRevision > 0 ? `rev:${visibilityRevision}` : fogVisibilityHash(world, bounds)
   ].join(":");
 }
 
