@@ -179,3 +179,21 @@ individual exit packets or integration alone.
   Plans 001–017 implementation/acceptance commits, evidence, revalidation,
   drift, successors, and passed-versus-waived boundaries without fabricating
   dates or retroactively turning waivers into verified work.
+
+## Runtime Performance Optimization Plans (018–025)
+
+Generated 2026-07-27 and executed on Halla in waves. Gameplay plans 001–017 remain DONE above.
+
+| Plan | Title | Status |
+|------|-------|--------|
+| 018 | Establish runtime performance feedback loop | DONE on coordinator `perf/plan-018-v2` (Wave 1 baseline; qualified budgets deferred successors) |
+| 019 | Precompute terrain metadata | DONE (integrated Wave 2) |
+| 020 | Add transient unit ID index | DONE (integrated Wave 2) |
+| 021 | Build culled render snapshots | Implementation integrated; performance matrix recapture pending shared frame budgets |
+| 022 | Retain world display objects | Implementation integrated; combat-100 recapture pending post-024 |
+| 023 | Deterministic spatial occupancy index | DONE non-browser + runtime-smoke; browser pathfinding stall closed by 024 |
+| 024 | Budget and stagger pathfinding | DONE — X12 first tick ~1.0s (was ~12.3s); 0 sync multi-candidate auto-attack searches |
+| 025 | Dirty-driven visibility/fog | PARTIAL DONE — stationary FOV skip + fog revision key; contribution-count FOV and fog chunk mesh remain optional follow-ups |
+
+Coordinator tip at merge of 024/025: `perf/plan-018-v2`. Evidence under `plans/evidence/024/` and `plans/evidence/025/`.
+
