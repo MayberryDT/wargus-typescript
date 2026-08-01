@@ -156,14 +156,14 @@ individual exit packets or integration alone.
 | 015 | Complete and extend the fixed-demo advanced tech paths | Historical | P2 | 011, 012 | DONE-VERIFIED | `e6be507`, `c43a28c`, `7eb9230`, `66f0ed8` / `5f9a444` | [015](evidence/015.md) | 2026-07-23 | — |
 | 016 | Make commands, queues, supply, and input state legible | Historical | P2 | 014, 015 | ACCEPTED-WAIVER | `65bfd1a` / user acceptance `8655330` | [016](evidence/016.md) | 2026-07-24 | — |
 | 017 | Tune the one-Peasant demo for faster, consistent contact | Historical | P2 | 011–016 | ACCEPTED-WAIVER | `a17bfa7` / user acceptance `8655330` | [017](evidence/017.md) | 2026-07-24 | — |
-| 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | DONE-VERIFIED — SCHEMA-V4 PINNED | implementation `fc41c95`–`e80215e`; input timing `1304149`, `0336294`; accepted baseline `5b7d9cc` / `20260730T075608266Z` | [018](evidence/018.md) | 2026-07-30 | Plans 019–025 |
-| 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED — INCREMENTAL | implementation `177a41f`; accepted target `5935a17`; packet `20260730T090753875Z` | [019](evidence/019.md) | 2026-07-30 | — |
-| 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED — INCREMENTAL | implementation `c397841`; remediated target `9bab6b0`; packet `20260730T092706827Z` | [020](evidence/020.md) | 2026-07-30 | — |
-| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED — INCREMENTAL | implementation `786b7ea`; accepted target `a97eae1`; packet `20260730T101718413Z` | [021](evidence/021.md) | 2026-07-30 | — |
-| 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | IMPLEMENTED-REVIEWED — PERF BACKFILL AFTER 024 | implementation `2c47191`; integration `1f58164`; pre-024 packet `20260730T182358247Z` | [022](evidence/022.md) | 2026-07-30 | Plan 024 scheduler correction and exact recapture |
-| 023 | Add a deterministic spatial occupancy index | 3 — Structural optimization | P1 | 018, 019, 020 | TODO | — | — | — | — |
-| 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | TODO | — | — | — | — |
-| 025 | Make visibility and fog dirty-driven | 4 — High-risk scheduling | P1 | 018, 019, 022, 023 | TODO | — | — | — | — |
+| 018 | Establish a reproducible runtime performance feedback loop | 1 — Measurement foundation | P1 | Wave 0 exit | DONE-VERIFIED (qualified baseline with recorded absolute budget failures) | implementation `fc41c95`–`e80215e`; input timing `1304149`, `0336294`; accepted baseline `5b7d9cc` / `20260730T075608266Z` | [018](evidence/018.md) | 2026-07-30 | Plans 019–025 |
+| 019 | Precompute terrain metadata used by pathfinding and visibility | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED (implementation + focused gates; matrix per evidence) | implementation `177a41f`; accepted target `5935a17`; packet `20260730T090753875Z` | [019](evidence/019.md) | 2026-07-30 | — |
+| 020 | Replace hot linear unit lookups with a transient ID index | 2 — Independent hot paths | P1 | 018 | DONE-VERIFIED (implementation + focused gates; matrix per evidence) | implementation `c397841`; remediated target `9bab6b0`; packet `20260730T092706827Z` | [020](evidence/020.md) | 2026-07-30 | — |
+| 021 | Cull before sorting and build prepared render snapshots | 2 — Independent hot paths | P1 | 018 | DONE-IMPLEMENTATION-MATRIX-PENDING (implementation integrated; absolute frame budgets not yet re-proven post-024/025) | implementation `786b7ea`; accepted target `a97eae1`; packet `20260730T101718413Z` | [021](evidence/021.md) | 2026-07-30 | Wave 5 Task A2 matrix recapture |
+| 022 | Retain world display objects | 3 — Structural optimization | P1 | 018, 021 | DONE-IMPLEMENTATION-MATRIX-PENDING (implementation integrated; absolute frame budgets not yet re-proven post-024/025) | implementation `2c47191`; integration `1f58164`; pre-024 packet `20260730T182358247Z` | [022](evidence/022.md) | 2026-07-30 | Wave 5 Task A2 matrix recapture |
+| 023 | Add a deterministic spatial occupancy index | 3 — Structural optimization | P1 | 018, 019, 020 | DONE-VERIFIED non-browser; browser pathfinding stall closed by 024 | core `96a0b10`–`ff6ba89`; merge `eabade5` / validation `a7274fc` | [WAVE-3-4 closeout](evidence/WAVE-3-4-CLOSEOUT-2026-07-30.md) | 2026-07-30 | — |
+| 024 | Budget and stagger pathfinding | 4 — High-risk scheduling | P1 | 018, 019, 020, 023 | DONE-IMPLEMENTATION + playable/X12 green; hardware matrix recapture is Wave 5 Task A2 | implementation `32c3596` / `665cfab`; merge `a200b07`; leftovers path probes `a0482f5` | [024](evidence/024/) | 2026-07-30 | Wave 5 Tasks A2, B1–B5 |
+| 025 | Make visibility and fog dirty-driven | 4 — High-risk scheduling | P1 | 018, 019, 022, 023 | DONE-IMPLEMENTATION (skip + contribution FOV + fog chunks); matrix + dirty/parity hardening in Wave 5 | skip/fog `5c6699b` / merge `770ab68`; leftovers B/C + AI path probes `a0482f5` | [025](evidence/025/) | 2026-07-30 | Wave 5 Tasks A2, C1–C2 |
 | 026 | Standardize Halla browser execution | 0 — Foundation repair | P0 | — | DONE-VERIFIED | implementation `eb0cb0e`–`02051ad`; integration `d99a24a`; acceptance `9bbcc00` | [026](evidence/026.md) | 2026-07-28 | — |
 | 027 | Repair drifted verification gates | 0 — Foundation repair | P0 | 026 (closeout/revalidation only) | DONE-VERIFIED | implementation `ef7d8a8`, `6b8f89a`; follow-up repairs `caa7df8`, `de8d83f`, `1b8ad44`; acceptance `704f321` | [027](evidence/027.md) | 2026-07-28 | — |
 
@@ -183,17 +183,20 @@ individual exit packets or integration alone.
 ## Runtime Performance Optimization Plans (018–025)
 
 Generated 2026-07-27 and executed on Halla in waves. Gameplay plans 001–017 remain DONE above.
+Wave 5 closeout branch: `perf/wave5-closeout`. Ledger: [WAVE-5-CLOSEOUT](evidence/WAVE-5-CLOSEOUT.md).
 
 | Plan | Title | Status |
 |------|-------|--------|
-| 018 | Establish runtime performance feedback loop | DONE on coordinator `perf/plan-018-v2` (Wave 1 baseline; qualified budgets deferred successors) |
-| 019 | Precompute terrain metadata | DONE (integrated Wave 2) |
-| 020 | Add transient unit ID index | DONE (integrated Wave 2) |
-| 021 | Build culled render snapshots | Implementation integrated; performance matrix recapture pending shared frame budgets |
-| 022 | Retain world display objects | Implementation integrated; combat-100 recapture pending post-024 |
-| 023 | Deterministic spatial occupancy index | DONE non-browser + runtime-smoke; browser pathfinding stall closed by 024 |
-| 024 | Budget and stagger pathfinding | DONE — X12 first tick ~1.0s (was ~12.3s); 0 sync multi-candidate auto-attack searches |
-| 025 | Dirty-driven visibility/fog | PARTIAL DONE — stationary FOV skip + fog revision key; contribution-count FOV and fog chunk mesh remain optional follow-ups |
+| 018 | Establish runtime performance feedback loop | DONE-VERIFIED (qualified baseline with recorded absolute budget failures) |
+| 019 | Precompute terrain metadata | DONE-VERIFIED (implementation + focused gates; matrix per evidence) |
+| 020 | Add transient unit ID index | DONE-VERIFIED (implementation + focused gates; matrix per evidence) |
+| 021 | Build culled render snapshots | DONE-IMPLEMENTATION-MATRIX-PENDING (absolute frame budgets not yet re-proven post-024/025) |
+| 022 | Retain world display objects | DONE-IMPLEMENTATION-MATRIX-PENDING (absolute frame budgets not yet re-proven post-024/025) |
+| 023 | Deterministic spatial occupancy index | DONE-VERIFIED non-browser; browser pathfinding stall closed by 024 |
+| 024 | Budget and stagger pathfinding | DONE-IMPLEMENTATION + playable/X12 green; hardware matrix recapture is Wave 5 Task A2 |
+| 025 | Dirty-driven visibility/fog | DONE-IMPLEMENTATION (skip + contribution FOV + fog chunks at `a0482f5`); matrix + dirty/parity hardening in Wave 5 |
+| 026 | Standardize Halla browser execution | DONE-VERIFIED (leave existing evidence SHAs) |
+| 027 | Repair drifted verification gates | DONE-VERIFIED (leave existing evidence SHAs) |
 
-Coordinator tip at merge of 024/025: `perf/plan-018-v2`. Evidence under `plans/evidence/024/` and `plans/evidence/025/`.
+Integrated through `a0482f5` on `main` (Plans 018–025 path/visibility work). Wave 5 owns hardware matrix recapture, remaining step-order repaths, FOV dirty/parity hardening, and absolute-release gates. Evidence under `plans/evidence/024/`, `plans/evidence/025/`, and [WAVE-5-CLOSEOUT](evidence/WAVE-5-CLOSEOUT.md).
 

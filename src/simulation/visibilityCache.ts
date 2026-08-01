@@ -379,6 +379,11 @@ export function tryApplyIncrementalLocalVisibility(world: WorldState, collectors
     }
   }
 
+  if (dirty.size === 0) {
+    for (const record of [...removed, ...addedOrChanged]) {
+      for (const index of record.tiles) dirty.add(index);
+    }
+  }
   storeGlobalKeys(cache, world, signature);
   bumpRevision(cache);
   cache.dirtyTiles = [...dirty].sort((a, b) => a - b);

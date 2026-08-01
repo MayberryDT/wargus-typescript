@@ -2134,18 +2134,17 @@ export function issueLoadIntoTransportOrder(world: WorldState, unitId: string, t
   return true;
 }
 
-export function canIssueLoadIntoTransportTarget(world: WorldState, unit: WorldUnit, transport: WorldUnit): boolean {
-  return canTargetTransportForLoading(transport, unit)
-    && (canLoadIntoTransport(transport, unit) || findPath(world, unit, transport.x, transport.y).length > 0);
+export function canIssueLoadIntoTransportTarget(_world: WorldState, unit: WorldUnit, transport: WorldUnit): boolean {
+  return canTargetTransportForLoading(transport, unit);
 }
 
-export function canIssueQueueLoadIntoTransportTarget(world: WorldState, unit: WorldUnit, transport: WorldUnit): boolean {
+export function canIssueQueueLoadIntoTransportTarget(_world: WorldState, unit: WorldUnit, transport: WorldUnit): boolean {
   if (!canTargetTransportForLoading(transport, unit)) {
     return false;
   }
   const origin = queuedPathOrigin(unit);
   const pathingUnit = origin ? { ...unit, x: origin.x, y: origin.y } : unit;
-  return canLoadIntoTransport(transport, pathingUnit) || findPath(world, pathingUnit, transport.x, transport.y).length > 0;
+  return canTargetTransportForLoading(transport, pathingUnit) || canLoadIntoTransport(transport, pathingUnit);
 }
 
 export function issueFollowOrder(world: WorldState, unitId: string, targetId: string): boolean {
@@ -5919,11 +5918,15 @@ function stepPatrolOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
       }
       return;
     }
-    if (world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-      unit.order.path = sourceAttackTargetPath(world, unit, target);
-      unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+    if (!hasPendingPathRequest(world, unit.id) && world.tick % sourceOrderRetryTicks(world, 15) === 0) {
+      const candidates = sourceAttackTargetCandidates(world, unit, target);
+      if (candidates.length > 0) {
+        enqueueAttackPathRequest(world, unit.id, target.id, candidates, null);
+      }
     }
-    stepMoveOrder(world, unit, tickSeconds);
+    if (unit.order.path.length > 0) {
+      stepMoveOrder(world, unit, tickSeconds);
+    }
     return;
   }
 
@@ -5931,28 +5934,31 @@ function stepPatrolOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
     swapPatrolEndpoint(unit);
     unit.order.patrolRange = 0;
     unit.order.patrolWaitingCycle = 1;
-    unit.order.path = findPatrolPathWithinSourceRange(world, unit, unit.order.targetX, unit.order.targetY, unit.order.patrolRange);
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+    unit.order.path = [];
+    unit.order.pathIndex = 0;
   }
 
-  if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-    unit.order.path = findPatrolPathWithinSourceRange(world, unit, unit.order.targetX, unit.order.targetY, unit.order.patrolRange);
-    if (unit.order.path.length === 0) {
+  if (
+    !hasPendingPathRequest(world, unit.id)
+    && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)
+  ) {
+    const endpoint = pickPassableEndpointNear(world, unit, unit.order.targetX, unit.order.targetY, unit.order.patrolRange);
+    if (endpoint.x === unit.order.targetX && endpoint.y === unit.order.targetY && unit.order.patrolRange > 0) {
       unit.order.patrolWaitingCycle += 1;
       unit.order.patrolRange += 1;
-      unit.order.path = findPatrolPathWithinSourceRange(world, unit, unit.order.targetX, unit.order.targetY, unit.order.patrolRange);
-      if (unit.order.patrolWaitingCycle >= 5 && unit.order.path.length === 0) {
-        unit.order.patrolWaitingCycle = 0;
-        unit.order.patrolRange = 0;
-        swapPatrolEndpoint(unit);
-        unit.order.path = findPatrolPathWithinSourceRange(world, unit, unit.order.targetX, unit.order.targetY, unit.order.patrolRange);
-      }
     } else {
       unit.order.patrolWaitingCycle = 0;
     }
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+    if (unit.order.patrolWaitingCycle >= 5) {
+      unit.order.patrolWaitingCycle = 0;
+      unit.order.patrolRange = 0;
+      swapPatrolEndpoint(unit);
+    }
+    enqueueRepathRequest(world, unit.id, [pickPassableEndpointNear(world, unit, unit.order.targetX, unit.order.targetY, unit.order.patrolRange)]);
   }
-  stepMoveOrder(world, unit, tickSeconds);
+  if (unit.order.path.length > 0) {
+    stepMoveOrder(world, unit, tickSeconds);
+  }
 }
 
 function stepExploreOrder(world: WorldState, unit: WorldUnit, tickSeconds: number): void {
@@ -5974,13 +5980,17 @@ function stepExploreOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
   if (unit.order?.kind !== "explore") {
     return;
   }
-  if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-    unit.order.path = findExplorationPathWithinSourceRange(world, unit, unit.order.targetX, unit.order.targetY, unit.order.exploreRange);
+  if (
+    !hasPendingPathRequest(world, unit.id)
+    && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)
+  ) {
+    const endpoint = pickPassableEndpointNear(world, unit, unit.order.targetX, unit.order.targetY, unit.order.exploreRange);
+    enqueueRepathRequest(world, unit.id, [endpoint]);
+    // Expand search radius when still stuck with empty committed path.
     if (unit.order.path.length === 0) {
       unit.order.exploreWaitingCycle += 1;
       unit.order.exploreRange += 1;
-      unit.order.path = findExplorationPathWithinSourceRange(world, unit, unit.order.targetX, unit.order.targetY, unit.order.exploreRange);
-      if (unit.order.exploreWaitingCycle >= 5 && unit.order.path.length === 0) {
+      if (unit.order.exploreWaitingCycle >= 5) {
         unit.order.exploreWaitingCycle = 0;
         unit.order.exploreRange = 0;
         retargetExploreOrder(world, unit);
@@ -5988,10 +5998,11 @@ function stepExploreOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     } else {
       unit.order.exploreWaitingCycle = 0;
     }
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
   }
 
-  stepMoveOrder(world, unit, tickSeconds);
+  if (unit.order?.kind === "explore" && unit.order.path.length > 0) {
+    stepMoveOrder(world, unit, tickSeconds);
+  }
   if (unit.order?.kind !== "explore") {
     return;
   }
@@ -6015,7 +6026,13 @@ function swapPatrolEndpoint(unit: WorldUnit): void {
   unit.order.targetY = unit.order.returning ? unit.order.anchorY : unit.order.patrolY;
 }
 
-function findPatrolPathWithinSourceRange(world: WorldState, unit: WorldUnit, targetX: number, targetY: number, rangeTiles: number): Array<{ x: number; y: number }> {
+function pickPassableEndpointNear(
+  world: WorldState,
+  unit: WorldUnit,
+  targetX: number,
+  targetY: number,
+  rangeTiles: number
+): { x: number; y: number } {
   const movement = movementKindForUnit(unit);
   const targetTile = worldToTile(world, targetX, targetY);
   const candidates: Array<{ x: number; y: number; distance: number }> = [];
@@ -6029,16 +6046,15 @@ function findPatrolPathWithinSourceRange(world: WorldState, unit: WorldUnit, tar
       candidates.push({ x, y, distance: tileDistance });
     }
   }
-  candidates.sort((a, b) => a.distance - b.distance || Math.hypot(unit.x - tileToWorldCenter(world, a.x, a.y).x, unit.y - tileToWorldCenter(world, a.x, a.y).y) - Math.hypot(unit.x - tileToWorldCenter(world, b.x, b.y).x, unit.y - tileToWorldCenter(world, b.x, b.y).y));
-  for (const candidate of candidates) {
-    const point = tileToWorldCenter(world, candidate.x, candidate.y);
-    const path = findPath(world, unit, point.x, point.y);
-    if (path.length > 0) {
-      return path;
-    }
+  candidates.sort((a, b) => a.distance - b.distance
+    || Math.hypot(unit.x - tileToWorldCenter(world, a.x, a.y).x, unit.y - tileToWorldCenter(world, a.x, a.y).y)
+    - Math.hypot(unit.x - tileToWorldCenter(world, b.x, b.y).x, unit.y - tileToWorldCenter(world, b.x, b.y).y));
+  if (candidates.length > 0) {
+    return tileToWorldCenter(world, candidates[0].x, candidates[0].y);
   }
-  return findPath(world, unit, targetX, targetY);
+  return { x: targetX, y: targetY };
 }
+
 
 function stepAttackMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number): void {
   if (unit.order?.kind !== "attack-move") {
@@ -6243,12 +6259,16 @@ function stepDefendOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
       }
       return;
     }
-    if (canReceiveMoveOrders(unit)) {
-      unit.order.path = sourceAttackTargetPath(world, unit, attackTarget);
-      unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
-      stepMoveOrder(world, unit, tickSeconds);
-      return;
+    if (canReceiveMoveOrders(unit) && !hasPendingPathRequest(world, unit.id)) {
+      const candidates = sourceAttackTargetCandidates(world, unit, attackTarget);
+      if (candidates.length > 0) {
+        enqueueAttackPathRequest(world, unit.id, attackTarget.id, candidates, null);
+      }
     }
+    if (unit.order.path.length > 0) {
+      stepMoveOrder(world, unit, tickSeconds);
+    }
+    return;
   }
 
   unit.order.targetX = defendTarget.x;
@@ -6264,40 +6284,24 @@ function stepDefendOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   if (!canReceiveMoveOrders(unit)) {
     return;
   }
-  if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0) {
-    unit.order.path = findFollowPathWithinSourceRange(world, unit, defendTarget, unit.order.defendRange);
-    if (unit.order.path.length === 0) {
+  if (
+    !hasPendingPathRequest(world, unit.id)
+    && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0)
+  ) {
+    const endpoint = pickPassableEndpointNear(world, unit, defendTarget.x, defendTarget.y, unit.order.defendRange);
+    if (endpoint.x === defendTarget.x && endpoint.y === defendTarget.y) {
       unit.order.defendRange += 1;
-      unit.order.path = findFollowPathWithinSourceRange(world, unit, defendTarget, unit.order.defendRange);
     }
-    unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
+    enqueueRepathRequest(world, unit.id, [pickPassableEndpointNear(world, unit, defendTarget.x, defendTarget.y, unit.order.defendRange)]);
   }
-  stepMoveOrder(world, unit, tickSeconds);
+  if (unit.order.path.length > 0) {
+    stepMoveOrder(world, unit, tickSeconds);
+  }
 }
 
 function findFollowPathWithinSourceRange(world: WorldState, unit: WorldUnit, target: WorldUnit, rangeTiles: number): Array<{ x: number; y: number }> {
-  const movement = movementKindForUnit(unit);
-  const targetTile = worldToTile(world, target.x, target.y);
-  const candidates: Array<{ x: number; y: number; distance: number }> = [];
-  const radius = Math.max(0, Math.floor(rangeTiles));
-  for (let y = targetTile.y - radius; y <= targetTile.y + radius; y += 1) {
-    for (let x = targetTile.x - radius; x <= targetTile.x + radius; x += 1) {
-      const tileDistance = Math.max(Math.abs(x - targetTile.x), Math.abs(y - targetTile.y));
-      if (tileDistance > radius || !isTilePassable(world, x, y, movement, unit.id)) {
-        continue;
-      }
-      candidates.push({ x, y, distance: tileDistance });
-    }
-  }
-  candidates.sort((a, b) => a.distance - b.distance || Math.hypot(unit.x - tileToWorldCenter(world, a.x, a.y).x, unit.y - tileToWorldCenter(world, a.x, a.y).y) - Math.hypot(unit.x - tileToWorldCenter(world, b.x, b.y).x, unit.y - tileToWorldCenter(world, b.x, b.y).y));
-  for (const candidate of candidates) {
-    const point = tileToWorldCenter(world, candidate.x, candidate.y);
-    const path = findPath(world, unit, point.x, point.y);
-    if (path.length > 0) {
-      return path;
-    }
-  }
-  return findPath(world, unit, target.x, target.y);
+  const point = pickPassableEndpointNear(world, unit, target.x, target.y, rangeTiles);
+  return [point];
 }
 
 function tryTeleportThroughFollowTarget(world: WorldState, unit: WorldUnit, teleporter: WorldUnit): boolean {
@@ -9327,7 +9331,9 @@ function stepBuildOrder(world: WorldState, unit: WorldUnit, tickSeconds: number)
   building.construction.builderId = unit.id;
   if (!isInTouchRange(unit, building, world)) {
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-      unit.order.path = sourceUnitInteractionPath(world, unit, building, sourceTouchRange(world, unit));
+      if (!hasPendingPathRequest(world, unit.id)) {
+        enqueueRepathRequest(world, unit.id, [{ x: building.x, y: building.y }]);
+      }
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -9400,7 +9406,9 @@ function stepBuildOilPlatformOrder(world: WorldState, unit: WorldUnit, tickSecon
   unit.order.targetY = oilPatch.y;
   if (!isInTouchRange(unit, oilPatch, world)) {
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0) {
-      unit.order.path = sourceUnitInteractionPath(world, unit, oilPatch, sourceTouchRange(world, unit));
+      if (!hasPendingPathRequest(world, unit.id)) {
+        enqueueRepathRequest(world, unit.id, [{ x: oilPatch.x, y: oilPatch.y }]);
+      }
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     if (unit.order.path.length === 0) {
@@ -9447,7 +9455,9 @@ function stepRepairOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
   if (!isInRepairRange(unit, target, world)) {
     unit.order.repairCycle = 0;
     if (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 20) === 0) {
-      unit.order.path = sourceUnitInteractionPath(world, unit, target, sourceRepairRange(unit));
+      if (!hasPendingPathRequest(world, unit.id)) {
+        enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+      }
       unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     }
     stepMoveOrder(world, unit, tickSeconds);
@@ -9615,12 +9625,16 @@ function stepUnloadTransportAtOrder(world: WorldState, transport: WorldUnit, tic
     transport.order.targetY = dropZonePoint.y;
     transport.order.unloadRetries = 0;
     transport.order.unloadState = "move";
-    transport.order.path = findPath(world, transport, transport.order.targetX, transport.order.targetY);
+    if (!hasPendingPathRequest(world, transport.id)) {
+      enqueueRepathRequest(world, transport.id, [{ x: transport.order.targetX, y: transport.order.targetY }]);
+    }
     transport.order.pathIndex = transport.order.path.length > 1 ? 1 : 0;
   }
 
   if (transport.order.unloadState === "move" && (transport.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)) {
-    transport.order.path = findPath(world, transport, transport.order.targetX, transport.order.targetY);
+    if (!hasPendingPathRequest(world, transport.id)) {
+      enqueueRepathRequest(world, transport.id, [{ x: transport.order.targetX, y: transport.order.targetY }]);
+    }
     transport.order.pathIndex = transport.order.path.length > 1 ? 1 : 0;
   }
   const finalWaypoint = transport.order.path[transport.order.path.length - 1];
@@ -9863,32 +9877,6 @@ function findExplorationPath(world: WorldState, unit: WorldUnit): { target: { x:
   return null;
 }
 
-function findExplorationPathWithinSourceRange(world: WorldState, unit: WorldUnit, targetX: number, targetY: number, range: number): Array<{ x: number; y: number }> {
-  const directPath = findPath(world, unit, targetX, targetY);
-  if (directPath.length > 0 || range <= 0) {
-    return directPath;
-  }
-  const targetTile = worldToTile(world, targetX, targetY);
-  for (let radius = 1; radius <= range; radius += 1) {
-    for (let dy = -radius; dy <= radius; dy += 1) {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) {
-          continue;
-        }
-        const x = targetTile.x + dx;
-        const y = targetTile.y + dy;
-        if (!isTilePassable(world, x, y, movementKindForUnit(unit), unit.id)) {
-          continue;
-        }
-        const path = findPath(world, unit, x * world.tileSize + world.tileSize / 2, y * world.tileSize + world.tileSize / 2);
-        if (path.length > 0) {
-          return path;
-        }
-      }
-    }
-  }
-  return [];
-}
 
 function retargetExploreOrder(world: WorldState, unit: WorldUnit): void {
   if (unit.order?.kind !== "explore") {
@@ -9974,31 +9962,44 @@ function issueRallyOrderToTrainedUnit(world: WorldState, producer: WorldUnit, tr
   }
   const enemy = findVisibleEnemyNearPointForUnit(world, trainedUnit, producer.rallyPoint.x, producer.rallyPoint.y);
   if (enemy && trainedUnit.canAttack) {
-    const path = sourceAttackTargetPath(world, trainedUnit, enemy);
-    if (path.length === 0 && !isInAttackRange(trainedUnit, enemy, world)) {
+    if (isInAttackRange(trainedUnit, enemy, world)) {
+      trainedUnit.order = {
+        kind: "attack",
+        targetId: enemy.id,
+        targetX: enemy.x,
+        targetY: enemy.y,
+        autoReturn: null,
+        path: [],
+        pathIndex: 0
+      };
       return;
     }
+    const candidates = sourceAttackTargetCandidates(world, trainedUnit, enemy);
+    if (candidates.length === 0) {
+      return;
+    }
+    cancelPathRequestsForUnit(world, trainedUnit.id);
     trainedUnit.order = {
       kind: "attack",
       targetId: enemy.id,
       targetX: enemy.x,
       targetY: enemy.y,
       autoReturn: null,
-      path,
-      pathIndex: path.length > 1 ? 1 : 0
+      path: [],
+      pathIndex: 0
     };
+    enqueueAttackPathRequest(world, trainedUnit.id, enemy.id, candidates, null);
     return;
   }
-  const path = findPath(world, trainedUnit, producer.rallyPoint.x, producer.rallyPoint.y);
-  if (path.length > 0) {
-    trainedUnit.order = {
-      kind: "move",
-      targetX: path.at(-1)?.x ?? producer.rallyPoint.x,
-      targetY: path.at(-1)?.y ?? producer.rallyPoint.y,
-      path,
-      pathIndex: path.length > 1 ? 1 : 0
-    };
-  }
+  cancelPathRequestsForUnit(world, trainedUnit.id);
+  trainedUnit.order = {
+    kind: "move",
+    targetX: producer.rallyPoint.x,
+    targetY: producer.rallyPoint.y,
+    path: [],
+    pathIndex: 0
+  };
+  enqueueRepathRequest(world, trainedUnit.id, [{ x: producer.rallyPoint.x, y: producer.rallyPoint.y }]);
 }
 
 function issueSourceRallyResourceOrder(world: WorldState, trainedUnit: WorldUnit, x: number, y: number, sourceAiManaged: boolean): boolean {
@@ -10476,7 +10477,9 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
         unit.order.dropoffY = dropoffPoint.y;
         unit.order.targetX = dropoffPoint.x;
         unit.order.targetY = dropoffPoint.y;
-        unit.order.path = findPath(world, unit, dropoffPoint.x, dropoffPoint.y);
+        if (!hasPendingPathRequest(world, unit.id)) {
+          enqueueRepathRequest(world, unit.id, [{ x: dropoffPoint.x, y: dropoffPoint.y }]);
+        }
         unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
         return;
       }
@@ -10560,7 +10563,9 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     unit.order.dropoffY = dropoffPoint.y;
     unit.order.targetX = dropoffPoint.x;
     unit.order.targetY = dropoffPoint.y;
-    unit.order.path = findPath(world, unit, dropoffPoint.x, dropoffPoint.y);
+    if (!hasPendingPathRequest(world, unit.id)) {
+      enqueueRepathRequest(world, unit.id, [{ x: dropoffPoint.x, y: dropoffPoint.y }]);
+    }
     unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
     return;
   }
@@ -10579,7 +10584,9 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     unit.order.dropoffY = latestDropoffPoint.y;
     unit.order.targetX = latestDropoffPoint.x;
     unit.order.targetY = latestDropoffPoint.y;
-    unit.order.path = findPath(world, unit, latestDropoffPoint.x, latestDropoffPoint.y);
+    if (!hasPendingPathRequest(world, unit.id)) {
+      enqueueRepathRequest(world, unit.id, [{ x: latestDropoffPoint.x, y: latestDropoffPoint.y }]);
+    }
     unit.order.pathIndex = unit.order.path.length > 1 ? 1 : 0;
   }
 
@@ -10702,21 +10709,60 @@ function hasInvalidHarvestOrderState(world: WorldState, unit: WorldUnit): boolea
   return unit.order.resource === "gold" ? !isResourceSource(target, "gold") : !isResourceSource(target, "oil") || target.player !== unit.player;
 }
 
+function scheduleOrderRepath(world: WorldState, unit: WorldUnit): void {
+  if (!unit.order || !("path" in unit.order) || hasPendingPathRequest(world, unit.id)) {
+    return;
+  }
+  const order = unit.order;
+  if (order.kind === "attack") {
+    const target = findUnit(world, order.targetId);
+    if (!target) {
+      return;
+    }
+    if (isInAttackRange(unit, target, world)) {
+      order.path = [];
+      order.pathIndex = 0;
+      return;
+    }
+    const candidates = sourceAttackTargetCandidates(world, unit, target);
+    if (candidates.length > 0) {
+      enqueueAttackPathRequest(world, unit.id, target.id, candidates, order.autoReturn ?? null);
+    }
+    return;
+  }
+  if (order.kind === "attack-move") {
+    const target = order.targetId ? findUnit(world, order.targetId) : undefined;
+    if (target) {
+      const candidates = sourceAttackTargetCandidates(world, unit, target);
+      if (candidates.length > 0) {
+        enqueueAttackPathRequest(world, unit.id, target.id, candidates, null);
+        return;
+      }
+      order.targetId = null;
+    }
+    enqueuePointPathRequest(world, unit.id, order.targetX, order.targetY, "attack-move");
+    return;
+  }
+  if (order.kind === "move") {
+    enqueuePointPathRequest(world, unit.id, order.targetX, order.targetY, "move");
+    return;
+  }
+  // Generic point repath for harvest/build/follow/patrol/etc.
+  enqueueRepathRequest(world, unit.id, [{ x: order.targetX, y: order.targetY }]);
+}
+
 function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number): void {
   if (!unit.order || (unit.order.kind !== "move" && unit.order.kind !== "attack" && unit.order.kind !== "attack-move" && unit.order.kind !== "attack-ground" && unit.order.kind !== "spell-cast" && unit.order.kind !== "explore" && unit.order.kind !== "patrol" && unit.order.kind !== "harvest" && unit.order.kind !== "build" && unit.order.kind !== "build-oil-platform" && unit.order.kind !== "repair" && unit.order.kind !== "load-transport" && unit.order.kind !== "follow" && unit.order.kind !== "defend" && unit.order.kind !== "unload-transport")) {
     return;
   }
   if (unit.order.path.length === 0) {
     if (unit.order.kind === "move") {
-      const planned = planMoveOrder(world, unit, unit.order.targetX, unit.order.targetY);
-      if (!planned) {
-        stopUnusablePathOrder(world, unit);
-        return;
+      if (!hasPendingPathRequest(world, unit.id)) {
+        scheduleOrderRepath(world, unit);
       }
-      commitMoveOrder(unit, planned, false);
-    } else {
       return;
     }
+    return;
   }
   if (!unit.order || !("path" in unit.order) || unit.order.path.length === 0) {
     return;
@@ -10729,13 +10775,10 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
       retryBlockedMoveOrder(world, unit);
       return;
     }
-    const path = sourceOrderTargetPath(world, unit);
-    unit.order.path = path;
-    unit.order.pathIndex = path.length > 1 ? 1 : 0;
-    if (!isUsableReplacementPath(world, unit, path)) {
-      stopUnusablePathOrder(world, unit);
-      return;
-    }
+    unit.order.path = [];
+    unit.order.pathIndex = 0;
+    scheduleOrderRepath(world, unit);
+    return;
   }
   const nextWaypoint = unit.order.path[unit.order.pathIndex] ?? unit.order.path[unit.order.path.length - 1];
   const dx = nextWaypoint.x - unit.x;
@@ -10766,12 +10809,9 @@ function stepMoveOrder(world: WorldState, unit: WorldUnit, tickSeconds: number):
       retryBlockedMoveOrder(world, unit);
       return;
     }
-    const path = sourceOrderTargetPath(world, unit);
-    unit.order.path = path;
-    unit.order.pathIndex = path.length > 1 ? 1 : 0;
-    if (!isUsableReplacementPath(world, unit, path)) {
-      stopUnusablePathOrder(world, unit);
-    }
+    unit.order.path = [];
+    unit.order.pathIndex = 0;
+    scheduleOrderRepath(world, unit);
     return;
   }
   moveWorldUnit(world, unit, nextX, nextY);
@@ -10781,12 +10821,12 @@ function retryBlockedMoveOrder(world: WorldState, unit: WorldUnit): void {
   if (unit.order?.kind !== "move" || world.tick % sourceOrderRetryTicks(world, 10) !== 0) {
     return;
   }
-  const planned = planMoveOrder(world, unit, unit.order.targetX, unit.order.targetY);
-  if (planned) {
-    commitMoveOrder(unit, planned, false);
-  } else {
-    stopUnusablePathOrder(world, unit);
+  if (hasPendingPathRequest(world, unit.id)) {
+    return;
   }
+  unit.order.path = [];
+  unit.order.pathIndex = 0;
+  enqueuePointPathRequest(world, unit.id, unit.order.targetX, unit.order.targetY, "move");
 }
 
 function isUsableReplacementPath(world: WorldState, unit: WorldUnit, path: Array<{ x: number; y: number }>): boolean {
@@ -10962,7 +11002,7 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
       if (!followTarget || !canIssueFollowTarget(world, unit, followTarget)) {
         continue;
       }
-      const path = findPath(world, unit, followTarget.x, followTarget.y);
+      cancelPathRequestsForUnit(world, unit.id);
       unit.order = {
         kind: "follow",
         targetId: followTarget.id,
@@ -10970,9 +11010,12 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
         followRange: 1,
         targetX: followTarget.x,
         targetY: followTarget.y,
-        path,
-        pathIndex: path.length > 1 ? 1 : 0
+        path: [],
+        pathIndex: 0
       };
+      if (!isInFollowRange(unit, followTarget)) {
+        enqueueRepathRequest(world, unit.id, [{ x: followTarget.x, y: followTarget.y }]);
+      }
       return;
     }
     if (target.kind === "defend") {
@@ -10998,10 +11041,7 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
       if (!transport || !canTargetTransportForLoading(transport, unit)) {
         continue;
       }
-      const path = findPath(world, unit, transport.x, transport.y);
-      if (path.length === 0 && !canLoadIntoTransport(transport, unit)) {
-        continue;
-      }
+      cancelPathRequestsForUnit(world, unit.id);
       unit.order = {
         kind: "load-transport",
         targetId: transport.id,
@@ -11010,9 +11050,12 @@ function startNextQueuedMove(world: WorldState, unit: WorldUnit): void {
         boardWaitTicks: 0,
         targetX: transport.x,
         targetY: transport.y,
-        path,
-        pathIndex: path.length > 1 ? 1 : 0
+        path: [],
+        pathIndex: 0
       };
+      if (!canLoadIntoTransport(transport, unit)) {
+        enqueueRepathRequest(world, unit.id, [{ x: transport.x, y: transport.y }]);
+      }
       return;
     }
     if (target.kind === "repair") {

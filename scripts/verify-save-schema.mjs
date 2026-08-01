@@ -545,6 +545,8 @@ for (const fragment of [
   "function normalizeForestResources",
   "pendingAttacks?: WorldState[\"pendingAttacks\"]",
   "pendingAttacks: world.pendingAttacks",
+  "pathRequests: exportPathRequestsForSave(world)",
+  "importPathRequestsFromSave(world, save.world.pathRequests)",
   "world.pendingAttacks = normalizePendingAttacks",
   "function normalizePendingAttacks",
   "function sourceAttackAnimationLaunchDelayForSave",

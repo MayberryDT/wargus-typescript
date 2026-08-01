@@ -50,6 +50,9 @@ import { handleWorldPointerDown } from "./view/worldPointerInput";
 import { loadCompleteWorldViewAssets, loadCoreWorldViewAssets } from "./view/worldViewAssets";
 import { isSourceHarvestableWoodTile, isTilePassable } from "./simulation/passability";
 import { invalidateWorldOccupancyIndex, resetWorldOccupancyDiagnostics, setWorldOccupancyParityMode, snapshotWorldOccupancyDiagnostics } from "./simulation/occupancyIndex";
+import { resetPathRequestDiagnostics, snapshotPathRequestDiagnostics } from "./simulation/pathRequests";
+import { resetPathfindingDiagnostics, snapshotPathfindingDiagnostics } from "./simulation/pathfinding";
+import { snapshotVisibilityDiagnostics } from "./simulation/visibilityCache";
 import { findPath, findPathResult } from "./simulation/pathfinding";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -612,6 +615,9 @@ type RuntimePerformanceTelemetry = {
   scheduler: RuntimePerformanceSnapshot["scheduler"];
   displayObjects: ReturnType<typeof snapshotDisplayObjectPerformance>;
   occupancy: ReturnType<typeof snapshotWorldOccupancyDiagnostics>;
+  pathRequests: ReturnType<typeof snapshotPathRequestDiagnostics>;
+  pathfinding: ReturnType<typeof snapshotPathfindingDiagnostics>;
+  visibility: ReturnType<typeof snapshotVisibilityDiagnostics>;
 };
 
 type RuntimePerformanceBrowserSummary = RuntimePerformanceSnapshot & {
@@ -628,6 +634,9 @@ type RuntimePerformanceBrowserSummary = RuntimePerformanceSnapshot & {
   heap: { supported: boolean; usedJsHeapSize: number | null; totalJsHeapSize: number | null; jsHeapSizeLimit: number | null };
   displayObjects: ReturnType<typeof snapshotDisplayObjectPerformance>;
   occupancy: ReturnType<typeof snapshotWorldOccupancyDiagnostics>;
+  pathRequests: ReturnType<typeof snapshotPathRequestDiagnostics>;
+  pathfinding: ReturnType<typeof snapshotPathfindingDiagnostics>;
+  visibility: ReturnType<typeof snapshotVisibilityDiagnostics>;
 };
 
 function installRuntimePerformanceHooks(): void {
@@ -649,6 +658,8 @@ function installRuntimePerformanceHooks(): void {
     const profile = getPerformanceProfile(profileId);
     if (activePerformanceProfileId !== profile.id) applyPerformanceProfile(profile.id);
     resetWorldOccupancyDiagnostics();
+    resetPathRequestDiagnostics();
+    resetPathfindingDiagnostics();
     resetDisplayObjectPerformance();
     setDisplayObjectPerformanceCapture(true);
     runtimePerformanceCollector.start(profile.id);
@@ -666,6 +677,8 @@ function installRuntimePerformanceHooks(): void {
     runtimePerformanceCollector.reset();
     setDisplayObjectPerformanceCapture(false);
     resetWorldOccupancyDiagnostics();
+    resetPathRequestDiagnostics();
+    resetPathfindingDiagnostics();
     resetDisplayObjectPerformance();
     performanceCaptureStartedAt = Number.POSITIVE_INFINITY;
     return runtimePerformanceSummary();
@@ -688,7 +701,10 @@ function runtimePerformanceTelemetry(): RuntimePerformanceTelemetry {
     inputToNextRender: snapshot.inputToNextRender,
     scheduler: snapshot.scheduler,
     displayObjects: snapshotDisplayObjectPerformance(),
-    occupancy: snapshotWorldOccupancyDiagnostics()
+    occupancy: snapshotWorldOccupancyDiagnostics(),
+    pathRequests: snapshotPathRequestDiagnostics(),
+    pathfinding: snapshotPathfindingDiagnostics(),
+    visibility: snapshotVisibilityDiagnostics(world ?? undefined)
   };
 }
 
@@ -717,7 +733,10 @@ function runtimePerformanceSummary(): RuntimePerformanceBrowserSummary {
       jsHeapSizeLimit: memory?.jsHeapSizeLimit ?? null
     },
     displayObjects: snapshotDisplayObjectPerformance(),
-    occupancy: snapshotWorldOccupancyDiagnostics()
+    occupancy: snapshotWorldOccupancyDiagnostics(),
+    pathRequests: snapshotPathRequestDiagnostics(),
+    pathfinding: snapshotPathfindingDiagnostics(),
+    visibility: snapshotVisibilityDiagnostics(world ?? undefined)
   };
 }
 
