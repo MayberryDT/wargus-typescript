@@ -97,3 +97,14 @@ Packet paths and checksums: PENDING (Task A2 / E2).
 
 - Controller preflight: PASS
 - Full hardware matrix: deferred if wall-clock budget requires separate overnight run; fixed-tick + playable remain the day-of gates.
+
+## Browser + determinism (Tasks E1 / A2 partial)
+
+- `verify:browser-runtime-smoke` PASS
+- `verify:browser-playable-session` PASS (12/12 maps)
+- `verify:successor-fixed-tick` plan 024 PASS (army-200, command-18, combat-100 equal hashes)
+- Full 7-trial hardware matrix still optional overnight (controller preflight PASS)
+
+## Verdict
+
+**SOFT-READY for Wave 5 code closeout.** Implementation and playability gates are green. Absolute frame-budget matrix recapture remains the only open measurement item.
