@@ -142,14 +142,42 @@ assert.ok(
   "X12 first tick expansion attempts must stay far below the pre-fix 2.1M baseline, got " + x12Path.expansionAttempts
 );
 
+// Coverage: 30 AI ticks on X12 must not reintroduce multi-hundred sync findPathResult storms.
+pathfinding.resetPathfindingDiagnostics();
+pathRequests.resetPathRequestDiagnostics();
+const coverageWorld = worldModule.createInitialWorld(
+  map, manifest.units, setup, manifest.upgrades, manifest.missiles, manifest.spells,
+  manifest.allowRules, manifest.dependencies, manifest.buttons, manifest.engineSettings,
+  manifest.aiDefinitions, manifest.unitDatabase, manifest.tilesets, manifest.animations
+);
+for (let i = 0; i < 30; i += 1) {
+  orders.simulateWorld(coverageWorld, tickSeconds, {
+    now: () => performance.now(),
+    maxMilliseconds: 10_000,
+    maxSteps: 1,
+    maxBacklogSeconds: orders.SIMULATION_MAX_BACKLOG_SECONDS
+  });
+}
+const thirtyTickSync = pathfinding.snapshotPathfindingDiagnostics();
+assert.ok(
+  thirtyTickSync.synchronousFindPathResultCalls < 80,
+  "30 AI ticks must stay under 80 sync findPathResult calls, got " + thirtyTickSync.synchronousFindPathResultCalls
+);
+assert.ok(
+  thirtyTickSync.synchronousFindPathCalls < 120,
+  "30 AI ticks must stay under 120 sync findPath calls, got " + thirtyTickSync.synchronousFindPathCalls
+);
+
 console.log(JSON.stringify({
+
   ok: true,
   groupMoveElapsedMs: elapsed,
   expansionsLastTick: expansions,
   x12ElapsedMs: x12Elapsed,
   x12SyncFindPathResultCalls: x12Path.synchronousFindPathResultCalls,
   x12ExpansionAttempts: x12Path.expansionAttempts,
-  determinism: a
+  determinism: a,
+  thirtyTickSync
 }, null, 2));
 `, "utf8");
 

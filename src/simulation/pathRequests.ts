@@ -311,3 +311,67 @@ export function pathRequestHash32Bytes(bytes: Uint8Array): number {
 export function pathRequestHash32(text: string): number {
   return pathRequestHash32Bytes(new TextEncoder().encode(text));
 }
+
+export type SavedPathRequest = {
+  sequence: number;
+  unitId: string;
+  kind: ScheduledPointPathKind | "attack" | "repath";
+  candidates: PathPoint[];
+  candidateIndex: number;
+  targetId: string | null;
+  autoReturn: { x: number; y: number } | null;
+  enqueuedTick: number;
+};
+
+export function exportPathRequestsForSave(world: WorldState): {
+  nextSequence: number;
+  cursor: number;
+  requests: SavedPathRequest[];
+} {
+  const state = stateFor(world);
+  return {
+    nextSequence: state.nextSequence,
+    cursor: state.cursor,
+    requests: state.requests.map((request) => ({
+      sequence: request.sequence,
+      unitId: request.unitId,
+      kind: request.kind,
+      candidates: request.candidates.map((point) => ({ ...point })),
+      candidateIndex: request.candidateIndex,
+      targetId: request.targetId,
+      autoReturn: request.autoReturn ? { ...request.autoReturn } : null,
+      enqueuedTick: request.enqueuedTick
+    }))
+  };
+}
+
+export function importPathRequestsFromSave(
+  world: WorldState,
+  payload: { nextSequence: number; cursor: number; requests: SavedPathRequest[] } | null | undefined
+): void {
+  const state = stateFor(world);
+  if (!payload || !Array.isArray(payload.requests)) {
+    state.nextSequence = 1;
+    state.cursor = 0;
+    state.requests = [];
+    return;
+  }
+  state.nextSequence = Math.max(1, Math.floor(payload.nextSequence) || 1);
+  state.cursor = Math.max(0, Math.floor(payload.cursor) || 0);
+  state.requests = payload.requests.map((request) => ({
+    sequence: Math.max(1, Math.floor(request.sequence) || 1),
+    unitId: String(request.unitId),
+    kind: request.kind,
+    candidates: Array.isArray(request.candidates) ? request.candidates.map((point) => ({ x: point.x, y: point.y })) : [],
+    candidateIndex: Math.max(0, Math.floor(request.candidateIndex) || 0),
+    targetId: request.targetId ?? null,
+    autoReturn: request.autoReturn ? { x: request.autoReturn.x, y: request.autoReturn.y } : null,
+    search: null,
+    temporarilyBlockedPath: null,
+    enqueuedTick: Math.max(0, Math.floor(request.enqueuedTick) || 0),
+    firstServiceTick: null
+  }));
+  if (state.cursor >= state.requests.length) {
+    state.cursor = 0;
+  }
+}

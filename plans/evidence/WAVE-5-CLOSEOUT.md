@@ -79,3 +79,21 @@ Packet paths and checksums: PENDING (Task A2 / E2).
 | Absolute budgets | PENDING |
 | Remaining failing keys | PENDING |
 | Notes | Docs truth-aligned in Task A1. Hardware matrix and code tasks not yet recorded. |
+
+## Path coverage (Tasks B1–B5)
+
+- Inventory: `plans/evidence/024/path-coverage-inventory.md` (81 call sites classified).
+- Migrated: patrol/explore/defend repaths, stepMove blocked recovery, transport/rally/follow issue, build/repair step repaths, load can-checks.
+- `scheduleOrderRepath` routes attack/attack-move/move/generic repaths through the budgeted scheduler.
+- Coverage gate: 30 AI ticks on X12 → `synchronousFindPathResultCalls: 0` (was 168+).
+- Telemetry: `pathRequests`, `pathfinding`, `visibility` on runtime performance summary.
+- Save: optional `pathRequests` queue export/import (frontier rebuild on load).
+
+## Visibility (Task C1)
+
+- Incremental FOV forces dirty tile publication when sources change even if intermediate contribution bits overlap.
+
+## Matrix (Task A2)
+
+- Controller preflight: PASS
+- Full hardware matrix: deferred if wall-clock budget requires separate overnight run; fixed-tick + playable remain the day-of gates.

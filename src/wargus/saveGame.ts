@@ -2,6 +2,7 @@ import type { WargusEngineSettings, WargusManifest, WargusMap, WargusSpeedFactor
 import { isExploreOnReadyValue } from "./sourceActions";
 import { normalizeScoutAssignmentProvenance } from "./scoutProvenance.mjs";
 import { boxDimensionsForUnit, createInitialWorld, createPlayerStats, defaultForestTileResources, imageForTileset, initialForestResourcesForWorld, isSourceBuildingDefinition, isUnitVisibleToPlayer, normalizeImproveProduction, normalizePositiveResourceMap, normalizeResourceCapacity, normalizeRgbColor, productionQueueLimitForEngine, resourceWaitAtDepotCyclesForUnit, resourceWaitAtResourceCyclesForUnit, resourcesHeldForSourceUnit, sightRangeForUnit, sourceAiDefinitionForName, sourceAiDefinitionIsPassive, sourceBuildDurationSecondsForPlayer, sourceDecayRateLifetimeSeconds, sourceDefaultGameSpeed, sourceResearchDurationSecondsForPlayer, sourceResourceHarvestDurationSecondsForPlayer, sourceResourceReturnDurationSecondsForPlayer, sourceTrainDurationSecondsForPlayer, sourceUpgradeDurationSecondsForPlayer, speedForUnit, updateVisibility, worldKindForUnitDefinition, type WorldProjectile, type WorldState } from "../simulation/world";
+import { exportPathRequestsForSave, importPathRequestsFromSave, type SavedPathRequest } from "../simulation/pathRequests";
 import { applyResearchedUpgradesToUnit, canAttackTarget, canCastTargetedSpellCommand, canIssueAttackGroundAt, canIssueAttackTarget, canIssueAttackTargetWithPath, canIssueBuildOilPlatformAt, canIssueDefendTarget, canIssueExploreOrder, canIssueHoldPosition, canIssueQueueAttackGroundAt, canIssueQueueAttackTarget, canIssueQueueBuildAt, canIssueQueueBuildOilPlatformAt, canIssueQueueCombatMoveAt, canIssueQueuePatrolAt, canIssueQueueDefendTarget, canIssueQueueFollowTarget, canIssueQueueHarvestTarget, canIssueQueueHarvestWoodAt, canIssueQueueLoadIntoTransportTarget, canIssueQueueMoveAt, canIssueQueueRepairTarget, canIssueQueueReturnGoodsOrder, canIssueQueueTargetedSpellAt, canIssueQueueUnloadTransportAt, canIssueRepairTarget, canIssueUnloadTransportAt, canResearchUpgradeAt, canSetRallyPoint, canTargetFollow, canTargetTransportForLoading, isProducerTransformationFor, isTargetedSpellCommand, issueExploreOrder, projectileSpeedForMissile, SIMULATION_MAX_BACKLOG_SECONDS, sourceAiScriptSaveBounds, sourceResearchAllowsSharedProgress, targetedSpellIdForCommand } from "../simulation/orders";
 import { isSourceHarvestableWoodTile } from "../simulation/passability";
 
@@ -117,6 +118,7 @@ interface SavedGame {
     corpses?: WorldState["corpses"];
     projectiles: WorldState["projectiles"];
     pendingAttacks?: WorldState["pendingAttacks"];
+    pathRequests?: { nextSequence: number; cursor: number; requests: SavedPathRequest[] };
     spellEffects: WorldState["spellEffects"];
     players: WorldState["players"];
     researchedUpgrades: WorldState["researchedUpgrades"];
@@ -230,6 +232,7 @@ function createSavedGame(world: WorldState, camera: { x: number; y: number; zoom
       corpses: world.corpses,
       projectiles: world.projectiles,
       pendingAttacks: world.pendingAttacks,
+      pathRequests: exportPathRequestsForSave(world),
       spellEffects: world.spellEffects,
       players: world.players,
       researchedUpgrades: world.researchedUpgrades,
@@ -317,6 +320,7 @@ function loadSavedGameFromRaw(manifest: WargusManifest, raw: string | null): Loa
   applyLoadedResearchStateToUnits(world);
   world.projectiles = normalizeProjectiles(world, save.world.projectiles);
   world.pendingAttacks = normalizePendingAttacks(world, save.world.pendingAttacks);
+  importPathRequestsFromSave(world, save.world.pathRequests);
   world.spellEffects = normalizeSpellEffects(world, save.world.spellEffects);
   world.activeResearch = normalizeActiveResearch(save.world.activeResearch, world);
   world.queuedResearch = normalizeQueuedResearch(save.world.queuedResearch, world);
