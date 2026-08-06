@@ -1,8 +1,8 @@
 # Demo Cut and Full-Port Archive Design
 
 **Date:** 2026-08-06  
-**Status:** Approved design direction (user); ready for implementation plan after user review of this spec  
-**Scope:** Product boundary, archive preservation, agent discoverability, and slim-down strategy for `main`. Does not implement the cut in this document.
+**Status:** Implemented 2026-08-06 — see [closeout](../plans/2026-08-06-demo-cut-and-archive-closeout.md)  
+**Scope:** Product boundary, archive preservation, agent discoverability, and slim-down strategy for `main`. Implementation complete on `main`; freeze at `archive/full-port` / tag `archive/full-port-pre-demo-cut` @ `10ab3d3892abd95ae05e3477004f99b847090022`.
 
 ## Context
 
