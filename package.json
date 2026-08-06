@@ -9,6 +9,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "deploy:cf": "npm run build && wrangler deploy",
+    "deploy:cf:dist": "wrangler deploy",
     "archive:info": "node scripts/print-archive-info.mjs",
     "verify": "npm run verify:demo",
     "verify:demo": "npm run verify:demo-gate-contract && npm run verify:wargus-assets && ./node_modules/.bin/tsc --noEmit && npm run verify:playtest-telemetry && npm run verify:runtime-determinism && npm run verify:browser-runtime-smoke && npm run verify:browser-playable-session && npm run verify:browser-demo-session && npm run verify:browser-combat-session && npm run verify:fixed-demo-polish && npm run verify:fixed-demo-random-ai && npm run verify:fixed-demo-unit-portrait",
@@ -42,6 +44,7 @@
   },
   "devDependencies": {
     "playwright": "1.61.1",
-    "stormlib-js": "^0.1.1"
+    "stormlib-js": "^0.1.1",
+    "wrangler": "^4.119.0"
   }
 }
