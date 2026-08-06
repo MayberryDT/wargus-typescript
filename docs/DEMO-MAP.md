@@ -64,6 +64,31 @@ Plain-language path from browser boot to a playable ladder match. Prefer these o
 - Non-`.ts` graph edges: `src/styles.css`, `src/wargus/scoutProvenance.mjs`.
 - Evidence (local): `.artifacts/demo-cut/demo-import-trace.json`, `demo-import-classification.json`.
 
+## 10. God-file split candidates (Task 9)
+
+Line counts as of 2026-08-06 demo cut. **No pilot extract in this plan** — defer splits until after play-session polish unless a future task meets all criteria below.
+
+| File | ~Lines | Decision | Notes |
+|------|-------:|----------|-------|
+| `src/simulation/orders.ts` | 21257 | **split later** | Shared core + full-port residue; do not rewrite in demo-cut |
+| `src/main.ts` | 6428 | **split later** | App shell still carries campaign / map-picker / full-port UI wiring |
+| `src/view/renderHud.ts` | 4728 | **split later** | HUD surface is partial; extract only pure leaves when agents mis-edit repeatedly |
+| `src/wargus/saveGame.ts` | 4464 | **split later** | Save path partial; keep with `scoutProvenance.mjs` |
+| `src/simulation/world.ts` | 2955 | **leave** | Core world tick; large but coherent owner for demo |
+| `src/view/renderWorld.ts` | 2840 | **leave** | World draw owner; no pilot unless hot-path polish forces a pure extract |
+
+### Split criteria (all must hold)
+
+1. File > ~1500 lines **and** agents repeatedly mis-edit it  
+2. Extract has a clear single responsibility and stable exports  
+3. No behavior change (`tsc --noEmit` + `npm run verify:demo` green)  
+4. No renaming of public simulation semantics  
+5. One pilot extract max per effort (pure types/constants or leaf helpers), not a full rewrite  
+
+### Explicit defer
+
+God-file splits deferred until after demo polish / play-session performance work. Prefer surgical fixes inside the owner file over speculative module moves.
+
 ## Related inventory
 
 Subsystem status (`in-demo` / `partial` / `archived`) lives in [archive/MANIFEST.md](../archive/MANIFEST.md). Lift missing pieces from `archive/full-port` per [ARCHIVE.md](./ARCHIVE.md); do not invent a second engine.
