@@ -50,7 +50,7 @@ import { handleWorldPointerDown } from "./view/worldPointerInput";
 import { loadCompleteWorldViewAssets, loadCoreWorldViewAssets } from "./view/worldViewAssets";
 import { isSourceHarvestableWoodTile, isTilePassable } from "./simulation/passability";
 import { invalidateWorldOccupancyIndex, resetWorldOccupancyDiagnostics, setWorldOccupancyParityMode, snapshotWorldOccupancyDiagnostics } from "./simulation/occupancyIndex";
-import { resetPathRequestDiagnostics, snapshotPathRequestDiagnostics } from "./simulation/pathRequests";
+import { hasPendingPathRequest, pendingPathRequestCount, resetPathRequestDiagnostics, snapshotPathRequestDiagnostics, stepPathRequests } from "./simulation/pathRequests";
 import { resetPathfindingDiagnostics, snapshotPathfindingDiagnostics } from "./simulation/pathfinding";
 import { snapshotVisibilityDiagnostics } from "./simulation/visibilityCache";
 import { findPath, findPathResult } from "./simulation/pathfinding";
@@ -578,6 +578,7 @@ declare global {
 	    __WARGUS_TS_ISSUE_FIXED_DEMO_DEFENSE__?: () => { issued: boolean; attackerIds: string[]; targetIds: string[]; raidActive: boolean };
 	    __WARGUS_TS_ISSUE_FIXED_DEMO_FINAL_ATTACK__?: () => { issued: boolean; attackerIds: string[]; targetId: string | null; targetHitPoints: number | null; matchStatus: string | null };
 	    __WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__?: () => { id: string; typeId: string; player: number; hitPoints: number; x: number; y: number } | null;
+	    __WARGUS_TS_RELOCATE_SELECTION_NEAR_FIXED_DEMO_OBJECTIVE__?: () => boolean;
 	    __WARGUS_TS_ISSUE_FIRST_SPELL__?: () => boolean;
     __WARGUS_TS_ISSUE_FIRST_TRAIN__?: () => boolean;
     __WARGUS_TS_PLAY_AUDIO_FIXTURE__?: () => Promise<{ ok: boolean; beforeStarts: number; afterStarts: number; currentMusic: string | null; lastSoundFile: string | null; lastError: string | null }>;
@@ -2287,7 +2288,11 @@ if (browserSmokeStateEnabled) {
       let retaskIssued = false;
       if (mode === "move") {
         issueMoveOrder(fixtureWorld, builder.id, placement.x, placement.y);
-        retaskIssued = builder.order?.kind === "move";
+        // Plan 024 defers move path resolution; drain so retask snapshot sees Move.
+        for (let step = 0; step < 64 && pendingPathRequestCount(fixtureWorld) > 0; step += 1) {
+          stepPathRequests(fixtureWorld);
+        }
+        retaskIssued = builder.order?.kind === "move" || hasPendingPathRequest(fixtureWorld, builder.id);
       } else if (mode === "stop") {
         retaskIssued = issueStopOrder(fixtureWorld, builder.id);
       } else if (mode === "harvest") {
@@ -2543,6 +2548,15 @@ if (browserSmokeStateEnabled) {
       y: tileY * 32 + 16
     });
 
+    // Plan 024 defers issueMoveOrder through the path-request scheduler.
+    // Static fixture assertions inspect the resolved Move, so drain requests
+    // before reading unit.order (simulateWorld does this each tick).
+    const drainFixturePathRequests = (fixtureWorld: WorldState, maxSteps = 64): void => {
+      for (let step = 0; step < maxSteps && pendingPathRequestCount(fixtureWorld) > 0; step += 1) {
+        stepPathRequests(fixtureWorld);
+      }
+    };
+
     const corridorTiles = Array.from({ length: 7 }, (_, x) => ({ x, y: 1 }));
     const blockedWorld = createFixtureWorld(7, 3, corridorTiles);
     const rear = unitAt(blockedWorld, "__smoke-fixture-m02-rear", 1, 1);
@@ -2552,6 +2566,7 @@ if (browserSmokeStateEnabled) {
     const blockedSearch = findPathResult(blockedWorld, rear, corridorTarget.x, corridorTarget.y);
     const blockedStartedAt = performance.now();
     issueMoveOrder(blockedWorld, rear.id, corridorTarget.x, corridorTarget.y);
+    drainFixturePathRequests(blockedWorld);
     const blockedPathfindingMs = performance.now() - blockedStartedAt;
     const blockedOrder = rear.order?.kind === "move" ? rear.order : null;
 
@@ -2568,6 +2583,7 @@ if (browserSmokeStateEnabled) {
     movingWorld.units.push(movingRear, movingBlocker);
     const legacyMovingBlockerPath = findPath(movingWorld, movingRear, corridorTarget.x, corridorTarget.y);
     issueMoveOrder(movingWorld, movingRear.id, corridorTarget.x, corridorTarget.y);
+    drainFixturePathRequests(movingWorld);
     const movingOrder = movingRear.order?.kind === "move" ? movingRear.order : null;
 
     const requestedTile = { x: 5, y: 3 };
@@ -2585,6 +2601,7 @@ if (browserSmokeStateEnabled) {
     expansionWorld.units.push(expansionUnit);
     const expansionStartedAt = performance.now();
     issueMoveOrder(expansionWorld, expansionUnit.id, tilePoint(requestedTile.x, requestedTile.y).x, tilePoint(requestedTile.x, requestedTile.y).y);
+    drainFixturePathRequests(expansionWorld);
     const expansionPathfindingMs = performance.now() - expansionStartedAt;
     const expansionOrder = expansionUnit.order?.kind === "move" ? expansionUnit.order : null;
     const selectedTile = expansionOrder ? {
@@ -2697,10 +2714,12 @@ if (browserSmokeStateEnabled) {
       const rearTarget = tilePoint(6, 1);
       const blockerTarget = tilePoint(7, 1);
       issueMoveOrder(fixtureWorld, dynamicRear.id, rearTarget.x, rearTarget.y);
+      // Path requests resolve on the first simulate tick (Plan 024).
+      drainFixturePathRequests(fixtureWorld);
       let blockedTicks = 0;
       let liveEmptyPathTicks = 0;
       let overlapTicks = 0;
-      let minimumPathLength = dynamicRear.order?.kind === "move" ? dynamicRear.order.path.length : 0;
+      let minimumPathLength = dynamicRear.order?.kind === "move" ? dynamicRear.order.path.length : Number.POSITIVE_INFINITY;
       let maximumRetryUpdateMs = 0;
       let droppedWhileBlocked = false;
       let previousRear = { x: dynamicRear.x, y: dynamicRear.y };
@@ -2728,6 +2747,8 @@ if (browserSmokeStateEnabled) {
         }
         previousRear = { x: dynamicRear.x, y: dynamicRear.y };
       }
+      // Deferred path completion stores the planned endpoint as targetX/Y.
+      // When the static corridor reaches the requested tile, those match.
       const retainedExactTarget = dynamicRear.order?.kind === "move"
         && dynamicRear.order.targetX === rearTarget.x
         && dynamicRear.order.targetY === rearTarget.y;
@@ -2760,7 +2781,7 @@ if (browserSmokeStateEnabled) {
         retainedWhileBlocked: !droppedWhileBlocked && blockedTicks >= retryCadence,
         retainedExactTarget,
         droppedWhileBlocked,
-        minimumPathLength,
+        minimumPathLength: Number.isFinite(minimumPathLength) ? minimumPathLength : 0,
         liveEmptyPathTicks,
         overlapTicks,
         completed: completionTick !== null,
@@ -2786,6 +2807,7 @@ if (browserSmokeStateEnabled) {
       fixtureWorld.units.push(stackMover, stackBlocker, opponent);
       const target = tilePoint(6, 1);
       issueMoveOrder(fixtureWorld, stackMover.id, target.x, target.y);
+      drainFixturePathRequests(fixtureWorld);
       const before = { x: stackMover.x, y: stackMover.y };
       simulateFixtureTick(fixtureWorld);
       const relocated = Math.hypot(stackMover.x - before.x, stackMover.y - before.y) > fixtureWorld.tileSize / 2;
@@ -2859,6 +2881,7 @@ if (browserSmokeStateEnabled) {
         false,
         fixtureWorld.visibilityPlayer
       );
+      drainFixturePathRequests(fixtureWorld);
       const issueDurationMs = performance.now() - issueStartedAt;
       const orderTargetTile = (unit: WorldUnit) => unit.order && "targetX" in unit.order && "targetY" in unit.order
         ? { id: unit.id, x: Math.floor(unit.order.targetX / fixtureWorld.tileSize), y: Math.floor(unit.order.targetY / fixtureWorld.tileSize) }
@@ -2911,6 +2934,7 @@ if (browserSmokeStateEnabled) {
         clickedPoint.y,
         commandCard.fixtureWorld.visibilityPlayer
       );
+      drainFixturePathRequests(commandCard.fixtureWorld);
       const commandCardTargets = commandCard.units.map((unit) => {
         const order = unit.order;
         return {
@@ -2957,6 +2981,7 @@ if (browserSmokeStateEnabled) {
         false,
         staticObject.fixtureWorld.visibilityPlayer
       );
+      drainFixturePathRequests(staticObject.fixtureWorld);
 
       const crowdedBlockedSlot = (() => {
         const crowdedWorld = createFixtureWorld(20, 14, [], 0);
@@ -2997,6 +3022,7 @@ if (browserSmokeStateEnabled) {
           false,
           crowdedWorld.visibilityPlayer
         );
+        drainFixturePathRequests(crowdedWorld);
         const firstUnit = crowdedUnits[0];
         const firstImmediateOrderKind = firstUnit.order?.kind ?? null;
         const firstImmediatePathLength = firstUnit.order && "path" in firstUnit.order ? firstUnit.order.path.length : 0;
@@ -3655,6 +3681,27 @@ if (browserSmokeStateEnabled) {
 	  window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__ = () => {
 	    const target = browserSmokeFixedDemoObjectiveTarget();
 	    return target ? { id: target.id, typeId: target.typeId, player: target.player, hitPoints: target.hitPoints, x: target.x, y: target.y } : null;
+	  };
+	  window.__WARGUS_TS_RELOCATE_SELECTION_NEAR_FIXED_DEMO_OBJECTIVE__ = () => {
+	    const target = browserSmokeFixedDemoObjectiveTarget();
+	    if (!world || !target || selectedUnitIds.length === 0) {
+	      return false;
+	    }
+	    selectedUnitIds.forEach((id, index) => {
+	      const unit = world!.units.find((candidate) => candidate.id === id);
+	      if (!unit) {
+	        return;
+	      }
+	      unit.x = target.x - 96 - (index % 4) * 32;
+	      unit.y = target.y + 96 + Math.floor(index / 4) * 32;
+	      unit.order = null;
+	      unit.moveQueue = [];
+	    });
+	    invalidateWorldOccupancyIndex(world);
+	    updateVisibility(world);
+	    centerCameraOnWorldPoint(world, target.x, target.y);
+	    publishBrowserSmokeState(true);
+	    return true;
 	  };
 	  window.__WARGUS_TS_ISSUE_FIRST_SPELL__ = () => {
     const pair = browserSmokeSpellPair();

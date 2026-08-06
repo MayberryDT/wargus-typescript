@@ -244,12 +244,17 @@ export function stepPathRequests(world: WorldState): void {
     const result = advanced.result;
     const endpoint = result?.path.at(-1);
     const exactCandidate = Boolean(endpoint && endpoint.x === candidate.x && endpoint.y === candidate.y);
-    if (result?.status === "ready" && exactCandidate) {
+    // Accept ready paths even when the endpoint is a goal-range expansion
+    // (nearest reachable tile). Requiring exactCandidate dropped M03-style
+    // isolated-goal moves after Plan 024 deferred issueMoveOrder.
+    if (result?.status === "ready" && result.path.length > 0) {
       finishRequest(world, state, request, result.path);
       continue;
     }
-    if (result?.status === "temporarily-blocked" && exactCandidate && !request.temporarilyBlockedPath) {
-      request.temporarilyBlockedPath = result.path;
+    if (result?.status === "temporarily-blocked" && result.path.length > 0) {
+      if (exactCandidate || !request.temporarilyBlockedPath) {
+        request.temporarilyBlockedPath = result.path;
+      }
     }
     request.candidateIndex += 1;
     request.search = null;

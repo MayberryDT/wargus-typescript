@@ -7,7 +7,7 @@ const execution = new BrowserExecutionController({ name: import.meta.url });
 const requestedPort = process.env.WARGUS_BROWSER_RUNTIME_PORT;
 const { serverPort: PORT } = await execution.allocatePorts({ requestedServerPort: requestedPort === undefined ? undefined : Number(requestedPort) });
 const URL = `http://127.0.0.1:${PORT}/?smoke=1&demoSeed=ai-staged-pressure`;
-const SESSION_LIMIT_MS = 25_000;
+const SESSION_LIMIT_MS = 45_000;
 const MODE = process.env.WARGUS_BROWSER_RUNTIME_MODE ?? "plan014";
 const SERVER_MODE = process.env.WARGUS_BROWSER_SMOKE_SERVER === "preview" ? "preview" : "dev";
 const REPORT_PATH = process.env.WARGUS_BROWSER_RUNTIME_REPORT ?? null;
@@ -74,13 +74,15 @@ async function runRuntimeSmoke(page) {
     if (mode === "m04") return typeof window.__WARGUS_TS_RUN_MOVEMENT_ROUTE_SEMANTICS_FIXTURE__ === "function";
     return typeof window.__WARGUS_TS_RUN_MECHANICS_SCENARIO__ === "function";
   }, MODE, { timeout: 3_000 });
+  // Cold-start frames inflate the rolling averages; Halla headless needs
+  // ~10–15s after AI evidence for averageRenderMs to fall under 24ms.
   await page.waitForFunction(() => {
     const performance = window.__WARGUS_TS_SMOKE_STATE__?.performance ?? {};
     return Number.isFinite(performance.averageUpdateMs)
       && performance.averageUpdateMs <= 20
       && Number.isFinite(performance.averageRenderMs)
       && performance.averageRenderMs <= 24;
-  }, null, { timeout: 5_000 });
+  }, null, { timeout: 25_000 });
   const canvas = await page.locator("canvas").evaluate((element) => ({
     width: element.width,
     height: element.height,

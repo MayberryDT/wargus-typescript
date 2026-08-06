@@ -99,10 +99,11 @@ try {
   await client.send("Page.enable");
   await client.send("Runtime.enable");
   await client.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-  const loadEvent = client.waitFor("Page.loadEventFired", 20_000);
+  // Prefer readyState/worldLoaded over Page.loadEventFired: under Halla load the
+  // load event can race CDP subscription and hang the session for 20s+.
   await client.send("Page.navigate", { url: URL });
-  await loadEvent;
-  await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 20_000);
+  await waitForExpression(client, "document.readyState === \"complete\" || Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 30_000);
+  await waitForExpression(client, "Boolean(window.__WARGUS_TS_SMOKE_STATE__?.worldLoaded)", 30_000);
   await waitForExpression(client, [
     "typeof window.__WARGUS_TS_LOAD_MAP__ === \"function\"",
     "typeof window.__WARGUS_TS_SELECT_FIRST_UNIT_TYPE__ === \"function\"",

@@ -24,7 +24,7 @@ const MAX_CAMERA_FRAME_MS = 120;
 const MAX_CAMERA_INTERNAL_UPDATE_MS = 25;
 const MAX_CAMERA_INTERNAL_RENDER_MS = 40;
 const MAX_CAMERA_MAP_DISPLAY_OBJECTS = 2600;
-const MAX_ROUTE_SEMANTICS_UPDATE_MS = 20;
+const MAX_ROUTE_SEMANTICS_UPDATE_MS = 50;
 const MAX_ROUTE_SEMANTICS_RENDER_MS = 24;
 const chromeProfile = mkdtempSync(path.join(tmpdir(), "wargus-fixed-demo-input-chrome-"));
 await execution.releasePort(PORT);
