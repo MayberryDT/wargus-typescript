@@ -760,7 +760,8 @@ function issueSmartOrderInternal(world: WorldState, unitId: string, x: number, y
   }
   if (world.engineSettings.simplifiedAutoTargetingDefault === false) {
     issueMoveOrder(world, unitId, x, y);
-    return unit?.order?.kind === "move";
+    // Plan 024: issueMoveOrder enqueues a path request; order is null until stepPathRequests.
+    return Boolean(unit && (unit.order?.kind === "move" || hasPendingPathRequest(world, unit.id)));
   }
   const dropoffTarget = unit ? findFriendlyDropoffAt(world, unit, x, y) : undefined;
   if (dropoffTarget) {
@@ -813,7 +814,7 @@ function issueSourceRightMouseAction(world: WorldState, unit: WorldUnit, action:
       return issueFollowOrder(world, unit.id, target.id);
     }
     issueMoveOrder(world, unit.id, x, y);
-    return unit.order?.kind === "move";
+    return unit.order?.kind === "move" || hasPendingPathRequest(world, unit.id);
   }
   if (action === "spell-cast") {
     return issueRightMouseSpellCastOrder(world, unit, x, y);
@@ -852,7 +853,7 @@ function issueRightMouseAttackOrder(world: WorldState, unit: WorldUnit, x: numbe
     return issueFollowOrder(world, unit.id, followTarget.id);
   }
   issueMoveOrder(world, unit.id, x, y);
-  return unit.order?.kind === "move";
+  return unit.order?.kind === "move" || hasPendingPathRequest(world, unit.id);
 }
 
 function issueRightMouseHarvestOrder(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
@@ -1085,7 +1086,16 @@ export function issueMoveOrder(world: WorldState, unitId: string, x: number, y: 
   const clampedY = Math.max(0, Math.min(world.map.height * world.tileSize, y));
   cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
-  unit.order = null;
+  // Provisional Move with empty path (mirrors issueAttackOrder). Plan 024 fills
+  // the path asynchronously; callers and HUD still see order.kind === "move"
+  // immediately with the requested exact target retained.
+  unit.order = {
+    kind: "move",
+    targetX: clampedX,
+    targetY: clampedY,
+    path: [],
+    pathIndex: 0
+  };
   enqueuePointPathRequest(world, unit.id, clampedX, clampedY, "move");
 }
 
@@ -12309,7 +12319,18 @@ function canContinueAttackingTarget(world: WorldState, attacker: WorldUnit, targ
 
 export function canAttackTarget(attacker: WorldUnit, target: WorldUnit, world?: WorldState): boolean {
   const hostile = world ? arePlayersEnemies(world, attacker.player, target.player) : attacker.player !== target.player && target.player !== 15;
-  if (attacker.hitPoints <= 0 || isUnitHiddenInConstruction(attacker) || attacker.construction || !attacker.canAttack || target.hitPoints <= 0 || isUnitHiddenInConstruction(target) || !hostile) {
+  // Dead-vision revealers and other invisible utilities are not combat targets; auto-chase
+  // must not lock onto them after a kill or units never return (Plan 013 M05).
+  if (
+    attacker.hitPoints <= 0
+    || isUnitHiddenInConstruction(attacker)
+    || attacker.construction
+    || !attacker.canAttack
+    || target.hitPoints <= 0
+    || isUnitHiddenInConstruction(target)
+    || isInvisibleUtilityUnit(target)
+    || !hostile
+  ) {
     return false;
   }
   if (target.kind === "fly") {

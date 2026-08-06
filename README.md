@@ -3,6 +3,17 @@
 This project is the clean browser-native port of Wargus/Warcraft II gameplay.
 It is not a WebAssembly wrapper around the desktop Stratagus binary.
 
+## Current product
+
+**Active product on `main`:** fixed Garden of war ladder demo only — human vs computer 1v1 on `maps/ladder/Garden of war BNE.pud.smp.gz`.
+
+- Product contract: [docs/DEMO-PRODUCT.md](docs/DEMO-PRODUCT.md)
+- Demo runtime map: [docs/DEMO-MAP.md](docs/DEMO-MAP.md)
+- Full-port freeze (tag/branch, restore, lift): [docs/ARCHIVE.md](docs/ARCHIVE.md)
+- Archive inventory (no full source dump here): [archive/](archive/)
+
+Full-port fidelity, multi-map/campaign scope, and Plans 001–027 are archived reference — not the standing definition of work on `main`.
+
 ## Current Slice
 
 - TypeScript + PixiJS + Vite browser app.

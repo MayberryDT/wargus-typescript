@@ -2,6 +2,21 @@
 
 Scope: this file applies to the entire repository.
 
+## Product
+
+- Default product is the fixed Garden of war ladder demo only. See [docs/DEMO-PRODUCT.md](docs/DEMO-PRODUCT.md).
+- Do not reintroduce full-port scope (campaigns, all maps, 100+ source verifiers, wave roadmap execution) without an explicit user decision.
+- Performance and polish target the one ladder match until scope is deliberately expanded.
+- Demo runtime map: [docs/DEMO-MAP.md](docs/DEMO-MAP.md).
+
+## Full-port archive
+
+- Full pre-cut tree is frozen at git tag `archive/full-port-pre-demo-cut` / branch `archive/full-port` (SHA in [docs/ARCHIVE.md](docs/ARCHIVE.md)).
+- Before inventing a missing subsystem, open `docs/ARCHIVE.md` and search `archive/full-port`; prefer lift-and-trim over rewrite.
+- Archive is reference and extract source, not a second live product to keep in sync.
+- When lifting, write a short note under `docs/lifts/YYYY-MM-DD-<topic>.md`.
+- Inventory: [archive/MANIFEST.md](archive/MANIFEST.md). Pointers only under [archive/](archive/) — no full source dump on `main`.
+
 ## Execution Host
 
 When an in-scope command genuinely requires sudo, use the host-local configured authentication non-interactively. Do not pause to ask Tyler for sudo credentials; keep credential values out of Git and logs.

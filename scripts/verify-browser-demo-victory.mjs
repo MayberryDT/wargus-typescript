@@ -51,22 +51,34 @@ try {
   await dismissOverlays(client);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.titleScreenOpen === false && window.__WARGUS_TS_SMOKE_STATE__?.briefingOpen === false", 10_000);
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.fixedDemoMission?.stage === \"economy\"", 10_000);
-  const beforeTarget = await evalValue(client, "window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__()");
-  if (!beforeTarget?.id || beforeTarget.typeId !== "unit-great-hall" || beforeTarget.hitPoints <= 0) {
-    throw new Error(`Fixed demo is missing a live enemy Great Hall objective target: ${JSON.stringify(beforeTarget)}`);
-  }
+  // Fixed demo presents at the paced demo defaults (Plan 017), not stock 1.0x/30.
+  const EXPECTED_FIXED_DEMO_GAME_SPEED = 1.5;
+  const EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED = 45;
   const normalSpeedState = await readSmokeState(client);
-  if (normalSpeedState.gameSpeed !== 1 || normalSpeedState.sourceGameSpeedDefault !== 30) {
-    throw new Error(`Fixed demo should present at normal speed before verifier fast-forward, got ${JSON.stringify({ gameSpeed: normalSpeedState.gameSpeed, sourceGameSpeedDefault: normalSpeedState.sourceGameSpeedDefault })}`);
-  }
-  const attackerFixture = await evalValue(client, "window.__WARGUS_TS_SELECT_MIXED_FIXTURE_UNIT_TYPES__(['unit-ballista', 'unit-ballista', 'unit-ballista', 'unit-ballista', 'unit-knight', 'unit-knight', 'unit-knight', 'unit-knight'])");
-  if (!attackerFixture?.ok) {
-    throw new Error(`Unable to create fixed demo victory attackers: ${JSON.stringify(attackerFixture)} smoke=${JSON.stringify(await readSmokeState(client))}`);
+  if (
+    normalSpeedState.gameSpeed !== EXPECTED_FIXED_DEMO_GAME_SPEED
+    || normalSpeedState.sourceGameSpeedDefault !== EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED
+  ) {
+    throw new Error(`Fixed demo should present at paced demo speed before verifier fast-forward, got ${JSON.stringify({ gameSpeed: normalSpeedState.gameSpeed, sourceGameSpeedDefault: normalSpeedState.sourceGameSpeedDefault, expected: { gameSpeed: EXPECTED_FIXED_DEMO_GAME_SPEED, sourceGameSpeedDefault: EXPECTED_FIXED_DEMO_SOURCE_GAME_SPEED } })}`);
   }
   await submitCheat(client, "on screen");
   await submitCheat(client, "it is a good day to die");
   await fastForwardPrivateVictoryVerifier(client);
   const verifierSpeedState = await readSmokeState(client);
+  // disableStartingHalls: AI must finish the enemy Great Hall before assault.
+  await waitForFinishedEnemyGreatHall(client, 120_000);
+  const beforeTarget = await evalValue(client, "window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__()");
+  if (!beforeTarget?.id || beforeTarget.typeId !== "unit-great-hall" || beforeTarget.hitPoints < 1000) {
+    throw new Error(`Fixed demo is missing a finished enemy Great Hall objective target: ${JSON.stringify(beforeTarget)}`);
+  }
+  const attackerFixture = await evalValue(client, "window.__WARGUS_TS_SELECT_MIXED_FIXTURE_UNIT_TYPES__(['unit-ballista', 'unit-ballista', 'unit-ballista', 'unit-ballista', 'unit-knight', 'unit-knight', 'unit-knight', 'unit-knight'])");
+  if (!attackerFixture?.ok) {
+    throw new Error(`Unable to create fixed demo victory attackers: ${JSON.stringify(attackerFixture)} smoke=${JSON.stringify(await readSmokeState(client))}`);
+  }
+  const relocated = await evalValue(client, "window.__WARGUS_TS_RELOCATE_SELECTION_NEAR_FIXED_DEMO_OBJECTIVE__?.()");
+  if (relocated !== true) {
+    throw new Error(`Unable to stage attackers near the enemy hall: ${JSON.stringify(relocated)}`);
+  }
   const issued = await evalValue(client, "window.__WARGUS_TS_ISSUE_FIXED_DEMO_FINAL_ATTACK__()");
   if (!issued?.issued || issued.attackerIds.length === 0) {
     throw new Error(`Unable to issue fixed demo final attack: ${JSON.stringify(issued)}`);
@@ -103,6 +115,30 @@ async function fastForwardPrivateVictoryVerifier(client) {
     await delay(50);
   }
   await waitForExpression(client, "window.__WARGUS_TS_SMOKE_STATE__?.gameSpeed >= 2.49 && window.__WARGUS_TS_SMOKE_STATE__?.sourceGameSpeedDefault === 75", 4_000);
+}
+
+async function waitForFinishedEnemyGreatHall(client, timeoutMs) {
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < timeoutMs) {
+    last = await evalValue(client, "window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__()");
+    if (last?.typeId === "unit-great-hall" && Number(last.hitPoints) >= 1000) {
+      // Construction climbs toward max (~1200). Require a short stable window
+      // so we do not assault a still-building hall.
+      await delay(1_500);
+      const again = await evalValue(client, "window.__WARGUS_TS_FIXED_DEMO_OBJECTIVE_TARGET__()");
+      if (
+        again?.id === last.id
+        && again.typeId === "unit-great-hall"
+        && Number(again.hitPoints) >= 1000
+        && Math.abs(Number(again.hitPoints) - Number(last.hitPoints)) <= 5
+      ) {
+        return again;
+      }
+    }
+    await delay(500);
+  }
+  throw new Error(`Timed out waiting for finished enemy Great Hall; last=${JSON.stringify(last)} smoke=${JSON.stringify(await readSmokeState(client))}`);
 }
 
 async function submitCheat(client, text) {

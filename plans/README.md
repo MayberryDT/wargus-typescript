@@ -1,21 +1,35 @@
+> **Historical only (2026-08-06):** Plans 001–027 and the wave roadmap are frozen history of the full-port program.
+> They are **not** active execution authority on `main`.
+> Active product: [Demo Product Contract](../docs/DEMO-PRODUCT.md).
+> Full tree at freeze: git tag `archive/full-port-pre-demo-cut` / branch `archive/full-port`.
+
 # Wargus Roadmap Index
 
-This is the authoritative status and wave index for Plans 001–027. Plan IDs are
-stable references; waves govern execution order. Plans 001–017 are completed
+This is a **historical** status and wave index for Plans 001–027. Plan IDs are
+stable references for reading past work and evidence. Waves no longer govern
+execution order on `main`. Plans 001–017 and 018–027 are completed or frozen
 historical entries, not current execution work. Their detailed classification,
 recorded commits, evidence, revalidation dates, drift, successors, and waiver
-boundaries are authoritative in
-[the historical plan audit](HISTORICAL-PLAN-AUDIT.md).
+boundaries remain recorded in
+[the historical plan audit](HISTORICAL-PLAN-AUDIT.md) (001–017) and the
+evidence packets under `plans/evidence/`.
+
+See also [HISTORICAL.md](HISTORICAL.md) for the one-pager: active product docs
+live under `docs/DEMO-*.md`; full-port freeze is git tag
+`archive/full-port-pre-demo-cut`.
 
 ## Roadmap execution authorization
 
-The user has approved execution of the optimized roadmap and directed the
-executor to continue autonomously through every remaining plan. Verification
-failures are recovery work: preserve the evidence, diagnose the cause, make the
-smallest safe correction, and rerun the gate. They do not revoke execution
-authority or require another user confirmation. Safety controls, ownership
-boundaries, correctness requirements, and the final production-deployment
-sequence remain in force.
+**Historical only.** This file is not execution authority on `main`.
+
+Do **not** execute Plans 018–027 (or reopen Wave 0–5 coordinator work) on
+`main` unless the user explicitly re-opens product scope and updates
+[docs/DEMO-PRODUCT.md](../docs/DEMO-PRODUCT.md). Prior autonomous full-roadmap
+authorization language is revoked by the 2026-08-06 demo product cut.
+
+Active product and gates: [Demo Product Contract](../docs/DEMO-PRODUCT.md),
+[Demo Map](../docs/DEMO-MAP.md), [AGENTS.md](../AGENTS.md). Full-port tree at
+freeze: [docs/ARCHIVE.md](../docs/ARCHIVE.md).
 
 ## Status vocabulary
 
