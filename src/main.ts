@@ -3233,6 +3233,12 @@ if (browserSmokeStateEnabled) {
       return { ok: false, error: `missing spell fixture definitions for ${casterTypeId} ${spellId}`, ...browserSmokeCommandResult(), command: null, instantCommand: null, target: null };
     }
     clearBrowserSmokeFixtures();
+    // Keep spell fixtures stable: live AI and auto-aggro enemies kill casters between CDP steps.
+    // Pause simulation so map combat and AI cannot deselect/kill casters mid-fixture.
+    paused = true;
+    world.aiStates.forEach((state) => {
+      state.enabled = false;
+    });
     const player = world.players.find((candidate) => candidate.id === world!.visibilityPlayer) ?? world.players[0];
     if (player) {
       player.resources.gold = Math.max(player.resources.gold ?? 0, 100000);
@@ -3272,18 +3278,42 @@ if (browserSmokeStateEnabled) {
       readyBrowserSmokeFixtureUnit(unit);
       return unit;
     };
+    // Disarm combat without zeroing speed: canTargetMobileSpell requires speed > 0
+    // for bloodlust/slow/etc., but live enemies and map units still must not kill casters.
+    const disarmCombatant = (unit: WorldUnit | null): void => {
+      if (!unit) {
+        return;
+      }
+      unit.canAttack = false;
+      unit.order = null;
+      unit.moveQueue = [];
+      unit.nextAutoActionTick = Number.MAX_SAFE_INTEGER;
+    };
     const enemyPlayer = world.players.find((candidate) => candidate.id !== world!.visibilityPlayer)?.id ?? 1;
+    // Disarm existing map hostiles before spawning fixtures (AI may already be off).
+    for (const unit of world.units) {
+      if (unit.player !== world.visibilityPlayer) {
+        disarmCombatant(unit);
+      }
+    }
     const caster = createFixtureUnit(casterTypeId, world.visibilityPlayer, 0, 0);
     if (!caster) {
       return { ok: false, error: `unable to create spell caster ${casterTypeId}`, ...browserSmokeCommandResult(), command: null, instantCommand: null, target: null };
     }
     caster.mana = Math.max(caster.maxMana, spell.manaCost, 255);
     caster.maxMana = Math.max(caster.maxMana, caster.mana);
+    caster.hitPoints = Math.max(caster.hitPoints, caster.maxHitPoints);
+    caster.order = null;
+    caster.moveQueue = [];
+    caster.nextAutoActionTick = Number.MAX_SAFE_INTEGER;
     const friendly = createFixtureUnit("unit-footman", world.visibilityPlayer, 2, 0, 30);
     const enemy = createFixtureUnit("unit-grunt", enemyPlayer, 4, 0);
     const enemyUndead = createFixtureUnit("unit-skeleton", enemyPlayer, 5, 1);
     const friendlyUndead = createFixtureUnit("unit-death-knight", world.visibilityPlayer, 2, 2, 30);
     const enemyBuilding = createFixtureUnit("unit-farm", enemyPlayer, 6, 0);
+    for (const unit of [friendly, enemy, enemyUndead, friendlyUndead, enemyBuilding]) {
+      disarmCombatant(unit);
+    }
     const createdUnits = [caster, friendly, enemy, enemyUndead, friendlyUndead, enemyBuilding].filter((unit): unit is WorldUnit => Boolean(unit));
     world.units.push(...createdUnits);
     invalidateWorldOccupancyIndex(world);

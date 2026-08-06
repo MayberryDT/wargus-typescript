@@ -2,7 +2,7 @@ import { Application, BlurFilter, Container, Graphics, type Texture } from "pixi
 import { clearWorldRenderCachePerformanceOwner, destroyTrackedDisplayObject, createTrackedContainer, createTrackedGraphics, createTrackedSprite, createTrackedText, recordWorldRenderCachePerformance, type WorldRenderPerformanceKind } from "../performance/displayObjectPerformance";
 import { isTilePassable } from "../simulation/passability";
 import { sourceControlGroupNumberForUnit, sourceDeclaredReactionRangeForUnit } from "../simulation/orders";
-import { isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
+import { isRuntimeSourceBuildingUnit, isUnitFootprintVisibleToPlayer, isUnitInsideResourceSource, isUnitVisibleToPlayer, sourceDefaultGameSpeed, unitFootprintHalfSize, type WorldState } from "../simulation/world";
 import { sourceButtonAppliesTo } from "../wargus/buttons";
 import { isFixedBrowserDemoMap } from "../wargus/demoScenario";
 import type { WargusAnimation, WargusDecoration, WargusManifest } from "../wargus/types";
@@ -895,6 +895,10 @@ function drawUnits(
   const selected = new Set(selectedUnitIds);
   const sourceSelectedOrdersVisible = world.engineSettings.showOrdersDefault && sourceShowOrdersVisible;
   for (const stateUnit of visibleUnits) {
+    // Mirror passability/world: workers inside mines/depots are not drawn (prep also filters).
+    if (isUnitInsideResourceSource(stateUnit)) {
+      continue;
+    }
     const unit = visualUnitForRender(stateUnit, world);
     const isOwned = unit.player === world.visibilityPlayer;
     const color = sourcePlayerColor(world, unit.player, 0, [214, 208, 163]);
