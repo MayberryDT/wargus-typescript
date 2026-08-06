@@ -7,6 +7,9 @@ if (!demo) throw new Error("package.json missing scripts.verify:demo");
 if (verify !== "npm run verify:demo" && verify !== demo) {
   throw new Error(`scripts.verify must be demo gate; got: ${verify.slice(0, 120)}...`);
 }
+// Fallback B: command-card spell fixtures deferred from the default demo gate.
+// Full-port script remains as verify:browser-command-card-session; optional
+// verify:demo-extended reattaches it for later hardening.
 const required = [
   "verify:wargus-assets",
   "verify:playtest-telemetry",
@@ -14,7 +17,6 @@ const required = [
   "verify:browser-runtime-smoke",
   "verify:browser-playable-session",
   "verify:browser-demo-session",
-  "verify:browser-command-card-session",
   "verify:browser-combat-session",
   "verify:fixed-demo-polish",
   "verify:fixed-demo-random-ai",

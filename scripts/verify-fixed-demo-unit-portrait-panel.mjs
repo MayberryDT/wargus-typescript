@@ -16,6 +16,8 @@ expect("Armor ${armor}", "Selected-unit panel should show armor when present.");
 expect("Range ${range}", "Selected-unit panel should show attack range when present.");
 expect("Mana ${Math.floor(selected.mana)}/${selected.maxMana}", "Selected-unit panel should show mana for caster units.");
 expect("drawFixedDemoMultiSelectStrip", "Multi-selection should render as a compact selectable strip.");
-expect("Training ${label}", "Selected building panel should show active production.");
+// Production UI shows a multi-slot queue + progress bar (not the old "Training ${label}" line).
+expect("selected.productionQueue.slice(0, 6)", "Selected building panel should show active production.");
+expect("activeProduction.remainingSeconds / activeProduction.totalSeconds", "Selected building panel should show production progress.");
 
 console.log("Fixed demo unit portrait/info panel verified.");
