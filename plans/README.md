@@ -1,3 +1,8 @@
+> **Historical only (2026-08-06):** Plans 001–027 and the wave roadmap are frozen history of the full-port program.
+> They are **not** active execution authority on `main`.
+> Active product: [Demo Product Contract](../docs/DEMO-PRODUCT.md).
+> Full tree at freeze: git tag `archive/full-port-pre-demo-cut` / branch `archive/full-port`.
+
 # Wargus Roadmap Index
 
 This is the authoritative status and wave index for Plans 001–027. Plan IDs are
