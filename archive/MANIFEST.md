@@ -31,6 +31,13 @@
 - Dynamic `import()` under `src/`: none found
 - Implication: later delete batches need product-surface / dead-shell cuts (unlink imports first), not “file never imported”
 
+## Batch C TypeScript deletes (Task 7)
+
+- **Status:** skipped 2026-08-06 — safe-delete list empty (Task 4)
+- **Deletes performed:** none
+- Evidence: `.artifacts/demo-cut/batch-c-skipped.md`, Task 4 classification JSON
+- Next TS cut only after product shell unlink + re-trace + green `npm run verify:demo`
+
 ## How to use
 
 1. Check status before expanding work: `in-demo` / `partial` may already live on `main`; `archived` is lift-from-tag territory.
