@@ -1,0 +1,29 @@
+{
+  "name": "Wargus TypeScript",
+  "short_name": "Wargus TS",
+  "description": "Browser-native TypeScript/PixiJS port of the Wargus/Warcraft II RTS engine.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1528",
+  "theme_color": "#1a2848",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

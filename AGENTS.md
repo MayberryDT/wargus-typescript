@@ -15,6 +15,19 @@ All future implementation, build, test, verifier, game-runtime, and browser work
 - Track every project process started on Halla by its exact PID, and clean up only those exact PIDs. Never use broad `pkill`, `killall`, container-wide cleanup, or port-owner termination.
 - If Halla is unavailable, stop and report the blocker instead of falling back to resource-intensive local execution.
 
+### Remote access (user is not on Halla)
+
+Agents run on `halla`. The human opens the app from their local machine over Tailscale. `http://127.0.0.1:...` only works on Halla itself and is useless for the user.
+
+When starting a dev/preview server the user should open in a browser:
+
+1. Bind to Halla's Tailscale address (or MagicDNS host), not loopback. Prefer:
+   - IP: `100.105.117.93`
+   - MagicDNS: `halla.tailaf7529.ts.net`
+2. Use a free high port after checking listeners (example pattern: `npm run dev -- --host 100.105.117.93 --port <free-port> --strictPort`).
+3. Give the user a Tailscale URL they can open, e.g. `http://halla.tailaf7529.ts.net:<port>/` or `http://100.105.117.93:<port>/`.
+4. Do not present `127.0.0.1` / `localhost` links as if the user can use them.
+
 ## Automation First
 
 - Resolve routine, safe, in-scope prerequisites autonomously when the required
