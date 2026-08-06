@@ -10,3 +10,7 @@ dist/
 
 # Local Netlify folder
 .netlify
+
+# Cloudflare Wrangler local state (config wrangler.jsonc is committed)
+.wrangler/
+.dev.vars

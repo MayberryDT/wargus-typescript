@@ -1,0 +1,17 @@
+{
+  // Cloudflare Workers static assets config for the Vite production build.
+  // CI must run `npm run build` first (output in ./dist), then `npx wrangler deploy`
+  // or `npm run deploy:cf` without interactive setup.
+  // Failure mode fixed: bare `npx wrangler deploy` with no committed config
+  // auto-scaffolded assets without `directory` and died in non-interactive CI.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wargus-typescript",
+  "compatibility_date": "2026-08-06",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

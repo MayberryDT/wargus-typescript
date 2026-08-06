@@ -69,8 +69,25 @@ References to `tab.playwright` inside the Browser plugin are acceptable only aft
 - `public/wargus/manifest.json` and the `public/wargus` asset pack are critical runtime dependencies.
 - Treat `npm run verify:wargus-assets` as a release-blocking gate for asset or build changes.
 - A `200` from the app shell is not enough to prove the demo works; verify critical asset routes such as `/wargus/manifest.json` when debugging black screens.
-- Do not deploy to Netlify unless the user explicitly asks for deployment or live-site debugging.
 - Do not introduce `Math.random()`, `Date.now()`, or `crypto.getRandomValues()` under `src/**/*.ts` without redesigning the runtime determinism verifier.
+
+## Deployment (Cloudflare / Netlify)
+
+Do not deploy to production hosts unless the user explicitly asks for deployment or live-site debugging.
+
+### Cloudflare (Wrangler)
+
+Production static deploy serves Vite’s `dist/` via Workers static assets.
+
+- **Committed config:** `wrangler.jsonc` must keep `assets.directory` set to `"./dist"` (and SPA `not_found_handling` as needed). Never commit an `assets` block without `directory`.
+- **Build then deploy:** CI (or humans) must run `npm run build` so `dist/` exists, then deploy with **`npx wrangler deploy`** or **`npm run deploy:cf:dist`**. Full local one-shot: `npm run deploy:cf` (build + deploy).
+- **Non-interactive only:** Do not rely on bare `npx wrangler deploy` first-time setup in CI. That path auto-scaffolds incomplete config (`assets` missing `directory`) and fails with: `The assets property in your configuration is missing the required directory property.`
+- **Auth:** Cloudflare credentials stay host/CI secrets (`CLOUDFLARE_API_TOKEN`, account bindings). Never commit tokens or `.dev.vars`.
+- **Do not** re-run interactive `wrangler` setup that rewrites `package.json` or regenerates `wrangler.jsonc` on agents/CI.
+
+### Netlify
+
+- Optional legacy config may exist in `netlify.toml` (`publish = "dist"`). Same rule: deploy only when the user asks.
 
 ## Coding Guidelines
 
