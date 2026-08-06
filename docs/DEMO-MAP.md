@@ -56,6 +56,14 @@ Plain-language path from browser boot to a playable ladder match. Prefer these o
 - Existing demo-critical browser checks that already exercise this path include fixed-demo session verifiers (e.g. `verify:browser-demo-session`).
 - Full-port `scripts/verify-source-*.mjs` and multi-map production matrices are archive reference, not the default product definition of green.
 
+## 9. Modules reached (static graph)
+
+- Tracer: `node scripts/trace-demo-imports.mjs` (relative `import`/`export … from` only; ignores bare packages and dynamic `import()`).
+- Result (Task 4): **68 / 68** `src/**/*.ts` files are reachable from `src/main.ts`. `src/wargus/demoScenario.ts` is in the set.
+- Unreachable / static safe-delete candidates: **none**. Product-archived surfaces (e.g. campaign) can still be static-wired; unlink shell imports before deleting.
+- Non-`.ts` graph edges: `src/styles.css`, `src/wargus/scoutProvenance.mjs`.
+- Evidence (local): `.artifacts/demo-cut/demo-import-trace.json`, `demo-import-classification.json`.
+
 ## Related inventory
 
 Subsystem status (`in-demo` / `partial` / `archived`) lives in [archive/MANIFEST.md](../archive/MANIFEST.md). Lift missing pieces from `archive/full-port` per [ARCHIVE.md](./ARCHIVE.md); do not invent a second engine.
