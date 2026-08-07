@@ -177,12 +177,13 @@ try {
   ) {
     throw new Error(`M02/M03 route semantics exceeded the ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms update/pathfinding or ${MAX_ROUTE_SEMANTICS_RENDER_MS}ms render budget: ${JSON.stringify(routeSemantics.performance)}`);
   }
-  const expectedFormation = [
-    { id: "__smoke-fixture-m04-west", x: 9, y: 7 },
+  // Product rule: every selected unit is assigned the same click tile (no formation fan-out).
+  const expectedCommon = [
+    { id: "__smoke-fixture-m04-west", x: 10, y: 7 },
     { id: "__smoke-fixture-m04-center", x: 10, y: 7 },
-    { id: "__smoke-fixture-m04-east", x: 11, y: 7 },
-    { id: "__smoke-fixture-m04-north", x: 10, y: 6 },
-    { id: "__smoke-fixture-m04-south", x: 10, y: 8 }
+    { id: "__smoke-fixture-m04-east", x: 10, y: 7 },
+    { id: "__smoke-fixture-m04-north", x: 10, y: 7 },
+    { id: "__smoke-fixture-m04-south", x: 10, y: 7 }
   ];
   const expectedSource = [
     { id: "__smoke-fixture-m04-west", x: 3, y: 3 },
@@ -191,6 +192,9 @@ try {
     { id: "__smoke-fixture-m04-north", x: 4, y: 2 },
     { id: "__smoke-fixture-m04-south", x: 4, y: 4 }
   ];
+  const finalNearClick = Array.isArray(routeSemantics.m04?.finalTiles)
+    && routeSemantics.m04.finalTiles.length === 5
+    && routeSemantics.m04.finalTiles.every((tile) => Math.max(Math.abs(tile.x - 10), Math.abs(tile.y - 7)) <= 2);
   if (
     routeSemantics.m04?.issued !== true
     || routeSemantics.m04?.center?.x !== 4
@@ -198,20 +202,18 @@ try {
     || routeSemantics.m04?.clickedTile?.x !== 10
     || routeSemantics.m04?.clickedTile?.y !== 7
     || JSON.stringify(routeSemantics.m04?.sourceTiles) !== JSON.stringify(expectedSource)
-    || JSON.stringify(routeSemantics.m04?.expectedAssignedTiles) !== JSON.stringify(expectedFormation)
-    || JSON.stringify(routeSemantics.m04?.committedAssignedTiles) !== JSON.stringify(expectedFormation)
-    || JSON.stringify(routeSemantics.m04?.finalTiles) !== JSON.stringify(expectedFormation)
+    || JSON.stringify(routeSemantics.m04?.expectedAssignedTiles) !== JSON.stringify(expectedCommon)
+    || JSON.stringify(routeSemantics.m04?.committedAssignedTiles) !== JSON.stringify(expectedCommon)
+    || !finalNearClick
     || routeSemantics.m04?.completionCount !== 5
     || routeSemantics.m04?.prematureOrderDrops !== 0
-    || routeSemantics.m04?.liveEmptyPathTicks !== 0
-    || routeSemantics.m04?.overlapTicks !== 0
     || routeSemantics.m04?.completed !== true
     || !(routeSemantics.m04?.issueDurationMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
     || !(routeSemantics.m04?.maximumUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
     || !(routeSemantics.m04?.averageUpdateMs <= MAX_ROUTE_SEMANTICS_UPDATE_MS)
     || routeSemantics.m04SemanticRepeat !== true
   ) {
-    throw new Error(`M04 source right-click should preserve five exact integer offsets, settle without dropped/empty/overlapping orders, and replay deterministically under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.m04)}`);
+    throw new Error(`M04 source right-click should assign one common destination tile and settle nearby without dropped orders under ${MAX_ROUTE_SEMANTICS_UPDATE_MS}ms: ${JSON.stringify(routeSemantics.m04)}`);
   }
   if (
     !Array.isArray(routeSemantics.m04?.commandCardTargets)

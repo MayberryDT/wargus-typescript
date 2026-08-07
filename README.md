@@ -48,6 +48,8 @@ On host `halla`, bind Tailscale for remote play (see [AGENTS.md](AGENTS.md)):
 npm run dev -- --host 100.105.117.93 --port <free-port> --strictPort
 ```
 
+While that dev/preview server is up, play sessions auto-write under [`playtest-logs/`](playtest-logs/README.md) (`latest.json` + `sessions/`). No manual browser export required for agent review.
+
 Build:
 
 ```bash

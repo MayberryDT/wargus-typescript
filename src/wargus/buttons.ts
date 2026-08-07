@@ -25,5 +25,21 @@ export function sourceFullButtonLabel(button: WargusButton | null | undefined): 
 
 export function sourceButtonLabel(button: WargusButton | null | undefined): string | null {
   const cleaned = sourceFullButtonLabel(button);
-  return cleaned ? cleaned.split(" ").slice(0, 2).join(" ") : null;
+  if (!cleaned) {
+    return null;
+  }
+  // "UPGRADE TO GUARD TOWER" / "UPGRADE TO CANNON TOWER" both became "UPGRADE TO"
+  // when truncated to two words — drop the shared prefix so the target remains.
+  if (button?.action === "upgrade-to") {
+    const target = cleaned.replace(/^UPGRADE TO\s+/i, "").trim();
+    if (target) {
+      return target.split(" ").slice(0, 3).join(" ");
+    }
+  }
+  if (button?.action === "research") {
+    // "UPGRADE SWORDS (Damage +2)" → "UPGRADE SWORDS"
+    const withoutParens = cleaned.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    return withoutParens.split(" ").slice(0, 3).join(" ");
+  }
+  return cleaned.split(" ").slice(0, 2).join(" ");
 }

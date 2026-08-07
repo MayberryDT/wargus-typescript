@@ -217,6 +217,8 @@ export function applyFixedBrowserDemoWorldPresentation(map: WargusMap, world: Wo
   world.engineSettings.bigScreenDefault = true;
   world.engineSettings.mapGridDefault = false;
   world.engineSettings.highlightPassabilityDefault = false;
+  world.engineSettings.enableMouseScrollingDefault = false;
+  world.engineSettings.formationMovementDefault = false;
   world.engineSettings.hardwareCursorDefault = true;
   world.engineSettings.grabMouseDefault = false;
   world.engineSettings.frameSkipDefault = 0;

@@ -21,10 +21,13 @@ const DEFAULT_ENGINE_SETTINGS: WargusEngineSettings = {
   effectsEnabledDefault: true,
   effectsVolumeDefault: 128,
   enableKeyboardScrollingDefault: true,
-  enableMouseScrollingDefault: true,
+  // Browser edge pan is disabled product-wide until pointer-lock/fullscreen pan ships.
+  enableMouseScrollingDefault: false,
   fastForwardCycleDefault: 0,
   frameSkipDefault: 0,
-  formationMovementDefault: true,
+  // Right-click group move should send every unit to the click point (WC2-style),
+  // not fan out into parallel formation offsets.
+  formationMovementDefault: false,
   bigScreenDefault: false,
   grayscaleIconsDefault: false,
   allyDepositsAllowedDefault: false,
@@ -74,7 +77,8 @@ const DEFAULT_ENGINE_SETTINGS: WargusEngineSettings = {
   mouseScrollSpeedControlDefault: 15,
   mouseScrollSpeedDefault: 1,
   mouseScrollSpeedPressedDefault: 4,
-  scrollMargins: { top: 15, right: 16, bottom: 16, left: 2 },
+  // Browser windows steal the OS edge; keep a playable edge-pan band on all sides.
+  scrollMargins: { top: 28, right: 28, bottom: 28, left: 28 },
   pauseOnLeaveDefault: true,
   playerNameDefault: "Wargustus",
   defaultPlayerNames: {
@@ -549,6 +553,8 @@ export type WorldOrder =
       targetId: string;
       targetX: number;
       targetY: number;
+      /** Explicit attack-command / force-attack may target own or allied units. */
+      force?: boolean;
       autoReturn: { x: number; y: number } | null;
       path: WorldPathPoint[];
       pathIndex: number;

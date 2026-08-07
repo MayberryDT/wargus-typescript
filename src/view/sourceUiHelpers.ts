@@ -2063,11 +2063,23 @@ export function sourceStereoPanForUnit(unit: Pick<WorldUnit, "x">, camera: { x: 
 }
 
 export function sourceMouseScrollingEnabled(world: WorldState | null): boolean {
-  return world?.engineSettings.enableMouseScrollingDefault !== false;
+  // Edge pan is intentionally off until browser pointer-lock / fullscreen pan is designed.
+  // Mouse-wheel and middle-drag still use separate gates; this only blocks edge-band scroll.
+  void world;
+  return false;
 }
 
 export function sourceScrollMargins(world: WorldState | null): { top: number; right: number; bottom: number; left: number } {
-  return world?.engineSettings.scrollMargins ?? { top: 15, right: 16, bottom: 16, left: 2 };
+  // Source data uses desktop-edge margins (left can be 2px). Browsers cannot put the
+  // cursor on the OS window edge the way WC2 could, so keep a usable band.
+  const raw = world?.engineSettings.scrollMargins ?? { top: 28, right: 28, bottom: 28, left: 28 };
+  const minEdge = 28;
+  return {
+    top: Math.max(minEdge, raw.top ?? 0),
+    right: Math.max(minEdge, raw.right ?? 0),
+    bottom: Math.max(minEdge, raw.bottom ?? 0),
+    left: Math.max(minEdge, raw.left ?? 0)
+  };
 }
 
 export function sourceMouseDragScrollScale(world: WorldState | null, controlPressed: boolean): number {

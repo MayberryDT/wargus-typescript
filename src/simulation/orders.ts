@@ -624,7 +624,8 @@ export function issuePendingWorldCommandAt(world: WorldState, unitIds: string[],
     if (rallyIssued) {
       return issueWithClickFeedback(true);
     }
-    const targetIssued = !queue && issueGroupAttackTargetAtOrder(world, unitIds, x, y);
+    // Attack command force-targets any unit under the cursor, including own units.
+    const targetIssued = !queue && issueGroupForceAttackAtOrder(world, unitIds, x, y);
     if (targetIssued) {
       return issueWithClickFeedback(true);
     }
@@ -754,9 +755,15 @@ function issueSmartOrderInternal(world: WorldState, unitId: string, x: number, y
   const sourceAction = unit?.rightMouseAction;
   if (sourceAction) {
     const sourceHandled = issueSourceRightMouseAction(world, unit, sourceAction, x, y);
-    if (sourceHandled !== null) {
-      return sourceHandled;
+    // Harvest/attack handlers now fall through to move on miss; treat false as
+    // "done" only when a handler intentionally rejected without move fallback.
+    if (sourceHandled === true) {
+      return true;
     }
+    if (sourceHandled === false && sourceAction !== "harvest") {
+      return false;
+    }
+    // harvest miss or unhandled action: continue into smart defaults below
   }
   if (world.engineSettings.simplifiedAutoTargetingDefault === false) {
     issueMoveOrder(world, unitId, x, y);
@@ -865,14 +872,39 @@ function issueRightMouseHarvestOrder(world: WorldState, unit: WorldUnit, x: numb
     if (isOilPlatform(resource)) {
       return issueHarvestOilOrder(world, unit.id, resource.id);
     }
+    // Resource unit clicks stay harvest-or-fail (do not silently convert to move).
     return issueHarvestOrder(world, unit.id, resource.id);
   }
 
   const tile = worldToTile(world, x, y);
   if (canGatherResource(unit, "wood") && isSourceHarvestableWoodTile(world, world.tiles[tile.y * world.map.width + tile.x] ?? 0)) {
-    return issueHarvestWoodOrder(world, unit.id, tile.x, tile.y);
+    if (issueHarvestWoodOrder(world, unit.id, tile.x, tile.y)) {
+      return true;
+    }
+    // Unreachable/failed wood tile: still walk as close as possible (move-nearest).
+    issueMoveOrder(world, unit.id, x, y);
+    return unit.order?.kind === "move" || hasPendingPathRequest(world, unit.id);
   }
-  return false;
+
+  // Peasant rightMouseAction is "harvest". Empty ground must still move/repair/follow.
+  const dropoffTarget = findFriendlyDropoffAt(world, unit, x, y);
+  if (dropoffTarget && issueReturnGoodsToDropoffOrder(world, unit.id, dropoffTarget.id)) {
+    return true;
+  }
+  const repairTarget = findFriendlyRepairTargetAt(world, unit, x, y);
+  if (repairTarget && issueRepairOrder(world, unit.id, repairTarget.id)) {
+    return true;
+  }
+  const transport = findFriendlyTransportAt(world, unit, x, y);
+  if (transport && issueLoadIntoTransportOrder(world, unit.id, transport.id)) {
+    return true;
+  }
+  const followTarget = findSourceRightMouseFollowTargetAt(world, unit, x, y);
+  if (followTarget) {
+    return issueFollowOrder(world, unit.id, followTarget.id);
+  }
+  issueMoveOrder(world, unit.id, x, y);
+  return unit.order?.kind === "move" || hasPendingPathRequest(world, unit.id);
 }
 
 function findSourceRightMouseFollowTargetAt(world: WorldState, unit: WorldUnit, x: number, y: number): WorldUnit | undefined {
@@ -1550,78 +1582,18 @@ export function canIssueQueuePatrolAt(world: WorldState, unit: WorldUnit, x: num
   return canReachQueuedDestination(world, unit, clampedX, clampedY);
 }
 
-type SourceTile = { x: number; y: number };
-
-function unitSourceTile(world: WorldState, unit: WorldUnit): SourceTile {
-  return {
-    x: Math.floor(unit.x / world.tileSize) - Math.floor(unit.tileWidth / 2),
-    y: Math.floor(unit.y / world.tileSize) - Math.floor(unit.tileHeight / 2)
-  };
-}
-
-function sourceTileToPlannerPoint(world: WorldState, unit: WorldUnit, assignedTile: SourceTile): { x: number; y: number } {
-  return {
-    x: (assignedTile.x + Math.floor(unit.tileWidth / 2)) * world.tileSize + world.tileSize / 2,
-    y: (assignedTile.y + Math.floor(unit.tileHeight / 2)) * world.tileSize + world.tileSize / 2
-  };
-}
-
 function sourceRightClickDestinations(world: WorldState, units: WorldUnit[], x: number, y: number): Map<string, { x: number; y: number }> {
   const destinations = new Map<string, { x: number; y: number }>();
   if (units.length === 0) {
     return destinations;
   }
-  if (!sourceFormationMovementApplies(world, units)) {
-    const destination = clampWorldPoint(world, x, y);
-    for (const unit of units) {
-      destinations.set(unit.id, destination);
-    }
-    return destinations;
-  }
-
-  const sourceTiles = units.map((unit) => ({ unit, sourceTile: unitSourceTile(world, unit) }));
-  const center = {
-    x: Math.floor(sourceTiles.reduce((sum, entry) => sum + entry.sourceTile.x, 0) / sourceTiles.length),
-    y: Math.floor(sourceTiles.reduce((sum, entry) => sum + entry.sourceTile.y, 0) / sourceTiles.length)
-  };
-  const clickedTile = worldToTile(world, x, y);
-  for (const { unit, sourceTile } of sourceTiles) {
-    const assignedTile = {
-      x: Math.max(0, Math.min(world.map.width - 1, clickedTile.x + sourceTile.x - center.x)),
-      y: Math.max(0, Math.min(world.map.height - 1, clickedTile.y + sourceTile.y - center.y))
-    };
-    if (assignedTile.x === sourceTile.x && assignedTile.y === sourceTile.y) {
-      continue;
-    }
-    destinations.set(unit.id, sourceTileToPlannerPoint(world, unit, assignedTile));
+  // Always converge on the clicked point. Formation offsets made groups run in
+  // parallel lanes and looked like broken pathing.
+  const destination = clampWorldPoint(world, x, y);
+  for (const unit of units) {
+    destinations.set(unit.id, destination);
   }
   return destinations;
-}
-
-function sourceFormationMovementApplies(world: WorldState, units: WorldUnit[]): boolean {
-  if (!world.engineSettings.formationMovementDefault || units.length >= 12) {
-    return false;
-  }
-  const magicBoxSize = 7;
-  const firstTile = unitSourceTile(world, units[0]);
-  let minX = firstTile.x;
-  let maxX = minX;
-  let minY = firstTile.y;
-  let maxY = minY;
-  for (const unit of units.slice(1)) {
-    const tile = unitSourceTile(world, unit);
-    minX = Math.min(minX, tile.x);
-    maxX = Math.max(maxX, tile.x);
-    if (maxX - minX > magicBoxSize) {
-      return false;
-    }
-    minY = Math.min(minY, tile.y);
-    maxY = Math.max(maxY, tile.y);
-    if (maxY - minY > magicBoxSize) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function clampWorldPoint(world: WorldState, x: number, y: number): { x: number; y: number } {
@@ -1696,6 +1668,10 @@ function issueGroupSmartOrderWithDestinations(world: WorldState, unitIds: string
     const planned = planMoveOrder(world, unit, destination.x, destination.y);
     if (planned) {
       commitMoveOrder(unit, planned, true);
+      issued = true;
+    } else if (canReceiveMoveOrders(unit)) {
+      // Async nearest-path move when the sync planner cannot commit a path.
+      issueMoveOrder(world, unit.id, destination.x, destination.y);
       issued = true;
     }
   }
@@ -1949,6 +1925,22 @@ export function issueGroupAttackTargetAtOrder(world: WorldState, unitIds: string
   for (const unit of selectedUnitsForPlayer(world, unitIds, playerId)) {
     if (canIssueAttackTargetAt(world, unit, x, y)) {
       issued = issueAttackTargetAtOrder(world, unit.id, x, y) || issued;
+    }
+  }
+  return issued;
+}
+
+/** Attack-command targeting: enemy preferred, else force-attack any attackable unit (including own). */
+export function issueGroupForceAttackAtOrder(world: WorldState, unitIds: string[], x: number, y: number, playerId = world.visibilityPlayer): boolean {
+  let issued = false;
+  for (const unit of selectedUnitsForPlayer(world, unitIds, playerId)) {
+    if (canIssueAttackTargetAt(world, unit, x, y)) {
+      issued = issueAttackTargetAtOrder(world, unit.id, x, y) || issued;
+      continue;
+    }
+    const target = findForceAttackTargetAt(world, unit, x, y);
+    if (target && issueAttackOrder(world, unit.id, target.id, { force: true })) {
+      issued = true;
     }
   }
   return issued;
@@ -2312,9 +2304,35 @@ function issueGoldHarvestOrder(world: WorldState, unit: WorldUnit, target: World
     pathIndex: 0
   };
   if (!inRange) {
-    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+    // Prefer approach points around the mine footprint, not only the impassable center.
+    const approach = sourceUnitInteractionPath(world, unit, target, sourceResourceSourceRange(world, unit));
+    const candidates = approach.length > 0
+      ? [approach[approach.length - 1], { x: target.x, y: target.y }]
+      : resourceApproachCandidates(world, unit, target);
+    enqueueRepathRequest(world, unit.id, candidates);
   }
   return true;
+}
+
+function resourceApproachCandidates(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
+  const bounds = unitFootprintBounds(world, target);
+  const rangeTiles = Math.max(1, Math.ceil(sourceResourceSourceRange(world, unit) / world.tileSize) + 1);
+  const candidates: Array<{ x: number; y: number; distance: number }> = [];
+  for (let tileY = Math.max(0, bounds.minTileY - rangeTiles); tileY <= Math.min(world.map.height - 1, bounds.maxTileY + rangeTiles); tileY += 1) {
+    for (let tileX = Math.max(0, bounds.minTileX - rangeTiles); tileX <= Math.min(world.map.width - 1, bounds.maxTileX + rangeTiles); tileX += 1) {
+      const point = tileToWorldCenter(world, tileX, tileY);
+      const standIn = { ...unit, x: point.x, y: point.y };
+      if (!isInResourceSourceRange(world, standIn, target)) {
+        continue;
+      }
+      candidates.push({ ...point, distance: distanceSquared(unit, point) });
+    }
+  }
+  candidates.sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x);
+  if (candidates.length === 0) {
+    return [{ x: target.x, y: target.y }];
+  }
+  return candidates.slice(0, 12).map(({ x, y }) => ({ x, y }));
 }
 
 export function canIssueQueueHarvestTarget(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
@@ -2336,19 +2354,25 @@ export function canIssueQueueHarvestTarget(world: WorldState, unit: WorldUnit, t
 
 export function issueHarvestWoodOrder(world: WorldState, unitId: string, tileX: number, tileY: number): boolean {
   const unit = findUnit(world, unitId);
-  const dropoff = unit ? findNearestDropoff(world, unit, "wood") : undefined;
-  if (!unit || !dropoff || !canGatherResource(unit, "wood")) {
+  if (!unit || !canGatherResource(unit, "wood")) {
     return false;
   }
+  // Dropoff is optional for starting the chop. Without a hall/mill the worker
+  // still walks to the tree and gathers; return waits until a deposit exists.
+  const dropoff = findNearestDropoff(world, unit, "wood");
   const resolvedTile = resolveReachableWoodTileForUnit(world, unit, tileX, tileY);
   if (!resolvedTile) {
-    return false;
+    // Still accept the clicked forest tile when pathing is deferred async.
+    if (!isSourceHarvestableWoodTile(world, world.tiles[tileY * world.map.width + tileX] ?? 0)) {
+      return false;
+    }
+  } else {
+    tileX = resolvedTile.x;
+    tileY = resolvedTile.y;
   }
-  tileX = resolvedTile.x;
-  tileY = resolvedTile.y;
   const target = tileToWorldCenter(world, tileX, tileY);
-  const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
-  const near = Math.hypot(target.x - unit.x, target.y - unit.y) <= world.tileSize + unit.radius;
+  const dropoffPoint = dropoff ? resourceDropoffTargetPoint(world, unit, dropoff) : { x: unit.x, y: unit.y };
+  const near = isAdjacentToWoodTile(world, unit, tileX, tileY);
   cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
   unit.order = {
@@ -2360,7 +2384,7 @@ export function issueHarvestWoodOrder(world: WorldState, unitId: string, tileX: 
     targetY: target.y,
     tileX,
     tileY,
-    dropoffId: dropoff.id,
+    dropoffId: dropoff?.id ?? null,
     dropoffX: dropoffPoint.x,
     dropoffY: dropoffPoint.y,
     gatherSeconds: 0,
@@ -2369,9 +2393,48 @@ export function issueHarvestWoodOrder(world: WorldState, unitId: string, tileX: 
     pathIndex: 0
   };
   if (!near) {
-    enqueueRepathRequest(world, unit.id, [{ x: target.x, y: target.y }]);
+    enqueueRepathRequest(world, unit.id, woodApproachCandidates(world, unit, tileX, tileY));
   }
   return true;
+}
+
+function isAdjacentToWoodTile(world: WorldState, unit: WorldUnit, tileX: number, tileY: number): boolean {
+  const unitTile = worldToTile(world, unit.x, unit.y);
+  const dx = Math.abs(unitTile.x - tileX);
+  const dy = Math.abs(unitTile.y - tileY);
+  if (dx <= 1 && dy <= 1 && (dx + dy) > 0) {
+    return true;
+  }
+  const target = tileToWorldCenter(world, tileX, tileY);
+  return Math.hypot(target.x - unit.x, target.y - unit.y) <= world.tileSize + unit.radius;
+}
+
+/** Passable stand tiles next to a forest tile — never path into the tree itself. */
+function woodApproachCandidates(world: WorldState, unit: WorldUnit, tileX: number, tileY: number): Array<{ x: number; y: number }> {
+  const movement = movementKindForUnit(unit);
+  const candidates: Array<{ x: number; y: number; distance: number }> = [];
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dy === 0) {
+        continue;
+      }
+      const ax = tileX + dx;
+      const ay = tileY + dy;
+      if (ax < 0 || ay < 0 || ax >= world.map.width || ay >= world.map.height) {
+        continue;
+      }
+      if (!isTilePassable(world, ax, ay, movement, unit.id)) {
+        continue;
+      }
+      const point = tileToWorldCenter(world, ax, ay);
+      candidates.push({ ...point, distance: distanceSquared(unit, point) });
+    }
+  }
+  candidates.sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x);
+  if (candidates.length === 0) {
+    return [tileToWorldCenter(world, tileX, tileY)];
+  }
+  return candidates.map(({ x, y }) => ({ x, y }));
 }
 
 export function canIssueQueueHarvestWoodAt(world: WorldState, unit: WorldUnit, tileX: number, tileY: number): boolean {
@@ -2556,22 +2619,33 @@ function issueReturnGoodsToDropoffOrder(world: WorldState, unitId: string, dropo
   return true;
 }
 
-export function issueAttackOrder(world: WorldState, unitId: string, targetId: string): boolean {
+export function issueAttackOrder(
+  world: WorldState,
+  unitId: string,
+  targetId: string,
+  options: { force?: boolean } = {}
+): boolean {
   const unit = findUnit(world, unitId);
   const target = findUnit(world, targetId);
-  if (!unit || !target || !canIssueAttackTarget(world, unit, target)) return false;
+  const force = options.force === true;
+  if (!unit || !target) return false;
+  if (force) {
+    if (!canForceAttackTarget(world, unit, target)) return false;
+  } else if (!canIssueAttackTarget(world, unit, target)) {
+    return false;
+  }
   cancelPathRequestsForUnit(world, unit.id);
   unit.moveQueue = [];
-  if (isInAttackRange(unit, target, world)) {
-    unit.order = { kind: "attack", targetId, targetX: target.x, targetY: target.y, autoReturn: null, path: [], pathIndex: 0 };
+  if (isInAttackRange(unit, target, world, force)) {
+    unit.order = { kind: "attack", targetId, targetX: target.x, targetY: target.y, force, autoReturn: null, path: [], pathIndex: 0 };
     return true;
   }
-  const candidates = sourceAttackTargetCandidates(world, unit, target);
+  const candidates = sourceAttackTargetCandidates(world, unit, target, force);
   if (candidates.length === 0) {
     unit.order = null;
     return false;
   }
-  unit.order = { kind: "attack", targetId, targetX: target.x, targetY: target.y, autoReturn: null, path: [], pathIndex: 0 };
+  unit.order = { kind: "attack", targetId, targetX: target.x, targetY: target.y, force, autoReturn: null, path: [], pathIndex: 0 };
   enqueueAttackPathRequest(world, unit.id, target.id, candidates, null);
   return true;
 }
@@ -2587,6 +2661,12 @@ export function canIssueAttackTarget(world: WorldState, unit: WorldUnit, target:
     && isUnitVisibleToPlayer(world, target, unit.player);
 }
 
+export function canForceAttackTarget(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
+  return unit.id !== target.id
+    && canAttackTarget(unit, target, world, { force: true })
+    && isUnitVisibleToPlayer(world, target, unit.player);
+}
+
 export function canIssueAttackTargetWithPath(world: WorldState, unit: WorldUnit, target: WorldUnit): boolean {
   return canIssueAttackTarget(world, unit, target)
     && (isInAttackRange(unit, target, world) || sourceAttackTargetCandidates(world, unit, target).length > 0);
@@ -2595,6 +2675,15 @@ export function canIssueAttackTargetWithPath(world: WorldState, unit: WorldUnit,
 export function canIssueAttackTargetAt(world: WorldState, unit: WorldUnit, x: number, y: number): boolean {
   const target = findVisibleEnemyNearPointForUnit(world, unit, x, y);
   return Boolean(target && canIssueAttackTarget(world, unit, target));
+}
+
+function findForceAttackTargetAt(world: WorldState, unit: WorldUnit, x: number, y: number): WorldUnit | undefined {
+  return world.units
+    .filter((candidate) => candidate.id !== unit.id
+      && candidate.hitPoints > 0
+      && canForceAttackTarget(world, unit, candidate)
+      && Math.hypot(candidate.x - x, candidate.y - y) <= Math.max(candidate.radius + 12, 24))
+    .sort((a, b) => distanceSquared({ x, y }, a) - distanceSquared({ x, y }, b))[0];
 }
 
 export function issueTrainWorkerOrder(world: WorldState, buildingId: string, unitDefinitions: WargusUnit[]): boolean {
@@ -10041,13 +10130,14 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
     return;
   }
   const order = unit.order;
+  const force = order.force === true;
   const target = findUnit(world, unit.order.targetId);
   if (order.autoReturn) {
     if (!canContinueAutomaticAttackTarget(world, unit, target)) {
       restoreAutomaticAttackReturn(world, unit, order.autoReturn);
       return;
     }
-  } else if (!canContinueAttackingTarget(world, unit, target)) {
+  } else if (!canContinueAttackingTarget(world, unit, target, force)) {
     unit.order = null;
     return;
   }
@@ -10066,7 +10156,7 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
     }
     return;
   }
-  if (isInAttackRange(unit, target, world)) {
+  if (isInAttackRange(unit, target, world, force)) {
     unit.order.path = [];
     unit.order.pathIndex = 0;
     if (unit.attackCooldown <= 0 && canLaunchAttackNow(unit, target)) {
@@ -10082,7 +10172,7 @@ function stepAttackOrder(world: WorldState, unit: WorldUnit, tickSeconds: number
     !hasPendingPathRequest(world, unit.id)
     && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 15) === 0)
   ) {
-    const candidates = sourceAttackTargetCandidates(world, unit, target);
+    const candidates = sourceAttackTargetCandidates(world, unit, target, force);
     if (candidates.length === 0) {
       if (order.autoReturn) {
         restoreAutomaticAttackReturn(world, unit, order.autoReturn);
@@ -10520,14 +10610,22 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
       !hasPendingPathRequest(world, unit.id)
       && (unit.order.path.length === 0 || world.tick % sourceOrderRetryTicks(world, 30) === 0)
     ) {
-      if (unit.order.resource === "wood" && unit.order.tileX !== null && unit.order.tileY !== null && !isReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY)) {
-        const woodTile = resolveReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY);
-        if (!woodTile || !issueHarvestWoodOrder(world, unit.id, woodTile.x, woodTile.y)) {
-          unit.order = null;
+      if (unit.order.resource === "wood" && unit.order.tileX !== null && unit.order.tileY !== null) {
+        if (!isSourceHarvestableWoodTile(world, world.tiles[unit.order.tileY * world.map.width + unit.order.tileX] ?? 0)) {
+          const woodTile = resolveReachableWoodTileForUnit(world, unit, unit.order.tileX, unit.order.tileY);
+          if (!woodTile || !issueHarvestWoodOrder(world, unit.id, woodTile.x, woodTile.y)) {
+            unit.order = null;
+          }
+          return;
         }
+        enqueueRepathRequest(world, unit.id, woodApproachCandidates(world, unit, unit.order.tileX, unit.order.tileY));
         return;
       }
-      enqueueRepathRequest(world, unit.id, [{ x: targetX, y: targetY }]);
+      if (target && (unit.order.resource === "gold" || unit.order.resource === "oil")) {
+        enqueueRepathRequest(world, unit.id, resourceApproachCandidates(world, unit, target));
+      } else {
+        enqueueRepathRequest(world, unit.id, [{ x: targetX, y: targetY }]);
+      }
     }
     if (unit.order.path.length > 0) {
       stepMoveOrder(world, unit, tickSeconds);
@@ -10566,9 +10664,15 @@ function stepHarvestOrder(world: WorldState, unit: WorldUnit, tickSeconds: numbe
     if (unit.order.resource === "wood") {
       clearDepletedWoodTile(world, unit.order.tileX, unit.order.tileY);
     }
-    const dropoff = sourceResourceOrderDropoff(world, unit);
-    const dropoffPoint = dropoff ? resourceDropoffTargetPoint(world, unit, dropoff) : { x: unit.order.dropoffX, y: unit.order.dropoffY };
+    const dropoff = sourceResourceOrderDropoff(world, unit) ?? findNearestDropoff(world, unit, unit.order.resource);
+    if (!dropoff) {
+      // Keep cargo; idle until the player has a deposit or re-issues return.
+      unit.order = null;
+      return;
+    }
+    const dropoffPoint = resourceDropoffTargetPoint(world, unit, dropoff);
     unit.order.phase = "to-dropoff";
+    unit.order.dropoffId = dropoff.id;
     unit.order.dropoffX = dropoffPoint.x;
     unit.order.dropoffY = dropoffPoint.y;
     unit.order.targetX = dropoffPoint.x;
@@ -11530,28 +11634,28 @@ interface AttackTargetPathResult {
   path: Array<{ x: number; y: number }>;
 }
 
-function sourceAttackTargetCandidates(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
+function sourceAttackTargetCandidates(world: WorldState, unit: WorldUnit, target: WorldUnit, force = false): Array<{ x: number; y: number }> {
   const bounds = unitFootprintBounds(world, target);
   const rangeTiles = Math.max(1, Math.ceil((unit.attackRange + target.radius) / world.tileSize) + 1);
   const candidates: Array<{ x: number; y: number; distance: number }> = [];
   for (let tileY = Math.max(0, bounds.minTileY - rangeTiles); tileY <= Math.min(world.map.height - 1, bounds.maxTileY + rangeTiles); tileY += 1) {
     for (let tileX = Math.max(0, bounds.minTileX - rangeTiles); tileX <= Math.min(world.map.width - 1, bounds.maxTileX + rangeTiles); tileX += 1) {
       const point = tileToWorldCenter(world, tileX, tileY);
-      if (isAttackTargetInRangeFromPosition(world, unit, target, point.x, point.y)) candidates.push({ ...point, distance: distanceSquared(unit, point) });
+      if (isAttackTargetInRangeFromPosition(world, unit, target, point.x, point.y, force)) candidates.push({ ...point, distance: distanceSquared(unit, point) });
     }
   }
   candidates.sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x);
   return candidates.map(({ x, y }) => ({ x, y }));
 }
 
-function sourceAttackTargetPathResult(world: WorldState, unit: WorldUnit, target: WorldUnit): AttackTargetPathResult {
-  if (isInAttackRange(unit, target, world)) return { status: "ready", path: [] };
-  const candidates = sourceAttackTargetCandidates(world, unit, target);
+function sourceAttackTargetPathResult(world: WorldState, unit: WorldUnit, target: WorldUnit, force = false): AttackTargetPathResult {
+  if (isInAttackRange(unit, target, world, force)) return { status: "ready", path: [] };
+  const candidates = sourceAttackTargetCandidates(world, unit, target, force);
   let temporarilyBlocked: AttackTargetPathResult | null = null;
   for (const candidate of candidates) {
     const result = findPathResult(world, unit, candidate.x, candidate.y);
     const endpoint = result.path.at(-1);
-    if (result.status === "unreachable" || !endpoint || !isAttackTargetInRangeFromPosition(world, unit, target, endpoint.x, endpoint.y)) {
+    if (result.status === "unreachable" || !endpoint || !isAttackTargetInRangeFromPosition(world, unit, target, endpoint.x, endpoint.y, force)) {
       continue;
     }
     if (result.status === "ready") {
@@ -11562,15 +11666,15 @@ function sourceAttackTargetPathResult(world: WorldState, unit: WorldUnit, target
   return temporarilyBlocked ?? { status: "unreachable", path: [] };
 }
 
-function sourceAttackTargetPath(world: WorldState, unit: WorldUnit, target: WorldUnit): Array<{ x: number; y: number }> {
-  return sourceAttackTargetPathResult(world, unit, target).path;
+function sourceAttackTargetPath(world: WorldState, unit: WorldUnit, target: WorldUnit, force = false): Array<{ x: number; y: number }> {
+  return sourceAttackTargetPathResult(world, unit, target, force).path;
 }
 
-function isAttackTargetInRangeFromPosition(world: WorldState, unit: WorldUnit, target: WorldUnit, x: number, y: number): boolean {
+function isAttackTargetInRangeFromPosition(world: WorldState, unit: WorldUnit, target: WorldUnit, x: number, y: number, force = false): boolean {
   const distance = isBuildingLike(target)
     ? distanceToUnitFootprint(world, target, x, y)
     : Math.hypot(target.x - x, target.y - y);
-  return canAttackTarget(unit, target, world)
+  return canAttackTarget(unit, target, world, { force })
     && distance <= unit.attackRange + (isBuildingLike(target) ? 0 : target.radius)
     && distance >= minimumAttackDistanceForTarget(unit, target)
     && isSourceInsideAttackLineClearFromPoint(world, x, y, target);
@@ -11786,13 +11890,16 @@ function isReachableWoodTileForUnit(world: WorldState, unit: WorldUnit, tileX: n
   if (!isSourceHarvestableWoodTile(world, world.tiles[tileY * world.map.width + tileX] ?? 0)) {
     return false;
   }
-  const target = tileToWorldCenter(world, tileX, tileY);
-  if (Math.hypot(target.x - unit.x, target.y - unit.y) <= world.tileSize + unit.radius) {
+  if (isAdjacentToWoodTile(world, unit, tileX, tileY)) {
     return true;
   }
-  const path = findPath(world, unit, target.x, target.y);
-  const endpoint = path[path.length - 1];
-  return Boolean(endpoint && Math.hypot(target.x - endpoint.x, target.y - endpoint.y) <= world.tileSize + unit.radius);
+  // Reachable if any adjacent stand tile has a path.
+  for (const approach of woodApproachCandidates(world, unit, tileX, tileY)) {
+    if (findPath(world, unit, approach.x, approach.y).length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function findNearestWoodTileNear(world: WorldState, centerX: number, centerY: number, maxRadius: number): { x: number; y: number } | null {
@@ -11836,13 +11943,20 @@ export function canRepairTarget(worker: WorldUnit, target: WorldUnit, world?: Wo
   const canRepairPlayer = world
     ? worker.player === target.player || arePlayersAllied(world, worker.player, target.player)
     : worker.player === target.player;
-  return canRepairUnit(worker)
-    && canRepairPlayer
-    && target.id !== worker.id
-    && target.hitPoints > 0
-    && target.hitPoints < target.maxHitPoints
-    && target.repairHp > 0
-    && (world ? isUnitVisibleToPlayer(world, target, worker.player) : true);
+  if (
+    !canRepairUnit(worker)
+    || !canRepairPlayer
+    || target.id === worker.id
+    || target.hitPoints <= 0
+    || (world && !isUnitVisibleToPlayer(world, target, worker.player))
+  ) {
+    return false;
+  }
+  // Incomplete foundations always accept extra builders (HP may already be "full").
+  if (target.construction && !target.construction.builderInside) {
+    return true;
+  }
+  return target.hitPoints < target.maxHitPoints && target.repairHp > 0;
 }
 
 function isBuildingLike(unit: WorldUnit): boolean {
@@ -12035,6 +12149,9 @@ function isInResourceRange(world: WorldState, unit: WorldUnit): boolean {
   if (unit.order.targetId) {
     const target = findUnit(world, unit.order.targetId);
     return target ? isInResourceSourceRange(world, unit, target) : false;
+  }
+  if (unit.order.resource === "wood" && unit.order.tileX !== null && unit.order.tileY !== null) {
+    return isAdjacentToWoodTile(world, unit, unit.order.tileX, unit.order.tileY);
   }
   return Math.hypot(unit.order.targetX - unit.x, unit.order.targetY - unit.y) <= world.tileSize + unit.radius;
 }
@@ -12303,33 +12420,40 @@ function isForestRegrowthTileOccupied(world: WorldState, tileX: number, tileY: n
   });
 }
 
-function isInAttackRange(unit: WorldUnit, target: WorldUnit, world?: WorldState): boolean {
+function isInAttackRange(unit: WorldUnit, target: WorldUnit, world?: WorldState, force = false): boolean {
   const distance = world && isBuildingLike(target)
     ? distanceToUnitFootprint(world, target, unit.x, unit.y)
     : Math.hypot(target.x - unit.x, target.y - unit.y);
-  return canAttackTarget(unit, target, world)
+  return canAttackTarget(unit, target, world, { force })
     && distance <= unit.attackRange + (world && isBuildingLike(target) ? 0 : target.radius)
     && distance >= minimumAttackDistanceForTarget(unit, target)
     && (!world || isSourceInsideAttackLineClear(world, unit, target));
 }
 
-function canContinueAttackingTarget(world: WorldState, attacker: WorldUnit, target: WorldUnit | undefined): target is WorldUnit {
-  return Boolean(target && canAttackTarget(attacker, target, world) && isUnitVisibleToPlayer(world, target, attacker.player));
+function canContinueAttackingTarget(world: WorldState, attacker: WorldUnit, target: WorldUnit | undefined, force = false): target is WorldUnit {
+  return Boolean(target && canAttackTarget(attacker, target, world, { force }) && isUnitVisibleToPlayer(world, target, attacker.player));
 }
 
-export function canAttackTarget(attacker: WorldUnit, target: WorldUnit, world?: WorldState): boolean {
+export function canAttackTarget(
+  attacker: WorldUnit,
+  target: WorldUnit,
+  world?: WorldState,
+  options: { force?: boolean } = {}
+): boolean {
+  const force = options.force === true;
   const hostile = world ? arePlayersEnemies(world, attacker.player, target.player) : attacker.player !== target.player && target.player !== 15;
   // Dead-vision revealers and other invisible utilities are not combat targets; auto-chase
   // must not lock onto them after a kill or units never return (Plan 013 M05).
   if (
     attacker.hitPoints <= 0
+    || attacker.id === target.id
     || isUnitHiddenInConstruction(attacker)
     || attacker.construction
     || !attacker.canAttack
     || target.hitPoints <= 0
     || isUnitHiddenInConstruction(target)
     || isInvisibleUtilityUnit(target)
-    || !hostile
+    || (!force && !hostile)
   ) {
     return false;
   }
@@ -15456,31 +15580,13 @@ function hasResearchPrerequisites(world: WorldState, playerId: number, upgradeId
   if (isShipUpgradeId(world, upgradeId) && !hasCompletedFoundry(world, playerId)) {
     return false;
   }
-  const inferredRequirements = [
-    ...sourceConversionResearchPrerequisites(world, upgradeId),
-    ...sourceModifierResearchPrerequisites(world, upgradeId)
-  ];
+  // Tier chaining (sword1→sword2, etc.) comes from the table above and from
+  // sourceModifierResearchPrerequisites. Do NOT infer conversion research
+  // (paladin/ranger) from appliesTo — WC2 swords/arrows apply to those unit
+  // forms when they exist, but researching damage upgrades never requires them.
+  const inferredRequirements = sourceModifierResearchPrerequisites(world, upgradeId);
   const requiredUpgradeIds = new Set([...(requirements[upgradeId] ?? []), ...inferredRequirements]);
   return [...requiredUpgradeIds].every((requiredUpgradeId) => hasResearched(world, playerId, requiredUpgradeId));
-}
-
-function sourceConversionResearchPrerequisites(world: WorldState, upgradeId: string): string[] {
-  const upgrade = worldUpgrade(world, upgradeId);
-  if (!upgrade || (upgrade.conversions ?? []).length > 0) {
-    return [];
-  }
-  const required = new Set<string>();
-  for (const appliedTypeId of upgrade.appliesTo) {
-    for (const conversionUpgrade of world.upgradeDefinitions) {
-      if (conversionUpgrade.id === upgradeId) {
-        continue;
-      }
-      if ((conversionUpgrade.conversions ?? []).some((conversion) => conversion.toTypeId === appliedTypeId)) {
-        required.add(conversionUpgrade.id);
-      }
-    }
-  }
-  return [...required];
 }
 
 function sourceModifierResearchPrerequisites(world: WorldState, upgradeId: string): string[] {

@@ -12,7 +12,7 @@ import { exportSavedGame, getAutosaveSummary, getSavedGameSummary, importSavedGa
 import { createInitialWorld, createWorldUnit, getPlayerSupply, isInvisibleUtilityUnit, isUnitHiddenInConstruction, isUnitInsideResourceSource, isUnitVisibleToPlayer, unitFootprintHalfSize, updateVisibility, type WorldState, type WorldUnit } from "./simulation/world";
 import { canAttackTarget, canIssueTargetedSpellAt, canPlaceBuildingAtPoint, canStartBuildingPlacementByType, canTrainUnitAt, clampSelectionToSourceLimit, createPlan014AiKnowledgeFixtureWorld, findNextIdleWorker, findSelectableUnitAt, isSelectionStillValid, issueAttackOrder, issueBuildAtOrder, issueCancelConstructionOrder, issueCancelProductionOrder, issueCancelResearchOrder, issueGroupMoveOrder, issueGroupQueueAttackMoveOrder, issueGroupTargetedSpellOrder, issueHarvestOrder, issueHarvestWoodOrder, issueMoveOrder, issuePendingWorldCommandAt, issueRepairOrder, issueResearchOrder, issueSourceRightButtonOrder, issueStopOrder, issueTrainUnitOrder, issueUnloadCargoUnitOrder, nextGameSpeed, previousGameSpeed, pruneControlGroups, replaceControlGroups, runPlan013CombatScenario, runPlan014AiKnowledgeFixture, runPlan014AiScriptFixture, selectVisibleUnitsOfType, shouldKeepPendingWorldCommandAfterIssue, simulateWorld, sourceActionButtonsForHud, sourceAiRuntimeEvidence, sourceBuildButtonsForHud, sourceBuildEligibilityDebug, sourceBuildPageButtonForHud, sourceButtonHasExecutableContext, sourceButtonVisibleForHud, sourceDefaultGameSpeed, sourceDoubleClickDelayMs, sourceGameSpeedFromMultiplier, sourceGameSpeedMultiplier, sourceGroupButtonScopeForSelection, sourceHudCommandForAction, sourceInstantSpellCommandForSpellId, sourceResearchButtonsForHud, sourceRootBuildButtonsForHud, sourceRuntimeGameSpeedMultiplier, sourceSpellButtonsForHud, sourceSpellCommandForSpellId, sourceTrainButtonsForHud, sourceUpgradeButtonsForHud, type PendingWorldCommand } from "./simulation/orders";
 import { SIMULATION_MAX_BACKLOG_SECONDS, type SimulationTurnBudget } from "./simulation/orders";
-import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
+import { beginCameraDrag, centerCameraOnTile as centerCameraOnTileBase, centerCameraOnWorldPoint as centerCameraOnWorldPointBase, clampCameraToWorld, createCamera, createCameraInput, currentPlayableWorldBounds as currentPlayableWorldBoundsBase, dragCameraByPointer, endCameraDrag, latchCameraEdgeScrollOnPointerLeave, playableCameraViewport as playableCameraViewportBase, resetCameraEdgeScroll, resetCameraInput, updateCamera, updateCameraEdgeScroll, zoomCameraAtScreenPoint as zoomCameraAtScreenPointBase, type CameraInput, type CameraViewport } from "./view/camera";
 import { disposeRetainedWorldRenderCaches, renderWorld, visualWorldPointForUnit } from "./view/renderWorld";
 import { availableCommands, destroyMinimapRenderCache, latestMinimapRenderCacheDebug, latestModernHudLayoutDebug, renderHud, type HudCommand, type HudCommandId, type HudMapCommandId, type HudMenuOverlayId, type MinimapRenderCacheDebug, type ModernHudLayoutDebug } from "./view/renderHud";
 import type { SourceDiplomacyDraft } from "./view/sourceUiHelpers";
@@ -35,7 +35,7 @@ import { createAudioCueState, ensureSourceMusicStarted, maybeStartMatchMusicCue,
 import { renderAlertPingOverlays, renderBuildPlacementOverlay, renderPendingCommandOverlay, renderSelectionDragOverlay, renderSourceMapNamePopup, type SourceMapNamePopupState } from "./view/renderOverlays";
 import { addHudMessage as addHudMessageToState, clearHudMessageState, createHudMessageState, pruneHudMessageState } from "./view/hudMessages";
 import { createCampaignProgressState, loadCampaignProgress, recordCampaignProgress, resetCampaignProgressSession } from "./wargus/campaignProgress";
-import { sourceLeaveStopScrollingEnabled, sourceMouseDragScrollEnabled, sourcePauseOnLeaveEnabled } from "./view/sourceLifecycle";
+import { sourceMouseDragScrollEnabled, sourcePauseOnLeaveEnabled } from "./view/sourceLifecycle";
 import { clearSelectionClickState, completeSelectionDrag, createSelectionClickState, updateSelectionDrag, type SelectionDragState } from "./view/selectionInput";
 import { createUnitAtlasLazyLoadState, ensureMissingUnitAtlases, resetUnitAtlasLazyLoadState } from "./view/unitAtlasLazyLoad";
 import { createSaveCommandState, saveCurrentAutosave as saveAutosaveForContext, type SaveCommandContext } from "./view/saveCommands";
@@ -241,6 +241,9 @@ const PLAYTEST_TELEMETRY_MAX_ENTRIES = 240;
 const PLAYTEST_TELEMETRY_SAMPLE_MS = 1000;
 const PLAYTEST_TELEMETRY_JANK_SAMPLE_MS = 2000;
 const PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS = 30000;
+const PLAYTEST_TELEMETRY_SHIP_PATH = "/__wargus/playtest-telemetry";
+const PLAYTEST_TELEMETRY_SHIP_MS = 3000;
+const PLAYTEST_TELEMETRY_SHIP_BATCH = 20;
 const PLAYTEST_TELEMETRY_JANK_THRESHOLDS_MS = {
   frame: 50,
   update: 20,
@@ -281,6 +284,7 @@ const renderPerformance = {
   hudRenderedLastFrame: false
 };
 type PlaytestTelemetryEntry = {
+  seq: number;
   kind: "sample" | "jank";
   atMs: number;
   wallTimeIso: string;
@@ -315,12 +319,17 @@ type PlaytestTelemetryEntry = {
   };
 };
 let playtestTelemetryLog: PlaytestTelemetryEntry[] = [];
+let playtestTelemetryUnsent: PlaytestTelemetryEntry[] = [];
 let playtestTelemetryLoaded = false;
+let playtestTelemetrySeq = 0;
+let playtestSessionId = createPlaytestSessionId();
 let lastPlaytestTelemetrySampleMs = 0;
 let lastPlaytestTelemetryFlushMs = 0;
+let lastPlaytestTelemetryShipMs = 0;
 let lastPlaytestTelemetryJankMs = 0;
 let lastPlaytestTelemetryJankSignature = "";
 let playtestTelemetryPersistPending = false;
+let playtestTelemetryShipInFlight = false;
 let playtestTelemetryFogCountCacheWorld: WorldState | null = null;
 let playtestTelemetryFogCountCacheTick = -1;
 let playtestTelemetryFogCountCache: PlaytestTelemetryEntry["fog"] | null = null;
@@ -481,6 +490,9 @@ type BrowserSmokeState = {
     lastKind: PlaytestTelemetryEntry["kind"] | null;
     lastJankReasons: string[];
     exportHookInstalled: boolean;
+    sessionId: string | null;
+    serverCaptureEnabled: boolean;
+    unsentCount: number;
   };
   firstSelectedMana: number | null;
   firstSelectedProductionQueueLength: number | null;
@@ -598,6 +610,8 @@ declare global {
 const runtimeSearchParams = new URLSearchParams(window.location.search);
 const browserSmokeStateEnabled = runtimeSearchParams.has("smoke");
 const performanceSmokeEnabled = runtimeSearchParams.get("smoke") === "1";
+// Automated smoke/perf verifiers should not write playtest session files.
+const playtestServerCaptureEnabled = !runtimeSearchParams.has("smoke");
 if (performanceSmokeEnabled) setWorldOccupancyParityMode("sampled");
 installPlaytestTelemetryHooks();
 installRuntimePerformanceHooks();
@@ -1039,9 +1053,8 @@ function browserSmokeResearchRequirements(upgradeId: string, seen: Set<string> =
   for (const requiredUpgradeId of BROWSER_SMOKE_RESEARCH_PREREQUISITES[upgradeId] ?? []) {
     addUpgrade(requiredUpgradeId);
   }
-  for (const requiredUpgradeId of browserSmokeSourceConversionResearchPrerequisites(upgradeId)) {
-    addUpgrade(requiredUpgradeId);
-  }
+  // Do not pull conversion research (paladin/ranger) from appliesTo lists —
+  // matches gameplay hasResearchPrerequisites (WC2 blacksmith/lumber mill).
   for (const requiredUpgradeId of browserSmokeSourceModifierResearchPrerequisites(upgradeId)) {
     addUpgrade(requiredUpgradeId);
   }
@@ -1055,25 +1068,6 @@ function browserSmokeResearchRequirements(upgradeId: string, seen: Set<string> =
     }
   }
   return { unitTypeIds: [...unitTypeIds], upgradeIds: [...upgradeIds] };
-}
-
-function browserSmokeSourceConversionResearchPrerequisites(upgradeId: string): string[] {
-  if (!world) {
-    return [];
-  }
-  const upgrade = world.upgradeDefinitions.find((candidate) => candidate.id === upgradeId);
-  if (!upgrade || (upgrade.conversions ?? []).length > 0) {
-    return [];
-  }
-  const required = new Set<string>();
-  for (const appliedTypeId of upgrade.appliesTo) {
-    for (const conversionUpgrade of world.upgradeDefinitions) {
-      if (conversionUpgrade.id !== upgradeId && (conversionUpgrade.conversions ?? []).some((conversion) => conversion.toTypeId === appliedTypeId)) {
-        required.add(conversionUpgrade.id);
-      }
-    }
-  }
-  return [...required];
 }
 
 function browserSmokeSourceModifierResearchPrerequisites(upgradeId: string): string[] {
@@ -2844,12 +2838,13 @@ if (browserSmokeStateEnabled) {
       };
     };
     const formationSettlement = () => {
+      // Product rule: group right-click uses one common destination tile (not formation fan-out).
       const sourceTable = [
-        { id: "__smoke-fixture-m04-west", x: 3, y: 3, assignedX: 9, assignedY: 7 },
+        { id: "__smoke-fixture-m04-west", x: 3, y: 3, assignedX: 10, assignedY: 7 },
         { id: "__smoke-fixture-m04-center", x: 4, y: 3, assignedX: 10, assignedY: 7 },
-        { id: "__smoke-fixture-m04-east", x: 5, y: 3, assignedX: 11, assignedY: 7 },
-        { id: "__smoke-fixture-m04-north", x: 4, y: 2, assignedX: 10, assignedY: 6 },
-        { id: "__smoke-fixture-m04-south", x: 4, y: 4, assignedX: 10, assignedY: 8 }
+        { id: "__smoke-fixture-m04-east", x: 5, y: 3, assignedX: 10, assignedY: 7 },
+        { id: "__smoke-fixture-m04-north", x: 4, y: 2, assignedX: 10, assignedY: 7 },
+        { id: "__smoke-fixture-m04-south", x: 4, y: 4, assignedX: 10, assignedY: 7 }
       ];
       const prepareWorld = () => {
         const fixtureWorld = createFixtureWorld(16, 12, [], 0);
@@ -2857,7 +2852,7 @@ if (browserSmokeStateEnabled) {
         fixtureWorld.elapsed = 0;
         fixtureWorld.tick = 0;
         fixtureWorld.matchState.status = "playing";
-        fixtureWorld.engineSettings.formationMovementDefault = true;
+        fixtureWorld.engineSettings.formationMovementDefault = false;
         fixtureWorld.engineSettings.rightButtonAction = "move";
         const units = sourceTable.map((entry) => unitAt(fixtureWorld, entry.id, entry.x, entry.y));
         fixtureWorld.units = [...units, inertOpponentAt(fixtureWorld, "__smoke-fixture-m04-opponent", 15, 11)];
@@ -2915,7 +2910,8 @@ if (browserSmokeStateEnabled) {
           if (!unit.order && !completedIds.has(unit.id)) {
             const expected = expectedById.get(unit.id);
             const tile = unitTile(fixtureWorld, unit);
-            if (expected && tile.x === expected.x && tile.y === expected.y) {
+            // Shared destination: settle near click (units cannot stack on one cell).
+            if (expected && Math.max(Math.abs(tile.x - expected.x), Math.abs(tile.y - expected.y)) <= 2) {
               completedIds.add(unit.id);
               completionMilestones.push({ id: unit.id, tick: fixtureWorld.tick });
             } else {
@@ -4066,13 +4062,25 @@ window.addEventListener("pointermove", (event) => {
   }
 });
 
-window.addEventListener("pointerleave", () => {
+window.addEventListener("pointerleave", (event) => {
+  // Browser cannot park the cursor on the OS edge like desktop WC2. When the
+  // pointer leaves the window while near/pushing an edge, keep panning that way.
+  const last = pointerScreenPosition;
+  const local = last ? canvasLocalPoint(last.x, last.y) : canvasLocalPoint(event.clientX, event.clientY);
+  latchCameraEdgeScrollOnPointerLeave(
+    cameraInput,
+    local.x,
+    local.y,
+    { width: app.screen.width, height: app.screen.height },
+    sourceScrollMargins(world),
+    sourceMouseScrollingEnabled(world)
+  );
   pointerScreenPosition = null;
-  applySourceLeaveStopScrolling();
 });
 
 window.addEventListener("pointercancel", () => {
   pointerScreenPosition = null;
+  resetCameraEdgeScroll(cameraInput);
   resetTransientInput();
 });
 
@@ -4081,6 +4089,7 @@ window.addEventListener("resize", () => {
 });
 
 window.addEventListener("blur", () => {
+  resetCameraEdgeScroll(cameraInput);
   resetTransientInput();
   applyPauseOnLeave();
 });
@@ -4525,6 +4534,12 @@ function recordSmokeTiming(smokeMs: number): void {
   runtimePerformanceCollector.recordSmoke(smokeMs);
 }
 
+function createPlaytestSessionId(): string {
+  const iso = new Date().toISOString().replace(/[:.]/g, "-");
+  const perf = Math.round(performance.now() * 1000);
+  return `s-${iso}-${perf}`;
+}
+
 function installPlaytestTelemetryHooks(): void {
   window.__WARGUS_TS_PLAYTEST_LOG__ = () => {
     ensurePlaytestTelemetryLoaded();
@@ -4537,15 +4552,24 @@ function installPlaytestTelemetryHooks(): void {
   window.__WARGUS_TS_CLEAR_PLAYTEST_LOG__ = () => {
     ensurePlaytestTelemetryLoaded();
     const cleared = playtestTelemetryLog.length;
+    shipPlaytestTelemetry({ force: true, closed: true });
     playtestTelemetryLog = [];
+    playtestTelemetryUnsent = [];
+    playtestTelemetrySeq = 0;
+    playtestSessionId = createPlaytestSessionId();
     lastPlaytestTelemetryJankSignature = "";
     persistPlaytestTelemetry(true);
     return cleared;
   };
-  window.addEventListener("pagehide", () => persistPlaytestTelemetry(true));
+  window.addEventListener("pagehide", () => {
+    persistPlaytestTelemetry(true);
+    shipPlaytestTelemetry({ force: true, closed: true });
+  });
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
+      // Flush for tab switches; only pagehide marks the session closed.
       persistPlaytestTelemetry(true);
+      shipPlaytestTelemetry({ force: true });
     }
   });
 }
@@ -4558,9 +4582,28 @@ function ensurePlaytestTelemetryLoaded(): void {
   try {
     const raw = window.localStorage.getItem(PLAYTEST_TELEMETRY_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    playtestTelemetryLog = Array.isArray(parsed) ? parsed.slice(-PLAYTEST_TELEMETRY_MAX_ENTRIES) as PlaytestTelemetryEntry[] : [];
+    const restored = Array.isArray(parsed) ? parsed.slice(-PLAYTEST_TELEMETRY_MAX_ENTRIES) as Array<Partial<PlaytestTelemetryEntry>> : [];
+    playtestTelemetryLog = [];
+    playtestTelemetryUnsent = [];
+    playtestTelemetrySeq = 0;
+    for (const entry of restored) {
+      playtestTelemetrySeq += 1;
+      const normalized: PlaytestTelemetryEntry = {
+        ...(entry as PlaytestTelemetryEntry),
+        seq: typeof entry.seq === "number" ? entry.seq : playtestTelemetrySeq
+      };
+      if (typeof entry.seq === "number") {
+        playtestTelemetrySeq = Math.max(playtestTelemetrySeq, entry.seq);
+      }
+      playtestTelemetryLog.push(normalized);
+    }
+    // Only live samples after load are shipped; prior page sessions already
+    // have their own files under playtest-logs/sessions/.
+    playtestTelemetryUnsent = [];
   } catch {
     playtestTelemetryLog = [];
+    playtestTelemetryUnsent = [];
+    playtestTelemetrySeq = 0;
   }
 }
 
@@ -4582,11 +4625,16 @@ function recordPlaytestTelemetry(now: number): void {
     lastPlaytestTelemetryJankMs = now;
     lastPlaytestTelemetryJankSignature = jankSignature;
   }
-  playtestTelemetryLog.push(createPlaytestTelemetryEntry(now, shouldRecordJank ? "jank" : "sample", jankReasons));
+  const entry = createPlaytestTelemetryEntry(now, shouldRecordJank ? "jank" : "sample", jankReasons);
+  playtestTelemetryLog.push(entry);
+  playtestTelemetryUnsent.push(entry);
   if (playtestTelemetryLog.length > PLAYTEST_TELEMETRY_MAX_ENTRIES) {
     playtestTelemetryLog = playtestTelemetryLog.slice(-PLAYTEST_TELEMETRY_MAX_ENTRIES);
   }
   persistPlaytestTelemetry(now - lastPlaytestTelemetryFlushMs >= PLAYTEST_TELEMETRY_STORAGE_FLUSH_MS);
+  shipPlaytestTelemetry({
+    force: playtestTelemetryUnsent.length >= PLAYTEST_TELEMETRY_SHIP_BATCH
+  });
 }
 
 function playtestTelemetryJankReasons(): string[] {
@@ -4611,7 +4659,9 @@ function createPlaytestTelemetryEntry(now: number, kind: PlaytestTelemetryEntry[
   const memory = (performance as Performance & {
     memory?: { usedJSHeapSize?: number; totalJSHeapSize?: number; jsHeapSizeLimit?: number };
   }).memory;
+  playtestTelemetrySeq += 1;
   return {
+    seq: playtestTelemetrySeq,
     kind,
     atMs: Math.round(now),
     wallTimeIso: new Date().toISOString(),
@@ -4691,6 +4741,78 @@ function persistPlaytestTelemetry(force = false): void {
   }
   playtestTelemetryPersistPending = true;
   window.setTimeout(write, 0);
+}
+
+function shipPlaytestTelemetry(options: { force?: boolean; closed?: boolean } = {}): void {
+  if (!playtestServerCaptureEnabled || typeof fetch !== "function") {
+    return;
+  }
+  ensurePlaytestTelemetryLoaded();
+  const now = performance.now();
+  const force = options.force === true || options.closed === true;
+  if (!force && now - lastPlaytestTelemetryShipMs < PLAYTEST_TELEMETRY_SHIP_MS) {
+    return;
+  }
+  if (playtestTelemetryShipInFlight && !force) {
+    return;
+  }
+  if (playtestTelemetryUnsent.length === 0 && !options.closed) {
+    if (force) {
+      lastPlaytestTelemetryShipMs = now;
+    }
+    return;
+  }
+
+  const batch = playtestTelemetryUnsent.slice();
+  const payload = JSON.stringify({
+    sessionId: playtestSessionId,
+    entries: batch,
+    closed: options.closed === true,
+    client: {
+      href: window.location.href,
+      userAgent: navigator.userAgent
+    }
+  });
+  const maxSeq = batch.reduce((max, entry) => Math.max(max, entry.seq), 0);
+
+  const markShipped = (): void => {
+    if (maxSeq > 0) {
+      playtestTelemetryUnsent = playtestTelemetryUnsent.filter((entry) => entry.seq > maxSeq);
+    }
+    lastPlaytestTelemetryShipMs = performance.now();
+    playtestTelemetryShipInFlight = false;
+  };
+
+  if (options.closed && typeof navigator.sendBeacon === "function") {
+    try {
+      const queued = navigator.sendBeacon(
+        PLAYTEST_TELEMETRY_SHIP_PATH,
+        new Blob([payload], { type: "application/json" })
+      );
+      if (queued) {
+        markShipped();
+      }
+    } catch {
+      // Telemetry should never interrupt play.
+    }
+    return;
+  }
+
+  playtestTelemetryShipInFlight = true;
+  void fetch(PLAYTEST_TELEMETRY_SHIP_PATH, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+    keepalive: force
+  }).then((response) => {
+    if (response.ok) {
+      markShipped();
+      return;
+    }
+    playtestTelemetryShipInFlight = false;
+  }).catch(() => {
+    playtestTelemetryShipInFlight = false;
+  });
 }
 
 function fixedDemoCameraScrolling(): boolean {
@@ -5019,8 +5141,12 @@ function publishBrowserSmokeState(force = false): void {
       entryCount: playtestTelemetryLog.length,
       lastKind: lastTelemetryEntry?.kind ?? null,
       lastJankReasons: lastTelemetryEntry?.jankReasons ?? [],
-      exportHookInstalled: typeof window.__WARGUS_TS_EXPORT_PLAYTEST_LOG__ === "function"
+      exportHookInstalled: typeof window.__WARGUS_TS_EXPORT_PLAYTEST_LOG__ === "function",
+      sessionId: playtestServerCaptureEnabled ? playtestSessionId : null,
+      serverCaptureEnabled: playtestServerCaptureEnabled,
+      unsentCount: playtestTelemetryUnsent.length
     },
+
     firstSelectedMana: firstSelectedUnit?.mana ?? null,
     firstSelectedProductionQueueLength: firstSelectedUnit?.productionQueue.length ?? null,
     firstSelectedProductionQueueRemainingSeconds: firstSelectedUnit?.productionQueue[0]?.remainingSeconds ?? null,
@@ -5635,8 +5761,7 @@ function syncResponsiveViewport(): void {
   if (viewportPoint) {
     activateSourceViewport(viewportPoint.index);
   }
-  const point = sourceMapAreaLocalScreenPoint(pointerScreenPosition.x, pointerScreenPosition.y);
-  updateCameraEdgeScroll(cameraInput, point.x, point.y, playableCameraViewport(), sourceScrollMargins(world), sourceMouseScrollingEnabled(world));
+  updateEdgeScroll(pointerScreenPosition.x, pointerScreenPosition.y);
 }
 
 function worldPointForScreenPosition(screenX: number, screenY: number): { x: number; y: number } | null {
@@ -5707,12 +5832,28 @@ function playPlacementErrorSound(position: Pick<WorldUnit, "x"> | null = pointer
 }
 
 function updateEdgeScroll(clientX: number, clientY: number, buttons = 0, controlPressed = false): void {
-  if (!sourceScreenPointIsInPlayableViewport(clientX, clientY)) {
-    resetCameraEdgeScroll(cameraInput);
-    return;
-  }
-  const point = sourceMapAreaLocalScreenPoint(clientX, clientY);
-  updateCameraEdgeScroll(cameraInput, point.x, point.y, playableCameraViewport(), sourceScrollMargins(world), sourceMouseScrollingEnabled(world), sourceMouseEdgeScrollScale(world, buttons, controlPressed));
+  // Use the full game canvas (window) for edge bands — not only the inset map
+  // area — so moving to the browser chrome edge still counts as WC2-style push.
+  const local = canvasLocalPoint(clientX, clientY);
+  updateCameraEdgeScroll(
+    cameraInput,
+    local.x,
+    local.y,
+    { width: app.screen.width, height: app.screen.height },
+    sourceScrollMargins(world),
+    sourceMouseScrollingEnabled(world),
+    sourceMouseEdgeScrollScale(world, buttons, controlPressed)
+  );
+}
+
+function canvasLocalPoint(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = app.canvas.getBoundingClientRect();
+  const scaleX = rect.width > 0 ? app.screen.width / rect.width : 1;
+  const scaleY = rect.height > 0 ? app.screen.height / rect.height : 1;
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
 }
 
 function sourceScreenPointIsInPlayableViewport(screenX: number, screenY: number): boolean {
@@ -5731,13 +5872,6 @@ function sourceMapAreaLocalScreenPoint(screenX: number, screenY: number): { x: n
     x: screenX - mapArea.x,
     y: screenY - mapArea.y
   };
-}
-
-function applySourceLeaveStopScrolling(): void {
-  if (!sourceLeaveStopScrollingEnabled(world)) {
-    return;
-  }
-  resetCameraEdgeScroll(cameraInput);
 }
 
 function resetUnitAtlasTracking(): void {

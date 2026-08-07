@@ -16,6 +16,8 @@ export interface CameraInput {
   edgeX: number;
   edgeY: number;
   edgeSpeedMultiplier: number;
+  /** Browser: keep panning after the cursor leaves the window (WC2 edge-push analog). */
+  edgeLatched: boolean;
   dragging: boolean;
   dragLastX: number;
   dragLastY: number;
@@ -57,6 +59,7 @@ export function createCameraInput(): CameraInput {
     edgeX: 0,
     edgeY: 0,
     edgeSpeedMultiplier: 1,
+    edgeLatched: false,
     dragging: false,
     dragLastX: 0,
     dragLastY: 0
@@ -71,6 +74,7 @@ export function beginCameraDrag(input: CameraInput, x: number, y: number): void 
   input.dragging = true;
   input.edgeX = 0;
   input.edgeY = 0;
+  input.edgeLatched = false;
   input.dragLastX = x;
   input.dragLastY = y;
 }
@@ -94,8 +98,14 @@ export function resetCameraEdgeScroll(input: CameraInput): void {
   input.edgeX = 0;
   input.edgeY = 0;
   input.edgeSpeedMultiplier = 1;
+  input.edgeLatched = false;
 }
 
+/**
+ * Edge pan for browsers. Unlike desktop WC2, the OS cursor can leave the game
+ * window. Coordinates may be outside [0, width] / [0, height] — treat that as
+ * pushing past that edge (the browser analog of parking the mouse on the rim).
+ */
 export function updateCameraEdgeScroll(
   input: CameraInput,
   x: number,
@@ -105,14 +115,67 @@ export function updateCameraEdgeScroll(
   enabled: boolean,
   speedMultiplier = 1
 ): void {
-  const inPlayableArea = x >= 0 && x <= viewport.width && y >= 0 && y <= viewport.height;
-  if (!enabled || !inPlayableArea || input.dragging) {
+  if (!enabled || input.dragging) {
     resetCameraEdgeScroll(input);
     return;
   }
-  input.edgeX = x <= margins.left ? -1 : x >= viewport.width - margins.right ? 1 : 0;
-  input.edgeY = y <= margins.top ? -1 : y >= viewport.height - margins.bottom ? 1 : 0;
+  const edgeX = x < 0 || x <= margins.left
+    ? -1
+    : x > viewport.width || x >= viewport.width - margins.right
+      ? 1
+      : 0;
+  const edgeY = y < 0 || y <= margins.top
+    ? -1
+    : y > viewport.height || y >= viewport.height - margins.bottom
+      ? 1
+      : 0;
+  input.edgeX = edgeX;
+  input.edgeY = edgeY;
   input.edgeSpeedMultiplier = Math.max(0, speedMultiplier);
+  // Inside the window: only latch while actively on an edge band.
+  input.edgeLatched = edgeX !== 0 || edgeY !== 0;
+}
+
+/**
+ * When the pointer leaves the browser window, keep panning in the exit direction
+ * (or last edge band). This is the WC2 "mouse stuck on edge" behavior for the web.
+ */
+export function latchCameraEdgeScrollOnPointerLeave(
+  input: CameraInput,
+  lastLocalX: number | null,
+  lastLocalY: number | null,
+  viewport: CameraViewport,
+  margins: { top: number; right: number; bottom: number; left: number },
+  enabled: boolean
+): void {
+  if (!enabled || input.dragging) {
+    resetCameraEdgeScroll(input);
+    return;
+  }
+  if (input.edgeX !== 0 || input.edgeY !== 0) {
+    input.edgeLatched = true;
+    return;
+  }
+  if (lastLocalX === null || lastLocalY === null) {
+    return;
+  }
+  const edgeX = lastLocalX <= margins.left
+    ? -1
+    : lastLocalX >= viewport.width - margins.right
+      ? 1
+      : 0;
+  const edgeY = lastLocalY <= margins.top
+    ? -1
+    : lastLocalY >= viewport.height - margins.bottom
+      ? 1
+      : 0;
+  if (edgeX === 0 && edgeY === 0) {
+    return;
+  }
+  input.edgeX = edgeX;
+  input.edgeY = edgeY;
+  input.edgeSpeedMultiplier = 1;
+  input.edgeLatched = true;
 }
 
 export function updateCamera(

@@ -8,6 +8,11 @@ dist/
 /.artifacts/
 *.log
 
+# Auto-captured human playtest sessions (dev/preview server only)
+playtest-logs/sessions/
+playtest-logs/latest.json
+playtest-logs/index.json
+
 # Local Netlify folder
 .netlify
 

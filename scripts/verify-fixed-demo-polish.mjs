@@ -70,8 +70,12 @@ expect(files.tileTextureAtlas, "sourceSpecialTileFrames.has(normalized)", "Remov
 expect(files.orders, "function findNearestReachableWoodTileNear", "Deep tree clicks should retarget to a reachable edge tree.");
 expect(files.orders, "function resolveReachableWoodTileForUnit", "Wood harvest orders should resolve unreachable tree clicks to reachable trees.");
 expect(files.orders, "function isReachableWoodTileForUnit", "Wood targeting should reject unreachable interior forest tiles.");
-expect(files.orders, "const endpoint = path[path.length - 1];", "Wood reachability should validate the final path point is actually close enough to chop.");
+expect(files.orders, "function woodApproachCandidates", "Wood harvest should path to adjacent stand tiles, not into the tree center.");
+expect(files.orders, "function isAdjacentToWoodTile", "Wood gather range should treat adjacency to the forest tile as in-range.");
 expect(files.orders, "findNearestReachableWoodTileForUnit(world, unit, 32)", "Deep unreachable tree clicks should fall back to any nearby reachable tree.");
+// Blacksmith/lumber research must not gate swords/arrows on paladin/ranger conversion tech.
+expect(!files.orders.includes("sourceConversionResearchPrerequisites"), "Modifier research must not require conversion upgrades inferred from appliesTo.");
+expect(files.orders, "sourceModifierResearchPrerequisites(world, upgradeId)", "Tier-2 modifier research should still chain via cost signature, not conversion tech.");
 expect(files.passability, "function isSourceRemovedTreeTile", "Removed-tree graphics should be passable land, not still treated as forest by slot.");
 expect(files.renderWorld, "if (tile === 126) {\n    return [\"land\"];\n  }", "World renderer should classify removed-tree as land instead of forest.");
 expect(files.hud, "if (tile === 126) {\n    return [\"land\"];\n  }", "Minimap renderer should classify removed-tree as land instead of forest.");

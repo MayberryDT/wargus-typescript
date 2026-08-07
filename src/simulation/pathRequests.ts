@@ -186,11 +186,16 @@ function finishRequest(world: WorldState, state: SchedulerState, request: Pendin
         unit.order?.kind === "attack" && unit.order.targetId === target.id
           ? unit.order.autoReturn
           : request.autoReturn;
+      const existingForce =
+        unit.order?.kind === "attack" && unit.order.targetId === target.id
+          ? unit.order.force === true
+          : false;
       unit.order = {
         kind: "attack",
         targetId: target.id,
         targetX: target.x,
         targetY: target.y,
+        force: existingForce || undefined,
         autoReturn: existingAutoReturn ?? request.autoReturn,
         path,
         pathIndex: path.length > 1 ? 1 : 0

@@ -11,6 +11,9 @@ function expect(source, needle, message) {
   }
 }
 
+const viteConfig = readFileSync("vite.config.mjs", "utf8");
+const capturePlugin = readFileSync("scripts/lib/vite-playtest-telemetry-plugin.mjs", "utf8");
+
 expect(main, "PLAYTEST_TELEMETRY_STORAGE_KEY", "Playtest telemetry should persist to localStorage.");
 expect(main, "type PlaytestTelemetryEntry", "Playtest telemetry should use structured entries.");
 expect(main, "recordPlaytestTelemetry(performance.now())", "The main frame loop should record playtest telemetry.");
@@ -20,6 +23,9 @@ expect(main, "__WARGUS_TS_CLEAR_PLAYTEST_LOG__", "Playtest telemetry should expo
 expect(main, "playtestTelemetryJankReasons", "Playtest telemetry should capture jank reasons.");
 expect(main, "playtestTelemetryFogCounts", "Playtest telemetry should include fog visibility counts.");
 expect(main, "PLAYTEST_TELEMETRY_MAX_ENTRIES", "Playtest telemetry should be bounded.");
+expect(main, "PLAYTEST_TELEMETRY_SHIP_PATH", "Playtest telemetry should post to the local capture endpoint.");
+expect(main, "shipPlaytestTelemetry", "Playtest telemetry should auto-ship entries to the dev server.");
+expect(main, "playtestServerCaptureEnabled = !runtimeSearchParams.has(\"smoke\")", "Server capture must stay off during smoke/perf verifiers.");
 expect(main, "runtimePerformance: runtimePerformanceTelemetry()", "Playtest and smoke telemetry should include compact tail distributions and scheduler diagnostics.");
 expect(main, "runtimeSearchParams.get(\"smoke\") === \"1\"", "Performance profiles must require the exact smoke=1 URL gate.");
 expect(main, "__WARGUS_TS_PERF_START__", "Performance capture should expose a start hook.");
@@ -43,5 +49,11 @@ if ((renderSources.match(/createWargusBitmapText\(/g) ?? []).length !== 2 || (re
 expect(main, "executeHudCommand(\"attack-move\", { shiftKey: true })", "The deterministic action hook must include queued attack-move through the HUD seam.");
 expect(packageSource, "\"verify:playtest-telemetry\": \"node scripts/verify-playtest-telemetry.mjs\"", "Package scripts should include the playtest telemetry verifier.");
 expect(packageSource, "\"verify:performance-metrics\": \"node scripts/verify-performance-metrics.mjs\"", "Package scripts should include the performance metrics verifier.");
+expect(viteConfig, "playtestTelemetryCapturePlugin", "Vite must install the playtest telemetry capture plugin.");
+expect(viteConfig, "**/playtest-logs/**", "Vite must ignore playtest log writes so capture does not thrash the watcher.");
+expect(capturePlugin, "/__wargus/playtest-telemetry", "Capture plugin must serve the playtest telemetry POST path.");
+expect(capturePlugin, "playtest-logs/sessions", "Capture plugin must write session files under playtest-logs/sessions.");
+expect(capturePlugin, "latest.json", "Capture plugin must maintain a latest session pointer.");
+expect(capturePlugin, "index.json", "Capture plugin must maintain a session index for historical digs.");
 
 console.log("Playtest telemetry hooks verified.");
